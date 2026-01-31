@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
   const int warmup = parse_arg_int(args, "--warmup", 5);
   const int check = parse_arg_int(args, "--check", 0);
   const int check_samples = parse_arg_int(args, "--check-samples", 8);
+  const int dump = parse_arg_int(args, "--dump", 0);
 
   std::cout << "GRETA CORE Platform Bench: hip_gemm\n";
   std::cout << "m=" << m << " n=" << n << " k=" << k << " iters=" << iters
@@ -220,6 +221,15 @@ int main(int argc, char **argv) {
           max_abs_err_col_brow = err_col_brow;
         if (err_row_bcol > max_abs_err_row_bcol)
           max_abs_err_row_bcol = err_row_bcol;
+        if (dump && s == 0) {
+          std::cout << "  sample0 mi=" << mi << " ni=" << ni << "\n";
+          std::cout << "  sample0 c_col=" << c_col << " c_row=" << c_row
+                    << "\n";
+          std::cout << "  sample0 acc_col=" << acc_col
+                    << " acc_row=" << acc_row << "\n";
+          std::cout << "  sample0 acc_col_brow=" << acc_col_brow
+                    << " acc_row_bcol=" << acc_row_bcol << "\n";
+        }
       }
     }
   }
