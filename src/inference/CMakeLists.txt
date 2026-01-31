@@ -1,0 +1,44 @@
+cmake_minimum_required(VERSION 3.18)
+
+project(gcore_inference LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find HIP
+find_package(hip QUIET)
+
+# Inference library sources
+set(INFERENCE_SOURCES
+    src/weight_loader.cpp
+)
+
+# Include directories
+set(INFERENCE_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../rt/backend/hip/include
+)
+
+# Build as static library
+add_library(gcore_inference STATIC ${INFERENCE_SOURCES})
+target_include_directories(gcore_inference PUBLIC ${INFERENCE_INCLUDE_DIRS})
+
+if(TARGET hip::host)
+    target_link_libraries(gcore_inference PRIVATE hip::host)
+endif()
+
+# Test executable
+add_executable(weight_loader_test
+    test/weight_loader_test.cpp
+    ${INFERENCE_SOURCES}
+    ../../rt/backend/hip/src/buffer.cpp
+)
+target_include_directories(weight_loader_test PRIVATE ${INFERENCE_INCLUDE_DIRS})
+target_compile_definitions(weight_loader_test PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+)
+
+if(TARGET hip::host)
+    target_link_libraries(weight_loader_test PRIVATE hip::host)
+endif()
