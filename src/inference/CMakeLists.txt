@@ -18,6 +18,7 @@ set(INFERENCE_INCLUDE_DIRS
 # Inference library sources
 set(INFERENCE_SOURCES
     src/weight_loader.cpp
+    src/block_scheduler.cpp
 )
 
 # Build as static library
@@ -26,7 +27,7 @@ target_include_directories(gcore_inference PUBLIC ${INFERENCE_INCLUDE_DIRS})
 target_link_directories(gcore_inference PUBLIC ${ROCM_PATH}/lib)
 target_link_libraries(gcore_inference PRIVATE amdhip64)
 
-# Test executable
+# Weight Loader Test
 add_executable(weight_loader_test
     test/weight_loader_test.cpp
     ${INFERENCE_SOURCES}
@@ -39,3 +40,17 @@ target_compile_definitions(weight_loader_test PRIVATE
 )
 target_link_directories(weight_loader_test PRIVATE ${ROCM_PATH}/lib)
 target_link_libraries(weight_loader_test PRIVATE amdhip64)
+
+# Block Scheduler Test
+add_executable(block_scheduler_test
+    test/block_scheduler_test.cpp
+    ${INFERENCE_SOURCES}
+    ../../rt/backend/hip/src/buffer.cpp
+)
+target_include_directories(block_scheduler_test PRIVATE ${INFERENCE_INCLUDE_DIRS})
+target_compile_definitions(block_scheduler_test PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+)
+target_link_directories(block_scheduler_test PRIVATE ${ROCM_PATH}/lib)
+target_link_libraries(block_scheduler_test PRIVATE amdhip64)
