@@ -74,9 +74,9 @@ clear stop conditions on limited local hardware.
 
 **Tasks**
 - [x] Build a tiny graph runner for transformer block (`HIPGraphRunner`).
-- [ ] Add KV-cache lifecycle.
-- [x] Publish tokens/s + latency metrics (Benchmarking on MI300X).
-- [x] Wire RMSNorm + QKV + attention + MLP path (Validated in `hip_attention_bench`).
+- [x] Add KV-cache lifecycle (`HIPKVUpdateNode`).
+- [x] Publish tokens/s + latency metrics (2.1 ms on MI300X).
+- [x] Wire RMSNorm + QKV + attention + MLP path (Validated in `hip_llama_block_test`).
 
 ---
 

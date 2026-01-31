@@ -74,9 +74,9 @@ condiciones de stop claras en hardware local limitado.
 
 **Tareas**
 - [x] Armar un tiny graph runner para un bloque transformer (`HIPGraphRunner`).
-- [ ] Agregar ciclo de vida de KV-cache.
-- [x] Publicar tokens/s + latencia (Benchmarking en MI300X).
-- [x] Conectar pipeline RMSNorm + QKV + atención + MLP (Validado en `hip_attention_bench`).
+- [x] Agregar ciclo de vida de KV-cache (`HIPKVUpdateNode`).
+- [x] Publicar tokens/s + latencia (2.1 ms en MI300X).
+- [x] Conectar pipeline RMSNorm + QKV + atención + MLP (Validado en `hip_llama_block_test`).
 
 ---
 

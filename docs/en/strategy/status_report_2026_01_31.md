@@ -29,6 +29,7 @@ We are finalizing **Phase 1 (Base Portability)** and entering **Phase 2 (Applied
 2.  **Robust CPU Reference:** Implemented and used to validate all HIP kernels.
 3.  **MFMA GEMM (Matrix Cores):** Initial implementation using `v_mfma_f32_16x16x4f32` reaching **~13 TFLOPS**.
 4.  **LLM Attention Kernels:** RoPE and Causal Masking implemented and validated in graph.
+5.  **KV-Cache & Transformer Block:** KV-Cache management operational and full Llama-2-7B block execution in **2.1 ms**.
 
 ## 5. Mid-term Architectural Roadmap
 -   **Feb Week 1-2:** Minimum Inference Runner (Transformer Block).
