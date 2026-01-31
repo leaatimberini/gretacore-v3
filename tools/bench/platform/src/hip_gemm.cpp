@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -35,10 +36,13 @@ int main(int argc, char **argv) {
   const int k = parse_arg_int(args, "--k", 1024);
   const int iters = parse_arg_int(args, "--iters", 20);
   const int warmup = parse_arg_int(args, "--warmup", 5);
+  const int check = parse_arg_int(args, "--check", 0);
+  const int check_samples = parse_arg_int(args, "--check-samples", 8);
 
   std::cout << "GRETA CORE Platform Bench: hip_gemm\n";
   std::cout << "m=" << m << " n=" << n << " k=" << k << " iters=" << iters
-            << " warmup=" << warmup << "\n";
+            << " warmup=" << warmup << " check=" << check
+            << " check_samples=" << check_samples << "\n";
 
 #if !GRETA_HAS_HIP
   std::cerr << "HIP not enabled/built. Reconfigure with HIP available.\n";
@@ -132,11 +136,40 @@ int main(int argc, char **argv) {
   const double ops = 2.0 * double(m) * double(n) * double(k) * double(iters);
   const double tflops = (ops / 1.0e12) / (kernel_ms / 1.0e3);
 
+  double max_abs_err = 0.0;
+  if (check) {
+    if (hipMemcpy(hc.data(), dc, bytes_c, hipMemcpyDeviceToHost) !=
+        hipSuccess) {
+      std::cerr << "hipMemcpy D2H failed\n";
+    } else {
+      std::mt19937 rng(12345);
+      std::uniform_int_distribution<int> dist_m(0, m - 1);
+      std::uniform_int_distribution<int> dist_n(0, n - 1);
+      const int samples = std::max(1, check_samples);
+      for (int s = 0; s < samples; s++) {
+        int mi = dist_m(rng);
+        int ni = dist_n(rng);
+        double acc = 0.0;
+        for (int ki = 0; ki < k; ki++) {
+          acc += double(ha[static_cast<size_t>(mi) * k + ki]) *
+                 double(hb[static_cast<size_t>(ki) * n + ni]);
+        }
+        double err =
+            std::abs(acc - double(hc[static_cast<size_t>(mi) * n + ni]));
+        if (err > max_abs_err)
+          max_abs_err = err;
+      }
+    }
+  }
+
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "RESULT hip_gemm:\n";
   std::cout << "  kernel_ms_total=" << kernel_ms << "\n";
   std::cout << "  kernel_ms_avg=" << (kernel_ms / double(iters)) << "\n";
   std::cout << "  tflops=" << tflops << "\n";
+  if (check) {
+    std::cout << "  max_abs_err=" << max_abs_err << "\n";
+  }
 
   hipEventDestroy(ev_start);
   hipEventDestroy(ev_stop);

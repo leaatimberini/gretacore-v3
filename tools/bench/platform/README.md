@@ -46,7 +46,7 @@ tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacor
 
 ### Standalone (HIP) [EN]
 ```bash
-tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5
+tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5 --check 1 --check-samples 8
 ```
 
 ## Construcción (Ubuntu 22.04) [ES]
@@ -84,5 +84,5 @@ tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacor
 
 ### Standalone (HIP) [ES]
 ```bash
-tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5
+tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5 --check 1 --check-samples 8
 ```
