@@ -5,27 +5,26 @@ project(gcore_inference LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find HIP
-find_package(hip QUIET)
+# ROCm path
+set(ROCM_PATH "/opt/rocm" CACHE PATH "Path to ROCm installation")
+
+# Include directories
+set(INFERENCE_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../rt/backend/hip/include
+    ${ROCM_PATH}/include
+)
 
 # Inference library sources
 set(INFERENCE_SOURCES
     src/weight_loader.cpp
 )
 
-# Include directories
-set(INFERENCE_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../rt/backend/hip/include
-)
-
 # Build as static library
 add_library(gcore_inference STATIC ${INFERENCE_SOURCES})
 target_include_directories(gcore_inference PUBLIC ${INFERENCE_INCLUDE_DIRS})
-
-if(TARGET hip::host)
-    target_link_libraries(gcore_inference PRIVATE hip::host)
-endif()
+target_link_directories(gcore_inference PUBLIC ${ROCM_PATH}/lib)
+target_link_libraries(gcore_inference PRIVATE amdhip64)
 
 # Test executable
 add_executable(weight_loader_test
@@ -38,7 +37,5 @@ target_compile_definitions(weight_loader_test PRIVATE
     GCORE_USE_HIP=1
     __HIP_PLATFORM_AMD__=1
 )
-
-if(TARGET hip::host)
-    target_link_libraries(weight_loader_test PRIVATE hip::host)
-endif()
+target_link_directories(weight_loader_test PRIVATE ${ROCM_PATH}/lib)
+target_link_libraries(weight_loader_test PRIVATE amdhip64)
