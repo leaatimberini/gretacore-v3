@@ -165,6 +165,7 @@ int main(int argc, char **argv) {
 
   double max_abs_err_col = 0.0;
   double max_abs_err_row = 0.0;
+  int non_finite = 0;
   if (check) {
     if (hipMemcpy(hc.data(), dc, bytes_c, hipMemcpyDeviceToHost) !=
         hipSuccess) {
@@ -185,10 +186,14 @@ int main(int argc, char **argv) {
           acc_row += double(ha[static_cast<size_t>(mi) * k + ki]) *
                      double(hb[static_cast<size_t>(ki) * n + ni]);
         }
-        double err_col = std::abs(
-            acc_col - double(hc[static_cast<size_t>(ni) * m + mi]));
-        double err_row = std::abs(
-            acc_row - double(hc[static_cast<size_t>(mi) * n + ni]));
+        double c_col = double(hc[static_cast<size_t>(ni) * m + mi]);
+        double c_row = double(hc[static_cast<size_t>(mi) * n + ni]);
+        if (!std::isfinite(c_col) || !std::isfinite(c_row)) {
+          non_finite++;
+          continue;
+        }
+        double err_col = std::abs(acc_col - c_col);
+        double err_row = std::abs(acc_row - c_row);
         if (err_col > max_abs_err_col)
           max_abs_err_col = err_col;
         if (err_row > max_abs_err_row)
@@ -205,6 +210,7 @@ int main(int argc, char **argv) {
   if (check) {
     std::cout << "  max_abs_err_col=" << max_abs_err_col << "\n";
     std::cout << "  max_abs_err_row=" << max_abs_err_row << "\n";
+    std::cout << "  non_finite_samples=" << non_finite << "\n";
   }
 
   hipEventDestroy(ev_start);
