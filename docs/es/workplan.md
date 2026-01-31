@@ -201,3 +201,12 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_memlat_cpu_smoke_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_smoke_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke_amdcloud.txt`
+- AMD Developer Cloud MI300X VF standard/perf registrados:
+  - `tools/bench/platform/results/2026-01-31_membw_cpu_standard_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_memlat_cpu_standard_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_noop_launch_standard_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_membw_cpu_perf_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_memlat_cpu_perf_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt`

@@ -48,6 +48,18 @@ Fecha: 2026-01-31
 | hip_noop_launch smoke (iters=100000) | per_launch_us | 1.5508 | OK |
 | hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 3787.843 | OK |
 
+## AMD Cloud MI300X VF Standard/Perf (ROCm 7.1)
+| Bench | métrica | valor | estado |
+| --- | --- | --- | --- |
+| membw_cpu estándar (1024 MiB, iters=6) | mean_GiBps | 152.474 | OK |
+| memlat_cpu estándar (256 MiB, iters=50) | mean_ns_per_hop | 62.97 | OK |
+| hip_noop_launch estándar (iters=200000) | per_launch_us | 1.5517 | OK |
+| hip_vec_add estándar (n=16777216, iters=200) | kernel_gbps | 4398.102 | OK |
+| membw_cpu perf (2048 MiB, iters=8) | mean_GiBps | 177.892 | OK |
+| memlat_cpu perf (512 MiB, iters=80) | mean_ns_per_hop | 107.04 | OK |
+| hip_noop_launch perf (iters=400000) | per_launch_us | 1.5506 | OK |
+| hip_vec_add perf (n=16777216, iters=400) | kernel_gbps | 4370.602 | OK |
+
 ## Artefactos
 - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
 - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_bench_compute_only.txt`
@@ -93,6 +105,14 @@ Fecha: 2026-01-31
 - `tools/bench/platform/results/2026-01-31_memlat_cpu_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_noop_launch_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_membw_cpu_standard_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_memlat_cpu_standard_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_noop_launch_standard_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_vec_add_standard_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_membw_cpu_perf_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_memlat_cpu_perf_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt` (AMD Cloud MI300X VF)
 
 ## Resumen Bench Estándar (1024^3, batch=20)
 | Bench | kernel_mean_ms | mean_TFLOPs | status |
