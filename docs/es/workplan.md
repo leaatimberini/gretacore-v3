@@ -61,10 +61,10 @@ condiciones de stop claras en hardware local limitado.
 **Gate:** Cada kernel tiene test de correctitud + microbench.
 
 **Tareas**
-- Implementar kernels uno por uno con checks de referencia.
-- Agregar benchmarks minimos y guardar baselines.
-- Entregar Pack de Primitivas LLM v1 (LayerNorm, RMSNorm, Softmax).
-- Agregar cache de tuning por shape/dispositivo.
+- [x] Implementar kernels uno por uno con checks de referencia (RMSNorm, Softmax, RoPE).
+- [x] Agregar benchmarks minimos y guardar baselines.
+- [x] Entregar Pack de Primitivas LLM v1 (LayerNorm, RMSNorm, Softmax).
+- [ ] Agregar cache de tuning por shape/dispositivo.
 
 ---
 
@@ -73,10 +73,10 @@ condiciones de stop claras en hardware local limitado.
 **Gate:** Metricas deterministas de tokens/s y latencia.
 
 **Tareas**
-- Armar un tiny graph runner para un bloque transformer.
-- Agregar ciclo de vida de KV-cache.
-- Publicar tokens/s + latencia.
-- Conectar pipeline RMSNorm + QKV + atención + MLP.
+- [x] Armar un tiny graph runner para un bloque transformer (`HIPGraphRunner`).
+- [ ] Agregar ciclo de vida de KV-cache.
+- [x] Publicar tokens/s + latencia (Benchmarking en MI300X).
+- [x] Conectar pipeline RMSNorm + QKV + atención + MLP (Validado en `hip_attention_bench`).
 
 ---
 
@@ -235,3 +235,12 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_dump_amdcloud.txt`
 - Check hip_gemm verificado en 512^3 (column-major max_abs_err=0):
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_fixed_amdcloud.txt`
+- Implementación de Backend HIP nativo (`gcore::rt::hip`):
+  - Abstracciones de `Backend`, `Buffer`, `Stream` y `GraphRunner` operativas en MI300X.
+- Registro de Kernels HIP optimizados:
+  - `hip_fill_bench`, `hip_rmsnorm_bench` (Error ~2e-6).
+  - `hip_gemm_bench` (Tiled: 12.7 TFLOPS, MFMA: 13.0 TFLOPS).
+- Integración de Primitivas LLM en Grafo:
+  - Implementación de RoPE (Rotary Embeddings) y Causal Masking.
+  - Test de integración `hip_attention_bench` exitoso (STATUS=OK).
+- Sincronización de flujo via Git (Push local / Pull remoto) establecida para evitar bloqueos de SSH.

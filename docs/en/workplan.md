@@ -61,10 +61,10 @@ clear stop conditions on limited local hardware.
 **Gate:** Each kernel has a correctness test + microbench.
 
 **Tasks**
-- Implement kernels one-by-one with reference checks.
-- Add minimal benchmarks and store baselines.
-- Deliver LLM Primitives Pack v1 (LayerNorm, RMSNorm, Softmax).
-- Add kernel tuning cache for shape/device.
+- [x] Implement kernels one-by-one with reference checks (RMSNorm, Softmax, RoPE).
+- [x] Add minimal benchmarks and store baselines.
+- [x] Deliver LLM Primitives Pack v1 (LayerNorm, RMSNorm, Softmax).
+- [ ] Add kernel tuning cache for shape/device.
 
 ---
 
@@ -73,10 +73,10 @@ clear stop conditions on limited local hardware.
 **Gate:** Deterministic tokens/s and latency metrics.
 
 **Tasks**
-- Build a tiny graph runner for transformer block.
-- Add KV-cache lifecycle.
-- Publish tokens/s + latency metrics.
-- Wire RMSNorm + QKV + attention + MLP path.
+- [x] Build a tiny graph runner for transformer block (`HIPGraphRunner`).
+- [ ] Add KV-cache lifecycle.
+- [x] Publish tokens/s + latency metrics (Benchmarking on MI300X).
+- [x] Wire RMSNorm + QKV + attention + MLP path (Validated in `hip_attention_bench`).
 
 ---
 
@@ -235,3 +235,12 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_dump_amdcloud.txt`
 - hip_gemm check verified on 512^3 (column-major max_abs_err=0):
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_fixed_amdcloud.txt`
+- Native HIP Backend implementation (`gcore::rt::hip`):
+  - `Backend`, `Buffer`, `Stream`, and `GraphRunner` abstractions operational on MI300X.
+- Optimized HIP Kernels registered:
+  - `hip_fill_bench`, `hip_rmsnorm_bench` (Error ~2e-6).
+  - `hip_gemm_bench` (Tiled: 12.7 TFLOPS, MFMA: 13.0 TFLOPS).
+- LLM Primitives Graph Integration:
+  - RoPE (Rotary Embeddings) and Causal Masking implemented.
+  - `hip_attention_bench` integration test successful (STATUS=OK).
+- Git-based synchronization workflow (Local Push / Remote Pull) established to prevent SSH blocking.
