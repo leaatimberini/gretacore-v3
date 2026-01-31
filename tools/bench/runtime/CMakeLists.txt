@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(greta_runtime_bench LANGUAGES CXX)
+project(greta_runtime_bench LANGUAGES CXX HIP)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,7 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/stream/include)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/telemetry/include)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/dispatch/include)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/backend/vulkan/include)
+include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/backend/hip/include)
 
 # -------------------------------------------------------------------
 # Core benches (non-Vulkan)
@@ -55,6 +56,134 @@ add_executable(vk_smoke_bench
 )
 target_compile_options(vk_smoke_bench PRIVATE -O3 -march=native -pthread)
 target_link_libraries(vk_smoke_bench PRIVATE Vulkan::Vulkan)
+
+# -------------------------------------------------------------------
+# HIP / ROCm
+if(NOT DEFINED ROCM_PATH)
+  if(NOT DEFINED ENV{ROCM_PATH})
+    set(ROCM_PATH "/opt/rocm")
+  else()
+    set(ROCM_PATH $ENV{ROCM_PATH})
+  endif()
+endif()
+
+# We use hipcc as the compiler for .cpp files that need HIP headers,
+# or we use HIP as a package. Since we're likely building with a standard
+# host compiler (g++) and calling hipcc/clang internally, 
+# for benches we can just link to HIP.
+find_package(HIP QUIET)
+
+if(HIP_FOUND OR EXISTS ${ROCM_PATH})
+  message(STATUS "HIP found at: ${ROCM_PATH}")
+  include_directories(${ROCM_PATH}/include)
+  link_directories(${ROCM_PATH}/lib)
+
+  add_executable(hip_smoke_bench
+    src/hip_smoke_bench.cpp
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_smoke_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_smoke_bench PRIVATE -O3 -march=native -pthread)
+  
+  add_executable(hip_fill_bench
+    src/hip_fill_bench.cpp
+    ../../../src/rt/backend/hip/kernels/basic_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_fill_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_fill_bench PRIVATE -O3 -march=native -pthread)
+
+  add_executable(hip_rmsnorm_bench
+    src/hip_rmsnorm_bench.cpp
+    ../../../src/rt/backend/hip/kernels/basic_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_rmsnorm_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_rmsnorm_bench PRIVATE -O3 -march=native -pthread)
+
+  add_executable(hip_gemm_bench
+    src/hip_gemm_bench.cpp
+    ../../../src/rt/backend/hip/kernels/gemm_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_gemm_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_gemm_bench PRIVATE -O3 -march=native -pthread)
+
+  add_executable(hip_graph_runner_test
+    src/hip_graph_runner_test.cpp
+    ../../../src/rt/backend/hip/kernels/basic_kernels.hip
+    ../../../src/rt/backend/hip/kernels/gemm_kernels.hip
+    ../../../src/rt/backend/hip/kernels/attention_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_graph_runner_test PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_graph_runner_test PRIVATE -O3 -march=native -pthread)
+  target_include_directories(hip_graph_runner_test PRIVATE 
+    ${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/graph/include
+  )
+
+  add_executable(hip_attention_bench
+    src/hip_attention_bench.cpp
+    ../../../src/rt/backend/hip/kernels/basic_kernels.hip
+    ../../../src/rt/backend/hip/kernels/gemm_kernels.hip
+    ../../../src/rt/backend/hip/kernels/attention_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_attention_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_attention_bench PRIVATE -O3 -march=native -pthread)
+  target_include_directories(hip_attention_bench PRIVATE 
+    ${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/graph/include
+  )
+
+  # Try various ways to link HIP
+  if(TARGET hip::host)
+    target_link_libraries(hip_smoke_bench PRIVATE hip::host)
+    target_link_libraries(hip_fill_bench PRIVATE hip::host)
+  else()
+    # Fallback to manual search
+    find_library(HIP_LIB NAMES amdhip64 hip_hcc PATHS ${ROCM_PATH}/lib NO_DEFAULT_PATH)
+    if(HIP_LIB)
+      target_link_libraries(hip_smoke_bench PRIVATE ${HIP_LIB})
+      target_link_libraries(hip_fill_bench PRIVATE ${HIP_LIB})
+    else()
+      # Final attempt: just try the name
+      target_link_libraries(hip_smoke_bench PRIVATE amdhip64)
+      target_link_libraries(hip_fill_bench PRIVATE amdhip64)
+    endif()
+  endif()
+else()
+  message(WARNING "HIP not found. hip_smoke_bench will not be built.")
+endif()
 
 # -------------------------------------------------------------------
 # Shaders (glslangValidator -> SPIR-V)
