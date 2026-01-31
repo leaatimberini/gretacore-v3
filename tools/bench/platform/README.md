@@ -37,6 +37,7 @@ cmake --build tools/bench/platform/build
 tools/bench/platform/scripts/run_presets_local.sh smoke
 tools/bench/platform/scripts/run_presets_local.sh standard
 tools/bench/platform/scripts/run_presets_local.sh perf
+tools/bench/platform/scripts/run_presets_local.sh verify
 ```
 
 Enable hip_gemm checks in presets:
@@ -87,6 +88,7 @@ cmake --build tools/bench/platform/build
 tools/bench/platform/scripts/run_presets_local.sh smoke
 tools/bench/platform/scripts/run_presets_local.sh standard
 tools/bench/platform/scripts/run_presets_local.sh perf
+tools/bench/platform/scripts/run_presets_local.sh verify
 ```
 
 Habilitar checks de hip_gemm en presets:
