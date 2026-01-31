@@ -137,4 +137,58 @@ private:
   uint32_t pos_, max_seq_len_, num_heads_, head_dim_;
 };
 
+class HIPSoftmaxNode : public HIPGraphNode {
+public:
+  HIPSoftmaxNode(const float *x, float *y, uint32_t rows, uint32_t cols)
+      : x_(x), y_(y), rows_(rows), cols_(cols) {}
+
+  bool record(hipStream_t stream, std::string *err) override {
+    gcore::rt::hip::kernels::launch_softmax_naive(stream, x_, y_, rows_, cols_);
+    return true;
+  }
+
+  const char *name() const override { return "HIPSoftmaxNode"; }
+
+private:
+  const float *x_;
+  float *y_;
+  uint32_t rows_, cols_;
+};
+
+class HIPAddNode : public HIPGraphNode {
+public:
+  HIPAddNode(const float *a, const float *b, float *c, size_t n)
+      : a_(a), b_(b), c_(c), n_(n) {}
+
+  bool record(hipStream_t stream, std::string *err) override {
+    gcore::rt::hip::kernels::launch_add(stream, a_, b_, c_, n_);
+    return true;
+  }
+
+  const char *name() const override { return "HIPAddNode"; }
+
+private:
+  const float *a_;
+  const float *b_;
+  float *c_;
+  size_t n_;
+};
+
+class HIPSiLUNode : public HIPGraphNode {
+public:
+  HIPSiLUNode(const float *x, float *y, size_t n) : x_(x), y_(y), n_(n) {}
+
+  bool record(hipStream_t stream, std::string *err) override {
+    gcore::rt::hip::kernels::launch_silu(stream, x_, y_, n_);
+    return true;
+  }
+
+  const char *name() const override { return "HIPSiLUNode"; }
+
+private:
+  const float *x_;
+  float *y_;
+  size_t n_;
+};
+
 } // namespace gcore::rt::graph

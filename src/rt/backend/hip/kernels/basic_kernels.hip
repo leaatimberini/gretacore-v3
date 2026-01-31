@@ -84,4 +84,32 @@ void launch_softmax_naive(hipStream_t stream, const float *x, float *y,
   softmax_naive_kernel<<<grid_size, block_size, 0, stream>>>(x, y, rows, cols);
 }
 
+__global__ void add_kernel(const float *a, const float *b, float *c, size_t n) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    c[idx] = a[idx] + b[idx];
+  }
+}
+
+void launch_add(hipStream_t stream, const float *a, const float *b, float *c,
+                size_t n) {
+  int block_size = 256;
+  int grid_size = (n + block_size - 1) / block_size;
+  add_kernel<<<grid_size, block_size, 0, stream>>>(a, b, c, n);
+}
+
+__global__ void silu_kernel(const float *x, float *y, size_t n) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    float v = x[idx];
+    y[idx] = v / (1.0f + expf(-v));
+  }
+}
+
+void launch_silu(hipStream_t stream, const float *x, float *y, size_t n) {
+  int block_size = 256;
+  int grid_size = (n + block_size - 1) / block_size;
+  silu_kernel<<<grid_size, block_size, 0, stream>>>(x, y, n);
+}
+
 } // namespace gcore::rt::hip::kernels

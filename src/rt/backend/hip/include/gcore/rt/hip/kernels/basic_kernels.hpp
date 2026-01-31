@@ -14,4 +14,9 @@ void launch_rmsnorm_naive(hipStream_t stream, const float *x,
 void launch_softmax_naive(hipStream_t stream, const float *x, float *y,
                           uint32_t rows, uint32_t cols);
 
+void launch_add(hipStream_t stream, const float *a, const float *b, float *c,
+                size_t n);
+
+void launch_silu(hipStream_t stream, const float *x, float *y, size_t n);
+
 } // namespace gcore::rt::hip::kernels
