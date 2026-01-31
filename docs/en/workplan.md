@@ -215,3 +215,5 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_gemm_perf_amdcloud.txt`
+- AMD Developer Cloud MI300X VF hip_gemm check diagnostics recorded (layout mismatch still unresolved):
+  - `tools/bench/platform/results/2026-01-31_hip_gemm_check_diag_amdcloud.txt`
