@@ -2,7 +2,7 @@
 
 Versión: 1.0  
 Estado: Fundacional  
-Fase del Proyecto: Fase 1 – Runtime Core (activo)  
+Fase del Proyecto: Fase 3 – Pipeline de Inferencia LLM (activo)  
 Idioma: Español
 
 ---
@@ -21,8 +21,9 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 
 ## Estado Actual (2026-01-31)
 
-- Fase 1 (Runtime Core): activa e implementada.
-- Fase 2 (Dominio de Kernels): prototipos tempranos (GEMM + autotune + safety gates).
+- Fase 1 (Runtime Core): **completada**.
+- Fase 2 (Dominio de Kernels): **completada** (13 TFLOPS GEMM, 2.1ms Llama Block).
+- Fase 3 (Pipeline de Inferencia LLM): **activa**.
 
 ## Fase 0 – Fundaciones
 

@@ -2,7 +2,7 @@
 
 Version: 1.0  
 Status: Foundational  
-Project Phase: Phase 1 – Runtime Core (active)  
+Project Phase: Phase 3 – LLM Inference Pipeline (active)  
 Language: English
 
 ---
@@ -21,8 +21,9 @@ It is optimized for correctness, performance, and sustainability.
 
 ## Current Status (2026-01-31)
 
-- Phase 1 (Runtime Core): active and implemented.
-- Phase 2 (Kernel Dominance): early prototypes (GEMM + autotune + safety gates).
+- Phase 1 (Runtime Core): **completed**.
+- Phase 2 (Kernel Dominance): **completed** (13 TFLOPS GEMM, 2.1ms Llama Block).
+- Phase 3 (LLM Inference Pipeline): **active**.
 
 ## Phase 0 – Foundations
 
