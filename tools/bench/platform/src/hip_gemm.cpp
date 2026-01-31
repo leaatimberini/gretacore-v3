@@ -70,10 +70,14 @@ int main(int argc, char **argv) {
   std::vector<float> hb(static_cast<size_t>(k) * n);
   std::vector<float> hc(static_cast<size_t>(m) * n);
 
-  for (size_t i = 0; i < ha.size(); i++)
-    ha[i] = static_cast<float>((i % 251) - 125) * 0.01f;
-  for (size_t i = 0; i < hb.size(); i++)
-    hb[i] = static_cast<float>((i % 197) - 98) * 0.02f;
+  for (size_t i = 0; i < ha.size(); i++) {
+    const int v = static_cast<int>(i % 251) - 125;
+    ha[i] = static_cast<float>(v) * 0.01f;
+  }
+  for (size_t i = 0; i < hb.size(); i++) {
+    const int v = static_cast<int>(i % 197) - 98;
+    hb[i] = static_cast<float>(v) * 0.02f;
+  }
   if (dump) {
     std::cout << "  ha[0..3]=" << ha[0] << "," << ha[1] << "," << ha[2] << ","
               << ha[3] << "\n";
