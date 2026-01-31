@@ -4,6 +4,7 @@ Date: 2026-01-31
 
 ## Environment
 - Local: Ryzen 5 8600G + AMD Radeon Graphics (RADV Phoenix)
+- Remote: Runpod MI300X (RADV GFX940), ROCm 6.1 container
 
 ## Scope Achieved
 - Device-local + staging path active in Vulkan benches and runtime smoke.
@@ -12,6 +13,7 @@ Date: 2026-01-31
 - Tiled RMSNorm/Softmax Vulkan benches added with smoke validation.
 - LayerNorm+RMSNorm fused Vulkan bench added with smoke validation.
 - LayerNorm+RMSNorm fused tiled Vulkan bench added with smoke validation.
+- MI300X Vulkan ICD investigation complete; GPU benches blocked by driver/ICD.
 
 ## Key Results
 - `vk_gemm_bench` (512^3, compute-only): mean 1.854 ms, 0.145 TFLOPs.
@@ -29,6 +31,13 @@ Date: 2026-01-31
 | vk_layernorm | 0.084 | 0.049 | OK |
 | vk_rmsnorm | 0.087 | 0.044 | OK |
 | vk_softmax | 0.155 | 0.048 | OK |
+
+## MI300X HIP Results (ROCm 7.2, gfx942)
+| Bench | metric | value | status |
+| --- | --- | --- | --- |
+| hip_noop_launch (iters=200000) | per_launch_us | 2.3483 | OK |
+| hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 2689.372 | OK |
+| hip_vec_add standard (n=16777216, iters=200) | kernel_gbps | 4747.449 | OK |
 
 ## Artifacts
 - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
@@ -68,6 +77,9 @@ Date: 2026-01-31
 - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_perf.txt`
 - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_perf.txt`
 - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_perf.txt`
+- `tools/bench/platform/results/2026-01-31_hip_noop_launch.txt` (MI300X Runpod)
+- `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke.txt` (MI300X Runpod)
+- `tools/bench/platform/results/2026-01-31_hip_vec_add_standard.txt` (MI300X Runpod)
 
 ## Standard Bench Summary (1024^3, batch=20)
 | Bench | kernel_mean_ms | mean_TFLOPs | status |
@@ -109,3 +121,4 @@ Date: 2026-01-31
 ## Notes
 - FP16 remains disabled by safety policy on APU; override requires explicit flags.
 - Device-local staging is now the default path for compute benchmarks.
+- MI300X: RADV vkQueueSubmit returns VkResult=-4 (CS rejected). AMDVLK ICD fails to create instance (ERROR_INCOMPATIBLE_DRIVER). Requires AMDGPU-PRO Vulkan ICD or validated Runpod image.

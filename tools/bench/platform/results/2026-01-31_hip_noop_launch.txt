@@ -1,0 +1,5 @@
+GRETA CORE Platform Bench: hip_noop_launch
+iters=200000
+RESULT hip_noop_launch:
+  total_sec=0.4697
+  per_launch_us=2.3483

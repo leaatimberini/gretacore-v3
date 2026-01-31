@@ -138,6 +138,9 @@ Owner: Leandro Emanuel Timberini
 - Bench de plataforma HIP agregado:
   - `tools/bench/platform/src/hip_vec_add.cpp`
   - Target de build: `hip_vec_add`
+- Scripts de presets de plataforma agregados:
+  - `tools/bench/platform/scripts/run_presets_local.sh`
+  - `tools/bench/platform/scripts/run_presets_remote.sh`
 - Bench CPU de primitivas LLM agregado + smoke run:
   - `tools/bench/runtime/build/llm_primitives_bench`
   - `tools/bench/runtime/results/2026-01-31_llm_primitives_bench_smoke.txt`
@@ -189,3 +192,7 @@ Owner: Leandro Emanuel Timberini
   - ICD RADV inicializa pero vkQueueSubmit falla con `CS rejected` (VkResult=-4).
   - ICD AMDVLK se instala desde repo amdvlk bionic, pero vkCreateInstance falla (ERROR_INCOMPATIBLE_DRIVER).
   - Acción: requerir ICD Vulkan AMDGPU-PRO o imagen Runpod con Vulkan validado para MI300X.
+- Benchmarks HIP MI300X (ROCm 7.2, Runpod) registrados:
+  - `tools/bench/platform/results/2026-01-31_hip_noop_launch.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard.txt`

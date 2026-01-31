@@ -10,9 +10,68 @@ These benchmarks measure platform/hardware limits independently of GRETA CORE ru
 - GPU kernel launch overhead (HIP no-op) when available
 - GPU vector add bandwidth (HIP) when available
 
-## Build (Ubuntu 22.04)
+## Build (Ubuntu 22.04) [EN]
 From repo root:
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake ninja-build linux-tools-common linux-tools-generic
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja
+cmake --build tools/bench/platform/build
+```
+
+### HIP (optional) [EN]
+```bash
+export PATH=/opt/rocm/bin:$PATH
+export HIP_PATH=/opt/rocm
+export CMAKE_PREFIX_PATH=/opt/rocm
+export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH
+export GRETA_HIP_ARCH=gfx942
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON
+cmake --build tools/bench/platform/build
+```
+
+## Run presets [EN]
+```bash
+tools/bench/platform/scripts/run_presets_local.sh smoke
+tools/bench/platform/scripts/run_presets_local.sh standard
+tools/bench/platform/scripts/run_presets_local.sh perf
+```
+
+Remote:
+```bash
+tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
+```
+
+## Construcción (Ubuntu 22.04) [ES]
+Desde el root del repo:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build linux-tools-common linux-tools-generic
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja
+cmake --build tools/bench/platform/build
+```
+
+### HIP (opcional) [ES]
+```bash
+export PATH=/opt/rocm/bin:$PATH
+export HIP_PATH=/opt/rocm
+export CMAKE_PREFIX_PATH=/opt/rocm
+export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH
+export GRETA_HIP_ARCH=gfx942
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON
+cmake --build tools/bench/platform/build
+```
+
+## Presets de ejecución [ES]
+```bash
+tools/bench/platform/scripts/run_presets_local.sh smoke
+tools/bench/platform/scripts/run_presets_local.sh standard
+tools/bench/platform/scripts/run_presets_local.sh perf
+```
+
+Remoto:
+```bash
+tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
+```
