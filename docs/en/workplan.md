@@ -1,0 +1,184 @@
+# GRETA CORE – Work Plan
+
+Version: 1.0
+Date: 2026-01-31
+Language: English
+
+---
+
+## Objective
+Maintain a single, linear execution line with measurable gates and
+clear stop conditions on limited local hardware.
+
+---
+
+## Line of Execution (LOE)
+
+### LOE-1 — Runtime Stability + Device Memory Path
+**Goal:** Stable Vulkan execution with device-local memory and safe staging.
+**Gate:** All smoke profiles pass on 8600G; no hangs or timeouts.
+
+**Tasks**
+- Implement device-local buffer allocator + staging path.
+- Add explicit H2D/D2H copy helpers and validation.
+- Add async submit + fence/timeline-based synchronization.
+
+**Benchmarks**
+- `vk_smoke_bench`
+- `vk_fill_bench`
+- `vk_gemm_runtime_smoke` (ultrasafe/fill/default)
+
+**Done When**
+- 10/10 clean runs across all smoke profiles.
+- No GPU hangs; no validation errors.
+
+---
+
+### LOE-2 — GEMM Correctness + Autotune Baselines
+**Goal:** Correctness parity vs CPU reference and stable baselines.
+**Gate:** Deterministic output within tolerance for FP32 and FP16 (if allowed).
+
+**Tasks**
+- Build CPU reference GEMM for correctness check.
+- Add tolerance rules per precision.
+- Store baseline results in `tools/bench/runtime/results` with date.
+- Add preset runner scripts (local/remote) + CSV summary export.
+- Maintain CUDA parity gap matrix in `docs/en/strategy/cuda_gap.md`.
+
+**Benchmarks**
+- `vk_gemm_bench`
+- `vk_gemm_tiled_bench`
+- `vk_gemm_auto_ts_bench`
+
+**Done When**
+- FP32 correctness OK on APU.
+- FP16 only if healthcheck clean and not blacklisted.
+
+---
+
+### LOE-3 — Kernel Expansion (LLM Primitives)
+**Goal:** Add LayerNorm/RMSNorm/Softmax/KV primitives with minimal APIs.
+**Gate:** Each kernel has a correctness test + microbench.
+
+**Tasks**
+- Implement kernels one-by-one with reference checks.
+- Add minimal benchmarks and store baselines.
+- Deliver LLM Primitives Pack v1 (LayerNorm, RMSNorm, Softmax).
+- Add kernel tuning cache for shape/device.
+
+---
+
+### LOE-4 — Minimal Inference Runner
+**Goal:** Execute a single transformer block on GRETA CORE.
+**Gate:** Deterministic tokens/s and latency metrics.
+
+**Tasks**
+- Build a tiny graph runner for transformer block.
+- Add KV-cache lifecycle.
+- Publish tokens/s + latency metrics.
+- Wire RMSNorm + QKV + attention + MLP path.
+
+---
+
+### LOE-5 — Framework Compatibility & DX
+**Goal:** Same code runs on Radeon dev and MI300X cloud without changes.
+**Gate:** 1–3 install commands, no Docker required; Triton/PyTorch/JAX path validated.
+
+**Tasks**
+- Implement Triton frontend bridge (AMD target).
+- Integrate PyTorch and JAX bridges.
+- Map cuDNN/TensorRT parity via AMD equivalents.
+- Maintain `docs/en/strategy/framework_compat.md`.
+- Bundle torch, triton, and jax in the GRETA installer.
+- Define version matrix + lock files (`docs/en/strategy/framework_versions.md`, `tools/compat/lock/`).
+
+---
+
+## MI300X Validation (Optional, Paid)
+Only schedule if a hypothesis exists with a measurable pass/fail.
+
+**Hypothesis**
+FP16 GEMM variants scale on MI300X without timeouts.
+
+**Benchmark**
+- `vk_gemm_auto_ts_bench --m 4096 --n 4096 --k 4096`
+- `vk_gemm_runtime_smoke` (default)
+
+**Pass/Fail**
+- Pass: >=10x throughput vs 8600G baseline, zero timeouts.
+- Fail: any timeout or <10x throughput.
+
+---
+
+## Ownership
+Owner: Leandro Emanuel Timberini
+
+---
+
+## Completed Work (2026-01-31)
+- Device-local + staging helper (`stage_host_to_device` / `read_device_to_host`) now lives in `src/rt/backend/vulkan/include/gcore/rt/vk/buffer.hpp` and is used by `vk_gemm_bench` + `vk_gemm_runtime_smoke`.
+- FP16 vec2 timestamped benches now use device-local buffers with staging upload/readback (`vk_gemm_f16acc32_tiled_vec2_ts_bench`, `vk_gemm_f16acc32_tiled_vec2_32x8_ts_bench`, `vk_gemm_f16acc32_tiled_vec2_db_ts_bench`).
+- FP16 vec2 smoke runs (M=N=K=128, iters=3, batch=5) recorded:
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_ts_bench_smoke.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_32x8_ts_bench_smoke.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_db_ts_bench_smoke.txt`
+- FP16 vec2 standard runs (M=N=K=1024, iters=10, batch=20) recorded:
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_ts_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_32x8_ts_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_db_ts_bench_standard.txt`
+- Preset runner scripts + CSV summary added:
+  - `tools/bench/runtime/scripts/run_presets_local.sh`
+  - `tools/bench/runtime/scripts/run_presets_remote.sh`
+  - `tools/bench/runtime/scripts/gen_bench_csv.py`
+- Framework compatibility prototypes added:
+  - `tools/compat/triton/vec_add.py`
+  - `tools/compat/pytorch/greta_extension_hello.py`
+  - `tools/compat/jax/jax_custom_call_hello.py`
+- Prototype run status (local, venv): PyTorch OK, JAX OK, Triton OK (cpu fallback), ROCm build required for GPU.
+- LLM primitives CPU bench added + smoke run:
+  - `tools/bench/runtime/build/llm_primitives_bench`
+  - `tools/bench/runtime/results/2026-01-31_llm_primitives_bench_smoke.txt`
+- Vulkan LayerNorm bench added + smoke run:
+  - `tools/bench/runtime/build/vk_layernorm_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_bench_smoke.txt`
+- Vulkan LayerNorm tiled bench added + smoke run:
+  - `tools/bench/runtime/build/vk_layernorm_tiled_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_tiled_bench_smoke.txt`
+- Vulkan RMSNorm + Softmax benches added + smoke runs:
+  - `tools/bench/runtime/build/vk_rmsnorm_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_bench_smoke.txt`
+  - `tools/bench/runtime/build/vk_softmax_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_smoke.txt`
+- Vulkan RMSNorm/Softmax tiled benches added + smoke runs:
+  - `tools/bench/runtime/build/vk_rmsnorm_tiled_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_smoke.txt`
+  - `tools/bench/runtime/build/vk_softmax_tiled_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_smoke.txt`
+- Vulkan LayerNorm+RMSNorm fused bench added + smoke run:
+  - `tools/bench/runtime/build/vk_layernorm_rmsnorm_fused_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_bench_smoke.txt`
+- Vulkan LayerNorm+RMSNorm fused tiled bench added + smoke run:
+  - `tools/bench/runtime/build/vk_layernorm_rmsnorm_fused_tiled_bench`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_tiled_bench_smoke.txt`
+- LLM Vulkan standard/perf runs recorded:
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_tiled_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_tiled_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_standard.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_tiled_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_tiled_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_perf.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_perf.txt`
+- Compute-only benches recorded and archived:
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_bench_compute_only.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_ts_bench_compute_only.txt`
+  These results capture throughput with `--compute-only=1` on the Ryzen 5 8600G/RADV Phoenix stack.

@@ -1,0 +1,8 @@
+GRETA CORE Runtime Bench: dispatch_bench
+n=500000
+RESULT dispatch_bench:
+  mean_ns_per_submit_and_exec=312.787
+  p50_ns_per_submit_and_exec=311.408
+  p99_ns_per_submit_and_exec=321.366
+DISPATCH stats snapshot:
+  submits=10000000 completed=10000000 total_work_ns=194510483

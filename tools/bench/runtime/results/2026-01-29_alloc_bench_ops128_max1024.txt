@@ -1,0 +1,9 @@
+./build/alloc_bench --iters 200000 --ops 128 --max-kb 1024
+GRETA CORE Runtime Bench: alloc_bench
+iters=200000 ops=128 max_kb=1024 seed=12345
+RESULT alloc_bench:
+  mean_sec=0.521  mean_ops_per_sec=98339496.620
+  p50_sec=0.520   p50_ops_per_sec=98430421.577
+  p99_sec=0.529   p99_ops_per_sec=96817128.578
+ALLOCATOR stats snapshot:
+  alloc_calls=1280010000 free_calls=1280010000 reuse_hits=1279931687 os_allocs=78313 bytes_in_use=0 bytes_reserved=145268736

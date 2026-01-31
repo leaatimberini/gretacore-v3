@@ -1,0 +1,7 @@
+# Placeholder lockfile for GRETA bundled frameworks
+# Fill with pinned versions once target ROCm stack is confirmed.
+# Candidate (pending validation):
+# torch==2.9.*+rocm
+# triton==<bundled-with-torch>
+# jax==TBD
+# jaxlib==TBD

@@ -1,0 +1,8 @@
+GRETA CORE Runtime Bench: stream_bench
+n=500000
+RESULT stream_bench:
+  mean_sec=0.030  mean_ns_per_task=60.594
+  p50_sec=0.030   p50_ns_per_task=60.781
+  p99_sec=0.035   p99_ns_per_task=69.860
+EVENT sanity:
+  elapsed_ns(a->b)=2550 (should be small, >=0)

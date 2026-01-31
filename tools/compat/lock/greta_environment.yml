@@ -1,0 +1,20 @@
+# Placeholder conda environment for GRETA bundled frameworks
+name: greta
+channels:
+  - conda-forge
+  - rocm
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  # - rocm=7.1.1 (candidate)
+  # - pytorch=2.9 (candidate, ROCm build)
+  # - triton=<bundled-with-torch>
+  # - jax=TBD
+  # - jaxlib=TBD
+  - pip:
+      # - torch==2.9.*+rocm
+      # - triton==<bundled-with-torch>
+      # - jax==TBD
+      # - jaxlib==TBD

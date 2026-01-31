@@ -1,0 +1,25 @@
+GRETA CORE Runtime Bench: vk_gemm_f16acc32_tiled_vec2_ts_bench
+M=1024 N=1024 K=1024 iters=10 batch=20
+Selected device:
+  vendor_id=0x1002
+  device_id=0x15bf
+  device_type=1
+  name=AMD Radeon Graphics (RADV PHOENIX)
+  driver_name=radv
+Capabilities:
+  subgroup_size_control_enabled=true
+  subgroup_size_range=[32, 64]
+  fp16_supported=true
+  fp16_enabled=true
+  robust_buffer_access_enabled=true
+Safety:
+  gpu_safe_mode=false
+  gpu_blacklisted=false
+TIMESTAMP:
+  timestampPeriod(ns_per_tick)=10
+VALIDATION(8x8): OK  max_abs_err=0
+RESULT vk_gemm_f16acc32_tiled_vec2_ts_bench (GPU-only kernel):
+  iters=10 batch=20
+  kernel_mean_ms=114.621  kernel_p50_ms=114.280  kernel_p99_ms=119.608
+  mean_TFLOPs=0.375  p50_TFLOPs=0.376  p99_TFLOPs=0.359
+STATUS=OK

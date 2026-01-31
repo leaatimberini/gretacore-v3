@@ -1,0 +1,11 @@
+GRETA CORE Runtime Bench: vk_smoke_bench
+Selected device:
+  vendor_id=0x1002
+  device_id=0x15bf
+  device_type=1
+  name=AMD Unknown (RADV GFX1103_R1)
+  driver_name=radv
+RESULT vk_smoke_bench:
+  init_ms=24.778
+  empty_submit_wait_ms=1.845
+  empty_submit_total_ms=1.896

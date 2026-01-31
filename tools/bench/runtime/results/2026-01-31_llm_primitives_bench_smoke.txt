@@ -1,0 +1,9 @@
+GRETA CORE Runtime Bench: llm_primitives_bench
+rows=128 cols=512 iters=5 mode=all
+RESULT layernorm: mean_ms=0.094 p50_ms=0.090 p99_ms=0.103 max_abs_mean=0.000 max_abs_var=0.000
+VALIDATION(layernorm): OK
+RESULT rmsnorm: mean_ms=0.049 p50_ms=0.049 p99_ms=0.050 max_abs_rms=0.000
+VALIDATION(rmsnorm): OK
+RESULT softmax: mean_ms=0.305 p50_ms=0.285 p99_ms=0.354 max_abs_sum=0.000
+VALIDATION(softmax): OK
+STATUS=OK

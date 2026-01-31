@@ -1,0 +1,8 @@
+GRETA CORE Runtime Bench: telemetry_bench
+iters=2000000
+RESULT telemetry_bench:
+  mean_ns_per_scope=39.693
+  p50_ns_per_scope=39.611
+  p99_ns_per_scope=40.410
+COUNTER snapshot:
+  timer_ns=1085798670
