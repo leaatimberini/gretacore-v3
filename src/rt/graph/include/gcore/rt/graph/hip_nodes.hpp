@@ -111,4 +111,30 @@ private:
   float mask_val_;
 };
 
+class HIPKVUpdateNode : public HIPGraphNode {
+public:
+  HIPKVUpdateNode(float *cache_k, float *cache_v, const float *new_k,
+                  const float *new_v, uint32_t pos, uint32_t max_seq_len,
+                  uint32_t num_heads, uint32_t head_dim)
+      : cache_k_(cache_k), cache_v_(cache_v), new_k_(new_k), new_v_(new_v),
+        pos_(pos), max_seq_len_(max_seq_len), num_heads_(num_heads),
+        head_dim_(head_dim) {}
+
+  bool record(hipStream_t stream, std::string *err) override {
+    gcore::rt::hip::kernels::launch_kv_update(
+        stream, cache_k_, cache_v_, new_k_, new_v_, pos_, max_seq_len_,
+        num_heads_, head_dim_);
+    return true;
+  }
+
+  const char *name() const override { return "HIPKVUpdateNode"; }
+
+private:
+  float *cache_k_;
+  float *cache_v_;
+  const float *new_k_;
+  const float *new_v_;
+  uint32_t pos_, max_seq_len_, num_heads_, head_dim_;
+};
+
 } // namespace gcore::rt::graph

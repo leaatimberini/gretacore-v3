@@ -57,4 +57,35 @@ void launch_causal_mask(hipStream_t stream, float *data, uint32_t seq_len, float
   causal_mask_kernel<<<grid_size, block_size, 0, stream>>>(data, seq_len, mask_val);
 }
 
+__global__ void kv_update_kernel(float *cache_k, float *cache_v, const float *new_k,
+                               const float *new_v, uint32_t pos,
+                               uint32_t max_seq_len, uint32_t num_heads,
+                               uint32_t head_dim) {
+  uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  uint32_t total = num_heads * head_dim;
+
+  if (idx >= total) return;
+
+  uint32_t head_idx = idx / head_dim;
+  uint32_t feat_idx = idx % head_dim;
+
+  uint32_t src_off = head_idx * head_dim + feat_idx;
+  uint32_t dst_off = head_idx * (max_seq_len * head_dim) + pos * head_dim + feat_idx;
+
+  cache_k[dst_off] = new_k[src_off];
+  cache_v[dst_off] = new_v[src_off];
+}
+
+void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
+                      const float *new_k, const float *new_v, uint32_t pos,
+                      uint32_t max_seq_len, uint32_t num_heads,
+                      uint32_t head_dim) {
+  uint32_t total = num_heads * head_dim;
+  uint32_t threads = 256;
+  uint32_t blocks = (total + threads - 1) / threads;
+
+  kv_update_kernel<<<blocks, threads, 0, stream>>>(
+      cache_k, cache_v, new_k, new_v, pos, max_seq_len, num_heads, head_dim);
+}
+
 } // namespace gcore::rt::hip::kernels

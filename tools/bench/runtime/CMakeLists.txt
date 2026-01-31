@@ -165,6 +165,24 @@ if(HIP_FOUND OR EXISTS ${ROCM_PATH})
     ${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/graph/include
   )
 
+  add_executable(hip_kv_cache_bench
+    src/hip_kv_cache_bench.cpp
+    ../../../src/rt/backend/hip/kernels/basic_kernels.hip
+    ../../../src/rt/backend/hip/kernels/gemm_kernels.hip
+    ../../../src/rt/backend/hip/kernels/attention_kernels.hip
+    ../../../src/rt/backend/hip/src/backend.cpp
+    ../../../src/rt/backend/hip/src/buffer.cpp
+    ../../../src/rt/backend/hip/src/stream.cpp
+  )
+  target_compile_definitions(hip_kv_cache_bench PRIVATE 
+    GCORE_USE_HIP=1
+    __HIP_PLATFORM_AMD__=1
+  )
+  target_compile_options(hip_kv_cache_bench PRIVATE -O3 -march=native -pthread)
+  target_include_directories(hip_kv_cache_bench PRIVATE 
+    ${CMAKE_CURRENT_LIST_DIR}/../../../src/rt/graph/include
+  )
+
   # Try various ways to link HIP
   if(TARGET hip::host)
     target_link_libraries(hip_smoke_bench PRIVATE hip::host)
