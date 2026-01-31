@@ -19,6 +19,7 @@ set(INFERENCE_INCLUDE_DIRS
 set(INFERENCE_SOURCES
     src/weight_loader.cpp
     src/block_scheduler.cpp
+    src/tokenizer.cpp
 )
 
 # Build as static library
@@ -54,3 +55,10 @@ target_compile_definitions(block_scheduler_test PRIVATE
 )
 target_link_directories(block_scheduler_test PRIVATE ${ROCM_PATH}/lib)
 target_link_libraries(block_scheduler_test PRIVATE amdhip64)
+
+# Tokenizer Test (no HIP dependency)
+add_executable(tokenizer_test
+    test/tokenizer_test.cpp
+    src/tokenizer.cpp
+)
+target_include_directories(tokenizer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
