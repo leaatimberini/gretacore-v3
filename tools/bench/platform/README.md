@@ -51,6 +51,11 @@ Remote:
 tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
 ```
 
+Generate CSV summary:
+```bash
+tools/bench/platform/scripts/gen_bench_csv.py tools/bench/platform/results
+```
+
 ### Standalone (HIP) [EN]
 ```bash
 tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5 --check 1 --check-samples 8
@@ -94,6 +99,11 @@ tools/bench/platform/scripts/run_presets_local.sh smoke
 Remoto:
 ```bash
 tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
+```
+
+Generar resumen CSV:
+```bash
+tools/bench/platform/scripts/gen_bench_csv.py tools/bench/platform/results
 ```
 
 ### Standalone (HIP) [ES]
