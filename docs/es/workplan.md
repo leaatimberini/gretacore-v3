@@ -198,17 +198,20 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard.txt`
-- AMD Developer Cloud MI300X VF (Ubuntu 24.04.3, ROCm 7.1) smoke registrados:
+- AMD Developer Cloud MI300X VF (Ubuntu 24.04.3, ROCm 7.2) smoke registrados:
   - `tools/bench/platform/results/2026-01-31_membw_cpu_smoke_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_memlat_cpu_smoke_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_smoke_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_gemm_smoke_amdcloud.txt`
 - AMD Developer Cloud MI300X VF standard/perf registrados:
   - `tools/bench/platform/results/2026-01-31_membw_cpu_standard_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_memlat_cpu_standard_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_standard_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_gemm_standard_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_membw_cpu_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_memlat_cpu_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt`
+  - `tools/bench/platform/results/2026-01-31_hip_gemm_perf_amdcloud.txt`

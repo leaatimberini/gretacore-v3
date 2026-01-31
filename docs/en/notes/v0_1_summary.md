@@ -5,7 +5,7 @@ Date: 2026-01-31
 ## Environment
 - Local: Ryzen 5 8600G + AMD Radeon Graphics (RADV Phoenix)
 - Remote: Runpod MI300X (RADV GFX940), ROCm 6.1 container
-- Remote: AMD Developer Cloud MI300X VF, Ubuntu 24.04.3, kernel 6.8.0-87, ROCm 7.1
+- Remote: AMD Developer Cloud MI300X VF, Ubuntu 24.04.3, kernel 6.8.0-87, ROCm 7.2
 
 ## Scope Achieved
 - Device-local + staging path active in Vulkan benches and runtime smoke.
@@ -40,25 +40,28 @@ Date: 2026-01-31
 | hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 2689.372 | OK |
 | hip_vec_add standard (n=16777216, iters=200) | kernel_gbps | 4747.449 | OK |
 
-## AMD Cloud MI300X VF HIP Smoke (ROCm 7.1, Ubuntu 24.04.3)
+## AMD Cloud MI300X VF HIP Smoke (ROCm 7.2, Ubuntu 24.04.3)
 | Bench | metric | value | status |
 | --- | --- | --- | --- |
 | membw_cpu smoke (512 MiB, iters=3) | mean_GiBps | 152.131 | OK |
 | memlat_cpu smoke (128 MiB, iters=20) | mean_ns_per_hop | 43.67 | OK |
 | hip_noop_launch smoke (iters=100000) | per_launch_us | 1.5508 | OK |
 | hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 3787.843 | OK |
+| hip_gemm smoke (m=n=k=512, iters=10) | tflops | 30.173 | OK |
 
-## AMD Cloud MI300X VF Standard/Perf (ROCm 7.1)
+## AMD Cloud MI300X VF Standard/Perf (ROCm 7.2)
 | Bench | metric | value | status |
 | --- | --- | --- | --- |
 | membw_cpu standard (1024 MiB, iters=6) | mean_GiBps | 152.474 | OK |
 | memlat_cpu standard (256 MiB, iters=50) | mean_ns_per_hop | 62.97 | OK |
 | hip_noop_launch standard (iters=200000) | per_launch_us | 1.5517 | OK |
 | hip_vec_add standard (n=16777216, iters=200) | kernel_gbps | 4398.102 | OK |
+| hip_gemm standard (m=n=k=2048, iters=20) | tflops | 80.369 | OK |
 | membw_cpu perf (2048 MiB, iters=8) | mean_GiBps | 177.892 | OK |
 | memlat_cpu perf (512 MiB, iters=80) | mean_ns_per_hop | 107.04 | OK |
 | hip_noop_launch perf (iters=400000) | per_launch_us | 1.5506 | OK |
 | hip_vec_add perf (n=16777216, iters=400) | kernel_gbps | 4370.602 | OK |
+| hip_gemm perf (m=n=k=4096, iters=10) | tflops | 111.031 | OK |
 
 ## Artifacts
 - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
@@ -105,14 +108,17 @@ Date: 2026-01-31
 - `tools/bench/platform/results/2026-01-31_memlat_cpu_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_noop_launch_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_gemm_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_membw_cpu_standard_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_memlat_cpu_standard_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_noop_launch_standard_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_gemm_standard_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_membw_cpu_perf_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_memlat_cpu_perf_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt` (AMD Cloud MI300X VF)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_gemm_perf_amdcloud.txt` (AMD Cloud MI300X VF)
 
 ## Standard Bench Summary (1024^3, batch=20)
 | Bench | kernel_mean_ms | mean_TFLOPs | status |
