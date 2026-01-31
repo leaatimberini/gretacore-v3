@@ -136,7 +136,8 @@ int main(int argc, char **argv) {
   const double ops = 2.0 * double(m) * double(n) * double(k) * double(iters);
   const double tflops = (ops / 1.0e12) / (kernel_ms / 1.0e3);
 
-  double max_abs_err = 0.0;
+  double max_abs_err_col = 0.0;
+  double max_abs_err_row = 0.0;
   if (check) {
     if (hipMemcpy(hc.data(), dc, bytes_c, hipMemcpyDeviceToHost) !=
         hipSuccess) {
@@ -149,15 +150,22 @@ int main(int argc, char **argv) {
       for (int s = 0; s < samples; s++) {
         int mi = dist_m(rng);
         int ni = dist_n(rng);
-        double acc = 0.0;
+        double acc_col = 0.0;
+        double acc_row = 0.0;
         for (int ki = 0; ki < k; ki++) {
-          acc += double(ha[static_cast<size_t>(ki) * m + mi]) *
-                 double(hb[static_cast<size_t>(ni) * k + ki]);
+          acc_col += double(ha[static_cast<size_t>(ki) * m + mi]) *
+                     double(hb[static_cast<size_t>(ni) * k + ki]);
+          acc_row += double(ha[static_cast<size_t>(mi) * k + ki]) *
+                     double(hb[static_cast<size_t>(ki) * n + ni]);
         }
-        double err = std::abs(
-            acc - double(hc[static_cast<size_t>(ni) * m + mi]));
-        if (err > max_abs_err)
-          max_abs_err = err;
+        double err_col = std::abs(
+            acc_col - double(hc[static_cast<size_t>(ni) * m + mi]));
+        double err_row = std::abs(
+            acc_row - double(hc[static_cast<size_t>(mi) * n + ni]));
+        if (err_col > max_abs_err_col)
+          max_abs_err_col = err_col;
+        if (err_row > max_abs_err_row)
+          max_abs_err_row = err_row;
       }
     }
   }
@@ -168,7 +176,8 @@ int main(int argc, char **argv) {
   std::cout << "  kernel_ms_avg=" << (kernel_ms / double(iters)) << "\n";
   std::cout << "  tflops=" << tflops << "\n";
   if (check) {
-    std::cout << "  max_abs_err=" << max_abs_err << "\n";
+    std::cout << "  max_abs_err_col=" << max_abs_err_col << "\n";
+    std::cout << "  max_abs_err_row=" << max_abs_err_row << "\n";
   }
 
   hipEventDestroy(ev_start);
