@@ -185,6 +185,19 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_perf.txt`
   - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_perf.txt`
   - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_perf.txt`
+- Runtime verify preset recorded (APU):
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_ts_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_ts_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_32x8_ts_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_gemm_f16acc32_tiled_vec2_db_ts_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_rmsnorm_fused_tiled_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_layernorm_tiled_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_rmsnorm_tiled_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_bench_verify.txt`
+  - `tools/bench/runtime/results/2026-01-31_vk_softmax_tiled_bench_verify.txt`
 - Compute-only benches recorded and archived:
   - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
   - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_bench_compute_only.txt`

@@ -1,0 +1,20 @@
+GRETA CORE Runtime Bench: vk_layernorm_tiled_bench
+rows=32 cols=128 iters=3
+Selected device:
+  vendor_id=0x1002
+  device_id=0x15bf
+  device_type=1
+  name=AMD Radeon Graphics (RADV PHOENIX)
+  driver_name=radv
+Capabilities:
+  subgroup_size_control_enabled=true
+  subgroup_size_range=[32, 64]
+  fp16_supported=true
+  fp16_enabled=true
+  robust_buffer_access_enabled=true
+Safety:
+  gpu_safe_mode=false
+  gpu_blacklisted=false
+RESULT vk_layernorm_tiled_bench: mean_ms=0.047 p50_ms=0.044 p99_ms=0.054
+VALIDATION(layernorm_tiled): OK max_abs_err=0.000
+STATUS=OK
