@@ -74,6 +74,12 @@ int main(int argc, char **argv) {
     ha[i] = static_cast<float>((i % 251) - 125) * 0.01f;
   for (size_t i = 0; i < hb.size(); i++)
     hb[i] = static_cast<float>((i % 197) - 98) * 0.02f;
+  if (dump) {
+    std::cout << "  ha[0..3]=" << ha[0] << "," << ha[1] << "," << ha[2] << ","
+              << ha[3] << "\n";
+    std::cout << "  hb[0..3]=" << hb[0] << "," << hb[1] << "," << hb[2] << ","
+              << hb[3] << "\n";
+  }
 
   float *da = nullptr;
   float *db = nullptr;
