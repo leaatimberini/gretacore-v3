@@ -1,6 +1,6 @@
 GRETA CORE Platform Bench: memlat_cpu
 size_mb=512 iters=80 seed=12345
 RESULT memlat_cpu:
-  mean_ns_per_hop=107.04
-  p50_ns_per_hop=110.30
-  p99_ns_per_hop=113.97
+  mean_ns_per_hop=102.68
+  p50_ns_per_hop=99.94
+  p99_ns_per_hop=116.87

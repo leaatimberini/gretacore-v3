@@ -3,8 +3,8 @@ n=4194304 iters=50 warmup=10
 device=AMD Instinct MI300X VF
 gcn_arch=gfx942:sramecc+:xnack-
 RESULT hip_vec_add:
-  kernel_ms_total=0.664
+  kernel_ms_total=0.663
   kernel_ms_avg=0.013
-  kernel_gbps=3787.843
-  d2h_ms=0.971
+  kernel_gbps=3793.130
+  d2h_ms=0.625
   max_abs_err=0.000

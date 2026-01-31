@@ -1,5 +1,5 @@
 GRETA CORE Platform Bench: hip_noop_launch
 iters=400000
 RESULT hip_noop_launch:
-  total_sec=0.6202
-  per_launch_us=1.5506
+  total_sec=0.6204
+  per_launch_us=1.5509

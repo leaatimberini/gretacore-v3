@@ -1,6 +1,6 @@
 GRETA CORE Platform Bench: membw_cpu
 size_mb=2048 iters=8 threads=20 used_bytes=2048 MiB
 RESULT membw_cpu:
-  mean_sec=0.022  mean_GiBps=177.892
-  p50_sec=0.022   p50_GiBps=182.826
-  p99_sec=0.025   p99_GiBps=159.247
+  mean_sec=0.026  mean_GiBps=155.615
+  p50_sec=0.027   p50_GiBps=148.440
+  p99_sec=0.028   p99_GiBps=143.596
