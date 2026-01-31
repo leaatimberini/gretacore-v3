@@ -78,6 +78,8 @@ clear stop conditions on limited local hardware.
 - [x] Publish tokens/s + latency metrics (2.1 ms on MI300X).
 - [x] Wire RMSNorm + QKV + attention + MLP path (Validated in `hip_llama_block_test`).
 
+**Technical Closure Report:** [Phase 2 - Technical Closure (EN)](docs/en/strategy/phase_2_technical_closure.md) | [Fase 2 - Cierre Técnico (ES)](docs/es/strategy/phase_2_technical_closure.md)
+
 ---
 
 ### LOE-5 — Framework Compatibility & DX

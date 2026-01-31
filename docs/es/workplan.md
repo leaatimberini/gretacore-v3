@@ -78,6 +78,8 @@ condiciones de stop claras en hardware local limitado.
 - [x] Publicar tokens/s + latencia (2.1 ms en MI300X).
 - [x] Conectar pipeline RMSNorm + QKV + atención + MLP (Validado en `hip_llama_block_test`).
 
+**Reporte de Cierre Técnico:** [Fase 2 - Cierre Técnico (ES)](docs/es/strategy/phase_2_technical_closure.md) | [Phase 2 - Technical Closure (EN)](docs/en/strategy/phase_2_technical_closure.md)
+
 ---
 
 ### LOE-5 — Compatibilidad de Frameworks y DX
