@@ -1,6 +1,7 @@
 #include "gcore/rt/vk/buffer.hpp"
 
 #include <cstring>
+#include <cstdlib>
 
 namespace gcore::rt::vk {
 
@@ -93,6 +94,19 @@ bool create_device_local_buffer(VkPhysicalDevice phys, VkDevice dev,
                                 Buffer *out, std::string *err) {
   VkBufferUsageFlags u = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  auto host_visible = []() {
+    const char *v = std::getenv("GCORE_VK_HOST_VISIBLE");
+    if (!v)
+      return false;
+    return std::strcmp(v, "1") == 0 || std::strcmp(v, "true") == 0 ||
+           std::strcmp(v, "TRUE") == 0 || std::strcmp(v, "yes") == 0 ||
+           std::strcmp(v, "YES") == 0;
+  };
+  if (host_visible()) {
+    VkMemoryPropertyFlags p = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    return create_buffer(phys, dev, size, u, p, out, err);
+  }
   return create_buffer(phys, dev, size, u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                        out, err);
 }
@@ -206,6 +220,11 @@ bool stage_host_to_device(VkDevice dev, VkCommandPool pool, VkQueue queue,
                           VkDeviceSize size, HostCallback fill,
                           std::string *err) {
   void *p = nullptr;
+  if (map_buffer(dev, device, &p, nullptr)) {
+    fill(p, size);
+    unmap_buffer(dev, device);
+    return true;
+  }
   if (!map_buffer(dev, staging, &p, err))
     return false;
   fill(p, size);
@@ -218,9 +237,14 @@ bool read_device_to_host(VkDevice dev, VkCommandPool pool, VkQueue queue,
                          VkDeviceSize size,
                          const std::function<void(const void *, VkDeviceSize)> &cons,
                          std::string *err) {
+  void *p = nullptr;
+  if (map_buffer(dev, device, &p, nullptr)) {
+    cons(p, size);
+    unmap_buffer(dev, device);
+    return true;
+  }
   if (!copy_buffer(dev, pool, queue, device, staging, size, err))
     return false;
-  void *p = nullptr;
   if (!map_buffer(dev, staging, &p, err))
     return false;
   cons(p, size);
