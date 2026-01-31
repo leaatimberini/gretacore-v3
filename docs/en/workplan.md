@@ -219,3 +219,5 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_diag_amdcloud.txt`
 - hip_gemm input init overflow fixed (size_t underflow); dump confirms column-major check OK:
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_dump_amdcloud.txt`
+- hip_gemm check verified on 512^3 (column-major max_abs_err=0):
+  - `tools/bench/platform/results/2026-01-31_hip_gemm_check_fixed_amdcloud.txt`

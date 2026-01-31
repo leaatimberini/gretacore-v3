@@ -1,0 +1,15 @@
+GRETA CORE Platform Bench: hip_gemm
+m=512 n=512 k=512 iters=10 warmup=5 check=1 check_samples=8
+device=AMD Instinct MI300X VF
+gcn_arch=gfx942:sramecc+:xnack-
+RESULT hip_gemm:
+  kernel_ms_total=0.088
+  kernel_ms_avg=0.009
+  tflops=30.380
+  max_abs_err_col=0.000
+  max_abs_err_row=51.803
+  max_abs_err_col_vs_rowc=33.848
+  max_abs_err_row_vs_colc=34.448
+  max_abs_err_col_brow=28.301
+  max_abs_err_row_bcol=164.029
+  non_finite_samples=0
