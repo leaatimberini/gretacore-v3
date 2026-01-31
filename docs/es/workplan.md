@@ -137,7 +137,9 @@ Owner: Leandro Emanuel Timberini
 - Estado de ejecución local (venv): PyTorch OK, JAX OK, Triton OK (fallback CPU), ROCm requerido para GPU.
 - Bench de plataforma HIP agregado:
   - `tools/bench/platform/src/hip_vec_add.cpp`
+  - `tools/bench/platform/src/hip_gemm.cpp`
   - Target de build: `hip_vec_add`
+  - Target de build: `hip_gemm` (requiere hipBLAS)
 - Scripts de presets de plataforma agregados:
   - `tools/bench/platform/scripts/run_presets_local.sh`
   - `tools/bench/platform/scripts/run_presets_remote.sh`

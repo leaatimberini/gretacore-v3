@@ -25,18 +25,21 @@ case "$preset" in
     MEMLAT_SIZE_MB=128; MEMLAT_ITERS=20
     HIP_NOOP_ITERS=100000
     HIP_VEC_N=$((1 << 22)); HIP_VEC_ITERS=50
+    HIP_GEMM_M=512; HIP_GEMM_N=512; HIP_GEMM_K=512; HIP_GEMM_ITERS=10; HIP_GEMM_WARMUP=5
     ;;
   standard)
     MEMBW_SIZE_MB=1024; MEMBW_ITERS=6
     MEMLAT_SIZE_MB=256; MEMLAT_ITERS=50
     HIP_NOOP_ITERS=200000
     HIP_VEC_N=$((1 << 24)); HIP_VEC_ITERS=200
+    HIP_GEMM_M=2048; HIP_GEMM_N=2048; HIP_GEMM_K=2048; HIP_GEMM_ITERS=20; HIP_GEMM_WARMUP=5
     ;;
   perf)
     MEMBW_SIZE_MB=2048; MEMBW_ITERS=8
     MEMLAT_SIZE_MB=512; MEMLAT_ITERS=80
     HIP_NOOP_ITERS=400000
     HIP_VEC_N=$((1 << 24)); HIP_VEC_ITERS=400
+    HIP_GEMM_M=4096; HIP_GEMM_N=4096; HIP_GEMM_K=4096; HIP_GEMM_ITERS=10; HIP_GEMM_WARMUP=5
     ;;
   *)
     echo "unknown preset: $preset" >&2
@@ -57,4 +60,11 @@ if [[ -x "${build}/hip_vec_add" ]]; then
   run hip_vec_add --n "$HIP_VEC_N" --iters "$HIP_VEC_ITERS"
 else
   echo "hip_vec_add not found; skipping HIP benches" >&2
+fi
+
+if [[ -x "${build}/hip_gemm" ]]; then
+  run hip_gemm --m "$HIP_GEMM_M" --n "$HIP_GEMM_N" --k "$HIP_GEMM_K" \
+    --iters "$HIP_GEMM_ITERS" --warmup "$HIP_GEMM_WARMUP"
+else
+  echo "hip_gemm not found; skipping HIP GEMM bench" >&2
 fi

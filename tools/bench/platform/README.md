@@ -9,6 +9,7 @@ These benchmarks measure platform/hardware limits independently of GRETA CORE ru
 - CPU memory bandwidth (DDR5 throughput)
 - GPU kernel launch overhead (HIP no-op) when available
 - GPU vector add bandwidth (HIP) when available
+- GPU GEMM throughput (HIP+hipBLAS) when available
 
 ## Build (Ubuntu 22.04) [EN]
 From repo root:
@@ -43,6 +44,11 @@ Remote:
 tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
 ```
 
+### Standalone (HIP) [EN]
+```bash
+tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5
+```
+
 ## Construcción (Ubuntu 22.04) [ES]
 Desde el root del repo:
 
@@ -74,4 +80,9 @@ tools/bench/platform/scripts/run_presets_local.sh perf
 Remoto:
 ```bash
 tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
+```
+
+### Standalone (HIP) [ES]
+```bash
+tools/bench/platform/build/hip_gemm --m 2048 --n 2048 --k 2048 --iters 20 --warmup 5
 ```
