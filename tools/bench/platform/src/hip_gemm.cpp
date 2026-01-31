@@ -108,13 +108,31 @@ int main(int argc, char **argv) {
   hipStream_t stream{};
   hipStreamCreate(&stream);
   hipblasSetStream(handle, stream);
+  if (hipblasSetPointerMode(handle, HIPBLAS_POINTER_MODE_HOST) !=
+      HIPBLAS_STATUS_SUCCESS) {
+    std::cerr << "hipblasSetPointerMode failed\n";
+    hipblasDestroy(handle);
+    hipFree(da);
+    hipFree(db);
+    hipFree(dc);
+    return 1;
+  }
 
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
   for (int i = 0; i < warmup; i++) {
-    hipblasSgemm(handle, HIPBLAS_OP_N, HIPBLAS_OP_N, m, n, k, &alpha, da, m, db,
-                 k, &beta, dc, m);
+    hipblasStatus_t st =
+        hipblasSgemm(handle, HIPBLAS_OP_N, HIPBLAS_OP_N, m, n, k, &alpha, da, m,
+                     db, k, &beta, dc, m);
+    if (st != HIPBLAS_STATUS_SUCCESS) {
+      std::cerr << "hipblasSgemm warmup failed: " << int(st) << "\n";
+      hipblasDestroy(handle);
+      hipFree(da);
+      hipFree(db);
+      hipFree(dc);
+      return 1;
+    }
   }
   hipStreamSynchronize(stream);
 
@@ -124,8 +142,17 @@ int main(int argc, char **argv) {
 
   hipEventRecord(ev_start, stream);
   for (int i = 0; i < iters; i++) {
-    hipblasSgemm(handle, HIPBLAS_OP_N, HIPBLAS_OP_N, m, n, k, &alpha, da, m, db,
-                 k, &beta, dc, m);
+    hipblasStatus_t st =
+        hipblasSgemm(handle, HIPBLAS_OP_N, HIPBLAS_OP_N, m, n, k, &alpha, da, m,
+                     db, k, &beta, dc, m);
+    if (st != HIPBLAS_STATUS_SUCCESS) {
+      std::cerr << "hipblasSgemm failed: " << int(st) << "\n";
+      hipblasDestroy(handle);
+      hipFree(da);
+      hipFree(db);
+      hipFree(dc);
+      return 1;
+    }
   }
   hipEventRecord(ev_stop, stream);
   hipEventSynchronize(ev_stop);
