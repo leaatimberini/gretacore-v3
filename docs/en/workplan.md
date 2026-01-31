@@ -135,6 +135,9 @@ Owner: Leandro Emanuel Timberini
   - `tools/compat/pytorch/greta_extension_hello.py`
   - `tools/compat/jax/jax_custom_call_hello.py`
 - Prototype run status (local, venv): PyTorch OK, JAX OK, Triton OK (cpu fallback), ROCm build required for GPU.
+- HIP platform bench added:
+  - `tools/bench/platform/src/hip_vec_add.cpp`
+  - Build target: `hip_vec_add`
 - LLM primitives CPU bench added + smoke run:
   - `tools/bench/runtime/build/llm_primitives_bench`
   - `tools/bench/runtime/results/2026-01-31_llm_primitives_bench_smoke.txt`
@@ -182,3 +185,7 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_bench_compute_only.txt`
   - `tools/bench/runtime/results/2026-01-31_vk_gemm_tiled_ts_bench_compute_only.txt`
   These results capture throughput with `--compute-only=1` on the Ryzen 5 8600G/RADV Phoenix stack.
+- MI300X Vulkan status (Runpod, ROCm 6.1 container):
+  - RADV ICD initializes but vkQueueSubmit fails with `CS rejected` (VkResult=-4).
+  - AMDVLK ICD installs from amdvlk bionic repo, but vkCreateInstance fails (ERROR_INCOMPATIBLE_DRIVER).
+  - Action: require AMDGPU-PRO Vulkan ICD or Runpod image with validated Vulkan for MI300X.
