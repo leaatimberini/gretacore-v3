@@ -5,6 +5,7 @@ Fecha: 2026-01-31
 ## Entorno
 - Local: Ryzen 5 8600G + AMD Radeon Graphics (RADV Phoenix)
 - Remoto: Runpod MI300X (RADV GFX940), contenedor ROCm 6.1
+- Remoto: AMD Developer Cloud MI300X VF, Ubuntu 24.04.3, kernel 6.8.0-87, ROCm 7.1
 
 ## Alcance Logrado
 - Ruta device-local + staging activa en benches Vulkan y smoke runtime.
@@ -38,6 +39,14 @@ Fecha: 2026-01-31
 | hip_noop_launch (iters=200000) | per_launch_us | 2.3483 | OK |
 | hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 2689.372 | OK |
 | hip_vec_add estándar (n=16777216, iters=200) | kernel_gbps | 4747.449 | OK |
+
+## AMD Cloud MI300X VF HIP Smoke (ROCm 7.1, Ubuntu 24.04.3)
+| Bench | métrica | valor | estado |
+| --- | --- | --- | --- |
+| membw_cpu smoke (512 MiB, iters=3) | mean_GiBps | 152.131 | OK |
+| memlat_cpu smoke (128 MiB, iters=20) | mean_ns_per_hop | 43.67 | OK |
+| hip_noop_launch smoke (iters=100000) | per_launch_us | 1.5508 | OK |
+| hip_vec_add smoke (n=4194304, iters=50) | kernel_gbps | 3787.843 | OK |
 
 ## Artefactos
 - `tools/bench/runtime/results/2026-01-31_vk_gemm_bench_compute_only.txt`
@@ -80,6 +89,10 @@ Fecha: 2026-01-31
 - `tools/bench/platform/results/2026-01-31_hip_noop_launch.txt` (MI300X Runpod)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke.txt` (MI300X Runpod)
 - `tools/bench/platform/results/2026-01-31_hip_vec_add_standard.txt` (MI300X Runpod)
+- `tools/bench/platform/results/2026-01-31_membw_cpu_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_memlat_cpu_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_noop_launch_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
+- `tools/bench/platform/results/2026-01-31_hip_vec_add_smoke_amdcloud.txt` (AMD Cloud MI300X VF)
 
 ## Resumen Bench Estándar (1024^3, batch=20)
 | Bench | kernel_mean_ms | mean_TFLOPs | status |
