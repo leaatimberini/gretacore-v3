@@ -215,6 +215,7 @@ Owner: Leandro Emanuel Timberini
   - `tools/bench/platform/results/2026-01-31_hip_noop_launch_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_vec_add_perf_amdcloud.txt`
   - `tools/bench/platform/results/2026-01-31_hip_gemm_perf_amdcloud.txt`
+- Resultados de AMD Cloud refrescados con hip_gemm check habilitado (column-major OK).
 - Diagnóstico hip_gemm en AMD Developer Cloud MI300X VF (layout mismatch pendiente):
   - `tools/bench/platform/results/2026-01-31_hip_gemm_check_diag_amdcloud.txt`
 - Fix de overflow en init de hip_gemm (underflow de size_t); dump confirma check column-major OK:
