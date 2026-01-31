@@ -16,7 +16,7 @@ public:
   Buffer() = default;
   ~Buffer();
 
-  bool allocate(size_t size, BufferUsage usage, std::string *err);
+  bool allocate(size_t size, BufferUsage usage, std::string *err = nullptr);
   void free();
 
   void *data() { return ptr_; }
