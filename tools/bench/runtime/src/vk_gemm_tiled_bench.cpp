@@ -109,6 +109,14 @@ int main(int argc, char **argv) {
       std::filesystem::current_path() / "build" / "gemm_f32_tiled.comp.spv";
   auto spv = read_spv_u32(spv_path);
   if (spv.empty()) {
+    std::filesystem::path alt =
+        std::filesystem::current_path() / "tools" / "bench" / "runtime" /
+        "build" / "gemm_f32_tiled.comp.spv";
+    spv = read_spv_u32(alt);
+    if (!spv.empty())
+      spv_path = alt;
+  }
+  if (spv.empty()) {
     std::cerr << "Failed to read SPIR-V: " << spv_path.string() << "\n";
     std::cout << "STATUS=FAILED reason=\"shader_read_failed\"\n";
     return 2;
