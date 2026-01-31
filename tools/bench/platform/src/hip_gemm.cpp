@@ -165,6 +165,10 @@ int main(int argc, char **argv) {
 
   double max_abs_err_col = 0.0;
   double max_abs_err_row = 0.0;
+  double max_abs_err_col_vs_rowc = 0.0;
+  double max_abs_err_row_vs_colc = 0.0;
+  double max_abs_err_col_brow = 0.0;
+  double max_abs_err_row_bcol = 0.0;
   int non_finite = 0;
   if (check) {
     if (hipMemcpy(hc.data(), dc, bytes_c, hipMemcpyDeviceToHost) !=
@@ -180,11 +184,17 @@ int main(int argc, char **argv) {
         int ni = dist_n(rng);
         double acc_col = 0.0;
         double acc_row = 0.0;
+        double acc_col_brow = 0.0;
+        double acc_row_bcol = 0.0;
         for (int ki = 0; ki < k; ki++) {
           acc_col += double(ha[static_cast<size_t>(ki) * m + mi]) *
                      double(hb[static_cast<size_t>(ni) * k + ki]);
           acc_row += double(ha[static_cast<size_t>(mi) * k + ki]) *
                      double(hb[static_cast<size_t>(ki) * n + ni]);
+          acc_col_brow += double(ha[static_cast<size_t>(ki) * m + mi]) *
+                          double(hb[static_cast<size_t>(ki) * n + ni]);
+          acc_row_bcol += double(ha[static_cast<size_t>(mi) * k + ki]) *
+                          double(hb[static_cast<size_t>(ni) * k + ki]);
         }
         double c_col = double(hc[static_cast<size_t>(ni) * m + mi]);
         double c_row = double(hc[static_cast<size_t>(mi) * n + ni]);
@@ -194,10 +204,22 @@ int main(int argc, char **argv) {
         }
         double err_col = std::abs(acc_col - c_col);
         double err_row = std::abs(acc_row - c_row);
+        double err_col_vs_rowc = std::abs(acc_col - c_row);
+        double err_row_vs_colc = std::abs(acc_row - c_col);
+        double err_col_brow = std::abs(acc_col_brow - c_col);
+        double err_row_bcol = std::abs(acc_row_bcol - c_col);
         if (err_col > max_abs_err_col)
           max_abs_err_col = err_col;
         if (err_row > max_abs_err_row)
           max_abs_err_row = err_row;
+        if (err_col_vs_rowc > max_abs_err_col_vs_rowc)
+          max_abs_err_col_vs_rowc = err_col_vs_rowc;
+        if (err_row_vs_colc > max_abs_err_row_vs_colc)
+          max_abs_err_row_vs_colc = err_row_vs_colc;
+        if (err_col_brow > max_abs_err_col_brow)
+          max_abs_err_col_brow = err_col_brow;
+        if (err_row_bcol > max_abs_err_row_bcol)
+          max_abs_err_row_bcol = err_row_bcol;
       }
     }
   }
@@ -210,6 +232,12 @@ int main(int argc, char **argv) {
   if (check) {
     std::cout << "  max_abs_err_col=" << max_abs_err_col << "\n";
     std::cout << "  max_abs_err_row=" << max_abs_err_row << "\n";
+    std::cout << "  max_abs_err_col_vs_rowc=" << max_abs_err_col_vs_rowc
+              << "\n";
+    std::cout << "  max_abs_err_row_vs_colc=" << max_abs_err_row_vs_colc
+              << "\n";
+    std::cout << "  max_abs_err_col_brow=" << max_abs_err_col_brow << "\n";
+    std::cout << "  max_abs_err_row_bcol=" << max_abs_err_row_bcol << "\n";
     std::cout << "  non_finite_samples=" << non_finite << "\n";
   }
 
