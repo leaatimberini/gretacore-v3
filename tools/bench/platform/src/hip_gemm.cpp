@@ -151,11 +151,11 @@ int main(int argc, char **argv) {
         int ni = dist_n(rng);
         double acc = 0.0;
         for (int ki = 0; ki < k; ki++) {
-          acc += double(ha[static_cast<size_t>(mi) * k + ki]) *
-                 double(hb[static_cast<size_t>(ki) * n + ni]);
+          acc += double(ha[static_cast<size_t>(ki) * m + mi]) *
+                 double(hb[static_cast<size_t>(ni) * k + ki]);
         }
-        double err =
-            std::abs(acc - double(hc[static_cast<size_t>(mi) * n + ni]));
+        double err = std::abs(
+            acc - double(hc[static_cast<size_t>(ni) * m + mi]));
         if (err > max_abs_err)
           max_abs_err = err;
       }
