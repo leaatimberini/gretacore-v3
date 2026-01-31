@@ -20,6 +20,7 @@ set(INFERENCE_SOURCES
     src/weight_loader.cpp
     src/block_scheduler.cpp
     src/tokenizer.cpp
+    src/generator.cpp
 )
 
 # Build as static library
