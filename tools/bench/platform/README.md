@@ -28,7 +28,7 @@ export HIP_PATH=/opt/rocm
 export CMAKE_PREFIX_PATH=/opt/rocm
 export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH
 export GRETA_HIP_ARCH=gfx942
-cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON -DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++
 cmake --build tools/bench/platform/build
 ```
 
@@ -66,7 +66,7 @@ export HIP_PATH=/opt/rocm
 export CMAKE_PREFIX_PATH=/opt/rocm
 export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH
 export GRETA_HIP_ARCH=gfx942
-cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON
+cmake -S tools/bench/platform -B tools/bench/platform/build -G Ninja -DGRETA_ENABLE_HIP=ON -DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++
 cmake --build tools/bench/platform/build
 ```
 
