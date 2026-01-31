@@ -63,8 +63,11 @@ else
 fi
 
 if [[ -x "${build}/hip_gemm" ]]; then
+  HIP_GEMM_CHECK="${GRETA_HIP_GEMM_CHECK:-0}"
+  HIP_GEMM_CHECK_SAMPLES="${GRETA_HIP_GEMM_CHECK_SAMPLES:-8}"
   run hip_gemm --m "$HIP_GEMM_M" --n "$HIP_GEMM_N" --k "$HIP_GEMM_K" \
-    --iters "$HIP_GEMM_ITERS" --warmup "$HIP_GEMM_WARMUP"
+    --iters "$HIP_GEMM_ITERS" --warmup "$HIP_GEMM_WARMUP" \
+    --check "$HIP_GEMM_CHECK" --check-samples "$HIP_GEMM_CHECK_SAMPLES"
 else
   echo "hip_gemm not found; skipping HIP GEMM bench" >&2
 fi
