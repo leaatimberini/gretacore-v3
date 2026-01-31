@@ -24,6 +24,10 @@ case "$preset" in
     M=128; N=128; K=128; iters=3; batch=5
     LLM_ROWS=64; LLM_COLS=256; LLM_ITERS=5
     ;;
+  verify)
+    M=64; N=64; K=64; iters=2; batch=2
+    LLM_ROWS=32; LLM_COLS=128; LLM_ITERS=3
+    ;;
   standard)
     M=1024; N=1024; K=1024; iters=10; batch=20
     LLM_ROWS=256; LLM_COLS=1024; LLM_ITERS=10
