@@ -51,7 +51,7 @@ bool Backend::init(std::string *err) {
 
 void Backend::shutdown() {
   if (device_id_ >= 0) {
-    hipDeviceReset();
+    (void)hipDeviceReset();
     device_id_ = -1;
   }
 }

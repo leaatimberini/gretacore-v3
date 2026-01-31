@@ -6,7 +6,7 @@ Stream::Stream() = default;
 
 Stream::~Stream() {
   if (stream_) {
-    hipStreamDestroy(stream_);
+    (void)hipStreamDestroy(stream_);
     stream_ = nullptr;
   }
 }
@@ -18,7 +18,7 @@ Stream::Stream(Stream &&other) noexcept : stream_(other.stream_) {
 Stream &Stream::operator=(Stream &&other) noexcept {
   if (this != &other) {
     if (stream_) {
-      hipStreamDestroy(stream_);
+      (void)hipStreamDestroy(stream_);
     }
     stream_ = other.stream_;
     other.stream_ = nullptr;

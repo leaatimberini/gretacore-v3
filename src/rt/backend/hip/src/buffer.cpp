@@ -32,9 +32,9 @@ bool Buffer::allocate(size_t size, BufferUsage usage, std::string *err) {
 void Buffer::free() {
   if (ptr_) {
     if (usage_ == BufferUsage::HostVisible) {
-      hipHostFree(ptr_);
+      (void)hipHostFree(ptr_);
     } else {
-      hipFree(ptr_);
+      (void)hipFree(ptr_);
     }
     ptr_ = nullptr;
     size_ = 0;
