@@ -255,7 +255,7 @@ int main(int argc, char **argv) {
   r = vkAllocateCommandBuffers(dev, &cbai, &cmd);
   if (r != VK_SUCCESS) {
     std::cerr << "vkAllocateCommandBuffers failed: " << vk_err_str(r) << "\n";
-    gcore::rt::vk::destroy_buffer(dev, &out);
+    gcore::rt::vk::destroy_buffer(dev, &out_dev);
     vkDestroyDescriptorPool(dev, dp, nullptr);
     vkDestroyPipeline(dev, pipe, nullptr);
     vkDestroyPipelineLayout(dev, pl, nullptr);
