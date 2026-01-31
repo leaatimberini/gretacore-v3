@@ -39,6 +39,13 @@ tools/bench/platform/scripts/run_presets_local.sh standard
 tools/bench/platform/scripts/run_presets_local.sh perf
 ```
 
+Enable hip_gemm checks in presets:
+```bash
+export GRETA_HIP_GEMM_CHECK=1
+export GRETA_HIP_GEMM_CHECK_SAMPLES=8
+tools/bench/platform/scripts/run_presets_local.sh smoke
+```
+
 Remote:
 ```bash
 tools/bench/platform/scripts/run_presets_remote.sh user@host /workspace/gretacore smoke
@@ -75,6 +82,13 @@ cmake --build tools/bench/platform/build
 tools/bench/platform/scripts/run_presets_local.sh smoke
 tools/bench/platform/scripts/run_presets_local.sh standard
 tools/bench/platform/scripts/run_presets_local.sh perf
+```
+
+Habilitar checks de hip_gemm en presets:
+```bash
+export GRETA_HIP_GEMM_CHECK=1
+export GRETA_HIP_GEMM_CHECK_SAMPLES=8
+tools/bench/platform/scripts/run_presets_local.sh smoke
 ```
 
 Remoto:
