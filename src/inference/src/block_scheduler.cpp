@@ -202,10 +202,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const __half *wk = static_cast<const __half *>(b.wk.data());
   const __half *wv = static_cast<const __half *>(b.wv.data());
 
-  float *cache_k = static_cast<float *>(activations_.kv_cache_k.data()) +
-                   layer_idx * config_.max_seq_len * H * Dh;
-  float *cache_v = static_cast<float *>(activations_.kv_cache_v.data()) +
-                   layer_idx * config_.max_seq_len * H * Dh;
+  float *cache_k_base = static_cast<float *>(activations_.kv_cache_k.data());
+  float *cache_v_base = static_cast<float *>(activations_.kv_cache_v.data());
+  size_t offset =
+      (size_t)layer_idx * (size_t)config_.max_seq_len * (size_t)H * (size_t)Dh;
+  float *cache_k = cache_k_base + offset;
+  float *cache_v = cache_v_base + offset;
+
+  if (layer_idx % 8 == 0) {
+    std::cout << "  [LAYER " << layer_idx << "] cache_k=" << (void *)cache_k
+              << " base=" << (void *)cache_k_base << " off=" << offset
+              << std::endl;
+  }
 
   CHECK_HIP_KERNEL(
       launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps),
@@ -225,9 +233,6 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   for (uint32_t s = 0; s < S; ++s) {
-    if (layer_idx == 8)
-      std::cout << "  Layer 8 KV Update s=" << s << " pos=" << pos + s
-                << std::endl;
     CHECK_HIP_KERNEL(launch_kv_update(stream_, cache_k, cache_v, k + s * D,
                                       v + s * D, pos + s, config_.max_seq_len,
                                       H, Dh),
@@ -303,8 +308,6 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                    "Embedding Lookup");
 
   for (size_t i = 0; i < config_.num_layers; ++i) {
-    if (i % 8 == 0)
-      std::cout << "  Layer " << i << "..." << std::endl;
     if (!execute_layer(i, seq_start, seq_len, err))
       return false;
   }
