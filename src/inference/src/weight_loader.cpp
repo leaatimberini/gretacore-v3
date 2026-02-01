@@ -208,20 +208,20 @@ static std::string ggml_type_name(GGMLType type) {
   }
 }
 
-static uint32_t ggml_type_from_name(const std::string &name) {
+static GGMLType ggml_type_from_name(const std::string &name) {
   if (name == "F32")
-    return static_cast<uint32_t>(GGMLType::F32);
+    return GGMLType::F32;
   if (name == "F16")
-    return static_cast<uint32_t>(GGMLType::F16);
+    return GGMLType::F16;
   if (name == "Q4_0")
-    return static_cast<uint32_t>(GGMLType::Q4_0);
+    return GGMLType::Q4_0;
   if (name == "Q4_K")
-    return static_cast<uint32_t>(GGMLType::Q4_K);
+    return GGMLType::Q4_K;
   if (name == "Q5_K")
-    return static_cast<uint32_t>(GGMLType::Q5_K);
+    return GGMLType::Q5_K;
   if (name == "Q6_K")
-    return static_cast<uint32_t>(GGMLType::Q6_K);
-  return static_cast<uint32_t>(GGMLType::F32);
+    return GGMLType::Q6_K;
+  return GGMLType::F32;
 }
 
 struct GGUFLoader::Impl {
