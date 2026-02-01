@@ -574,6 +574,115 @@ bool GGUFLoader::load_tensor(const std::string &name,
   return true;
 }
 
+// Helper to convert FP32 to FP16
+static uint16_t fp32_to_fp16(float f) {
+  uint32_t x;
+  std::memcpy(&x, &f, 4);
+
+  uint32_t sign = (x >> 16) & 0x8000;
+  int32_t exp = ((x >> 23) & 0xFF) - 127 + 15;
+  uint32_t mant = x & 0x7FFFFF;
+
+  if (exp <= 0) {
+    return sign; // Zero or denorm
+  } else if (exp >= 31) {
+    return sign | 0x7C00; // Infinity/NaN
+  }
+
+  return sign | (exp << 10) | (mant >> 13);
+}
+
+bool GGUFLoader::load_tensor_fp16(const std::string &name,
+                                  gcore::rt::hip::Buffer &buffer,
+                                  std::string *err) {
+  // Find tensor
+  const TensorInfo *info = nullptr;
+  GGMLType gtype = GGMLType::F32;
+  for (const auto &t : impl_->tensors) {
+    if (t.name == name) {
+      info = &t;
+      gtype = ggml_type_from_name(t.dtype);
+      break;
+    }
+  }
+  if (!info) {
+    *err = "Tensor not found: " + name;
+    return false;
+  }
+
+  // Read raw data
+  std::vector<uint8_t> raw_data(info->size_bytes);
+  impl_->file.seekg(info->offset);
+  impl_->file.read(reinterpret_cast<char *>(raw_data.data()), info->size_bytes);
+
+  // Calculate elements
+  size_t n_elements = 1;
+  for (auto d : info->shape)
+    n_elements *= d;
+
+  // Dequantize to FP16
+  std::vector<uint16_t> fp16_data(n_elements);
+  std::vector<float> temp_fp32; // Temp buffer for intermediate dequant
+
+  if (gtype == GGMLType::F32) {
+    // Convert FP32 to FP16
+    const float *src = reinterpret_cast<const float *>(raw_data.data());
+    for (size_t i = 0; i < n_elements; ++i) {
+      fp16_data[i] = fp32_to_fp16(src[i]);
+    }
+  } else if (gtype == GGMLType::F16) {
+    // Already FP16, copy directly
+    std::memcpy(fp16_data.data(), raw_data.data(), n_elements * 2);
+  } else if (gtype == GGMLType::Q4_K) {
+    // Dequantize Q4_K to FP32, then convert to FP16
+    temp_fp32.resize(n_elements);
+    size_t block_size = ggml_block_size(gtype);
+    size_t type_size = ggml_type_size(gtype);
+    size_t n_blocks = n_elements / block_size;
+
+    for (size_t b = 0; b < n_blocks; ++b) {
+      dequantize_q4_k_block(raw_data.data() + b * type_size,
+                            temp_fp32.data() + b * block_size, block_size);
+    }
+    // Convert to FP16
+    for (size_t i = 0; i < n_elements; ++i) {
+      fp16_data[i] = fp32_to_fp16(temp_fp32[i]);
+    }
+  } else if (gtype == GGMLType::Q6_K) {
+    // Dequantize Q6_K to FP32, then convert to FP16
+    temp_fp32.resize(n_elements);
+    size_t block_size = ggml_block_size(gtype);
+    size_t type_size = ggml_type_size(gtype);
+    size_t n_blocks = n_elements / block_size;
+
+    for (size_t b = 0; b < n_blocks; ++b) {
+      dequantize_q6_k_block(raw_data.data() + b * type_size,
+                            temp_fp32.data() + b * block_size, block_size);
+    }
+    // Convert to FP16
+    for (size_t i = 0; i < n_elements; ++i) {
+      fp16_data[i] = fp32_to_fp16(temp_fp32[i]);
+    }
+  } else {
+    *err = "Unsupported type for FP16 load: " + name + " (" + info->dtype + ")";
+    return false;
+  }
+
+  // Allocate GPU buffer (FP16 size = n_elements * 2 bytes)
+  size_t upload_size = n_elements * sizeof(uint16_t);
+  if (!buffer.allocate(upload_size, gcore::rt::hip::BufferUsage::DeviceOnly,
+                       err)) {
+    return false;
+  }
+
+  // Copy to GPU
+  if (!buffer.copy_to_device(fp16_data.data(), upload_size, err)) {
+    return false;
+  }
+
+  return true;
+}
+
 ModelConfig GGUFLoader::get_config() const { return impl_->config; }
 
 // Factory function

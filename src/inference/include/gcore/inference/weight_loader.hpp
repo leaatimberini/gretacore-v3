@@ -52,6 +52,11 @@ public:
                    std::string *err) override;
   ModelConfig get_config() const override;
 
+  /// Load tensor as FP16 (for memory efficiency)
+  /// Dequantizes Q4_K/Q6_K/F32 to FP16 before uploading
+  bool load_tensor_fp16(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        std::string *err);
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
