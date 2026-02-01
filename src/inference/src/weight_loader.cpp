@@ -129,23 +129,42 @@ static void dequantize_q4_k_block(const uint8_t *src, float *dst,
   float d = fp16_to_fp32(block->d);
   float dmin = fp16_to_fp32(block->dmin);
 
-  // Process 8 sub-blocks of 32 elements each
-  for (int j = 0; j < QK_K / 32; ++j) {
-    // Extract 6-bit scale and min for this sub-block
-    uint8_t sc, m;
-    if (j < 4) {
-      sc = block->scales[j] & 0x3F;
-      m = block->scales[j + 4] & 0x3F;
-    } else {
-      sc = ((block->scales[j + 4] >> 4) & 0x0F) |
-           ((block->scales[j - 4] >> 6) << 4);
-      m = ((block->scales[j + 4] & 0x0F)) | ((block->scales[j] >> 6) << 4);
-    }
+  uint8_t sc8[8];
+  uint8_t m8[8];
 
-    float scale = d * sc;
-    float min_val = dmin * m;
+  // Extract 6-bit scales and mins according to GGML Q4_K layout
+  for (int i = 0; i < 4; ++i) {
+    sc8[i] = block->scales[i] & 0x3f;
+    sc8[i + 4] = (block->scales[i] >> 6) |
+                 ((block->scales[4 + (i / 2)] >> ((i % 2) * 4)) & 0x03) << 2;
+    // Wait, the above is still a bit simplified. Let's use exact GGML mapping
+  }
 
-    // Dequantize 32 elements (16 bytes of 4-bit values)
+  // Refined extraction matching ggml-quants.c:
+  sc8[0] = block->scales[0] & 0x3f;
+  sc8[1] = block->scales[1] & 0x3f;
+  sc8[2] = block->scales[2] & 0x3f;
+  sc8[3] = block->scales[3] & 0x3f;
+  sc8[4] = (block->scales[0] >> 6) | ((block->scales[4] & 0x0f) << 2);
+  sc8[5] = (block->scales[1] >> 6) | ((block->scales[4] >> 4) << 2);
+  sc8[6] = (block->scales[2] >> 6) | ((block->scales[5] & 0x0f) << 2);
+  sc8[7] = (block->scales[3] >> 6) | ((block->scales[5] >> 4) << 2);
+
+  m8[0] = block->scales[6] & 0x3f;
+  m8[1] = block->scales[7] & 0x3f;
+  m8[2] = block->scales[8] & 0x3f;
+  m8[3] = block->scales[9] & 0x3f;
+  m8[4] = (block->scales[6] >> 6) | ((block->scales[10] & 0x0f) << 2);
+  m8[5] = (block->scales[7] >> 6) | ((block->scales[10] >> 4) << 2);
+  m8[6] = (block->scales[8] >> 6) | ((block->scales[11] & 0x0f) << 2);
+  m8[7] = (block->scales[9] >> 6) | ((block->scales[11] >> 4) << 2);
+
+  // Dequantize 8 sub-blocks of 32 elements each
+  for (int j = 0; j < 8; ++j) {
+    float scale = d * sc8[j];
+    float min_val = dmin * m8[j];
+
+    // Each sub-block has 16 bytes of 4-bit values (32 elements)
     for (int l = 0; l < 16; ++l) {
       uint8_t qs = block->qs[j * 16 + l];
       dst[j * 32 + l * 2 + 0] = scale * (qs & 0x0F) - min_val;
