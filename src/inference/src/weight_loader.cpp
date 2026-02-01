@@ -746,7 +746,8 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
 
 ModelConfig GGUFLoader::get_config() const { return impl_->config; }
 
-SafeTensorsLoader::SafeTensorsLoader() {}
+struct SafeTensorsLoader::Impl {};
+SafeTensorsLoader::SafeTensorsLoader() : impl_(std::make_unique<Impl>()) {}
 SafeTensorsLoader::~SafeTensorsLoader() = default;
 bool SafeTensorsLoader::open(const std::string &path, std::string *err) {
   return false;
