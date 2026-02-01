@@ -106,19 +106,22 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   auto first_token_time = start;
   bool first_token = true;
 
-  // Dummy logits for testing (uniform distribution)
-  std::vector<float> dummy_logits(config_.vocab_size,
-                                  1.0f / config_.vocab_size);
+  std::vector<float> logits_host(config_.vocab_size);
 
   for (int i = 0; i < params.max_tokens; ++i) {
-    // In real implementation:
-    // 1. Run forward pass through scheduler
-    // 2. Get logits from final layer
-    // 3. Sample next token
+    std::string forward_err;
+    if (!scheduler_->forward(output.size() - 1, 1, &forward_err)) {
+      std::cerr << "Forward pass failed: " << forward_err << "\n";
+      break;
+    }
 
-    // For now, use dummy logits
-    int32_t next_token =
-        sample(dummy_logits.data(), config_.vocab_size, params);
+    // Copy only the last token's logits for sampling
+    if (!scheduler_->get_logits().copy_to_host(
+            logits_host.data(), config_.vocab_size * sizeof(float), err)) {
+      break;
+    }
+
+    int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
 
     if (first_token) {
       first_token_time = std::chrono::high_resolution_clock::now();

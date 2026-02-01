@@ -79,6 +79,9 @@ public:
   /// Get the final hidden state buffer.
   gcore::rt::hip::Buffer &get_hidden_state();
 
+  /// Get the final logits buffer.
+  gcore::rt::hip::Buffer &get_logits();
+
   /// Get model configuration.
   const ModelConfig &config() const { return config_; }
 
@@ -89,6 +92,15 @@ private:
   ModelConfig config_;
   std::vector<BlockBuffers> blocks_;
   ActivationBuffers activations_;
+
+  // Global weights (outside transformer blocks)
+  gcore::rt::hip::Buffer token_embd_;
+  gcore::rt::hip::Buffer output_norm_;
+  gcore::rt::hip::Buffer output_weight_;
+
+  // Final logits [B, S, vocab_size]
+  gcore::rt::hip::Buffer logits_;
+
   hipStream_t stream_ = nullptr;
   bool initialized_ = false;
   size_t current_seq_pos_ = 0;
