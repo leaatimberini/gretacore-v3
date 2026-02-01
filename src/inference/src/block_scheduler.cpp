@@ -240,7 +240,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   uint32_t Dh = D / H;                                             // 128
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim); // 11008
   uint32_t S = static_cast<uint32_t>(seq_len);
-  float eps = config_.norm_eps;
+  float eps = config_.rms_eps;
   float rope_base = 10000.0f;
 
   if (stream_ == nullptr)

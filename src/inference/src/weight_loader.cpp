@@ -700,4 +700,11 @@ std::unique_ptr<WeightLoader> create_weight_loader(const std::string &path,
   return nullptr;
 }
 
+bool SafeTensorsLoader::load_tensor_fp16(const std::string &name,
+                                         gcore::rt::hip::Buffer &buffer,
+                                         std::string *err) {
+  *err = "load_tensor_fp16 not implemented for SafeTensors yet";
+  return false;
+}
+
 } // namespace gcore::inference

@@ -36,6 +36,11 @@ public:
                            gcore::rt::hip::Buffer &buffer,
                            std::string *err) = 0;
 
+  /// Load a tensor as FP16.
+  virtual bool load_tensor_fp16(const std::string &name,
+                                gcore::rt::hip::Buffer &buffer,
+                                std::string *err) = 0;
+
   /// Get model configuration (if embedded in file).
   virtual ModelConfig get_config() const = 0;
 };
@@ -50,12 +55,9 @@ public:
   std::vector<TensorInfo> list_tensors() const override;
   bool load_tensor(const std::string &name, gcore::rt::hip::Buffer &buffer,
                    std::string *err) override;
-  ModelConfig get_config() const override;
-
-  /// Load tensor as FP16 (for memory efficiency)
-  /// Dequantizes Q4_K/Q6_K/F32 to FP16 before uploading
   bool load_tensor_fp16(const std::string &name, gcore::rt::hip::Buffer &buffer,
-                        std::string *err);
+                        std::string *err) override;
+  ModelConfig get_config() const override;
 
 private:
   struct Impl;
@@ -72,6 +74,8 @@ public:
   std::vector<TensorInfo> list_tensors() const override;
   bool load_tensor(const std::string &name, gcore::rt::hip::Buffer &buffer,
                    std::string *err) override;
+  bool load_tensor_fp16(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        std::string *err) override;
   ModelConfig get_config() const override;
 
 private:
