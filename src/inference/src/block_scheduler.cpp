@@ -45,34 +45,22 @@ bool BlockScheduler::allocate_weights(std::string *err) {
 
   for (size_t i = 0; i < config_.num_layers; ++i) {
     auto &b = blocks_[i];
-    if (!b.wq.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.wk.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.wv.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.wo.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.w1.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.w2.allocate(H * D * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.w3.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err))
-      return false;
-    if (!b.attn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err))
-      return false;
-    if (!b.ffn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err))
-      return false;
+    b.wq.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
+    b.wk.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
+    b.wv.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
+    b.wo.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
+    b.w1.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err);
+    b.w2.allocate(H * D * sizeof(__half), Usage::DeviceOnly, err);
+    b.w3.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err);
+    b.attn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err);
+    b.ffn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err);
   }
 
-  if (!token_embd_.allocate(config_.vocab_size * D * sizeof(float),
-                            Usage::DeviceOnly, err))
-    return false;
-  if (!output_norm_.allocate(D * sizeof(float), Usage::DeviceOnly, err))
-    return false;
-  if (!output_weight_.allocate(config_.vocab_size * D * sizeof(__half),
-                               Usage::DeviceOnly, err))
-    return false;
+  token_embd_.allocate(config_.vocab_size * D * sizeof(float),
+                       Usage::DeviceOnly, err);
+  output_norm_.allocate(D * sizeof(float), Usage::DeviceOnly, err);
+  output_weight_.allocate(config_.vocab_size * D * sizeof(__half),
+                          Usage::DeviceOnly, err);
 
   return true;
 }
@@ -84,7 +72,6 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
     return false;
   }
 
-  // Update config with the actual allocated sequence length
   config_.max_seq_len = max_seq_len;
 
   using Usage = gcore::rt::hip::BufferUsage;
@@ -95,51 +82,33 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
   const size_t head_dim = config_.head_dim;
 
   size_t hidden_size = batch_size * max_seq_len * D * sizeof(float);
-  if (!activations_.x.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.norm_out.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.q.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.k.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.v.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.attn_out.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
+  activations_.x.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.norm_out.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.q.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.k.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.v.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.attn_out.allocate(hidden_size, Usage::DeviceOnly, err);
 
   size_t mlp_size = batch_size * max_seq_len * H * sizeof(float);
-  if (!activations_.mlp_gate.allocate(mlp_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.mlp_up.allocate(mlp_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.mlp_out.allocate(hidden_size, Usage::DeviceOnly, err))
-    return false;
+  activations_.mlp_gate.allocate(mlp_size, Usage::DeviceOnly, err);
+  activations_.mlp_up.allocate(mlp_size, Usage::DeviceOnly, err);
+  activations_.mlp_out.allocate(hidden_size, Usage::DeviceOnly, err);
 
   size_t kv_size = L * max_seq_len * heads * head_dim * sizeof(float);
-  if (!activations_.kv_cache_k.allocate(kv_size, Usage::DeviceOnly, err))
-    return false;
-  if (!activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly, err))
-    return false;
+  activations_.kv_cache_k.allocate(kv_size, Usage::DeviceOnly, err);
+  activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly, err);
 
   size_t tokens_size = batch_size * max_seq_len * sizeof(int32_t);
-  if (!activations_.tokens.allocate(tokens_size, Usage::DeviceOnly, err))
-    return false;
+  activations_.tokens.allocate(tokens_size, Usage::DeviceOnly, err);
 
   size_t logits_size =
       batch_size * max_seq_len * config_.vocab_size * sizeof(float);
-  if (!logits_.allocate(logits_size, Usage::DeviceOnly, err))
-    return false;
+  logits_.allocate(logits_size, Usage::DeviceOnly, err);
 
   return true;
 }
 
 bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
-  auto tensors = loader.list_tensors();
-  std::unordered_map<std::string, const TensorInfo *> tensor_map;
-  for (const auto &t : tensors)
-    tensor_map[t.name] = &t;
-
   for (size_t i = 0; i < config_.num_layers; ++i) {
     std::string prefix = "blk." + std::to_string(i) + ".";
     auto &b = blocks_[i];
@@ -163,27 +132,23 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
 #define CHECK_HIP_KERNEL(cmd, name)                                            \
   do {                                                                         \
     cmd;                                                                       \
-    hipError_t err_code = hipStreamSynchronize(stream_);                       \
+    hipError_t err_code = hipGetLastError();                                   \
     if (err_code != hipSuccess) {                                              \
       if (err)                                                                 \
-        *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
+        *err = std::string(name) +                                             \
+               " launch failed: " + hipGetErrorString(err_code);               \
       return false;                                                            \
     }                                                                          \
   } while (0)
 
 bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                                    size_t seq_len, std::string *err) {
-  if (layer_idx >= blocks_.size())
-    return false;
   auto &b = blocks_[layer_idx];
-
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t H = static_cast<uint32_t>(config_.num_heads);
   uint32_t Dh = D / H;
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim);
   uint32_t S = static_cast<uint32_t>(seq_len);
-  float eps = config_.rms_eps;
-  float rope_base = config_.rope_base;
 
   using namespace gcore::rt::hip::kernels;
   float *x = static_cast<float *>(activations_.x.data());
@@ -209,9 +174,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   float *cache_v =
       static_cast<float *>(activations_.kv_cache_v.data()) + offset;
 
-  CHECK_HIP_KERNEL(
-      launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps),
-      "RMSNorm (Attn)");
+  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D,
+                                        config_.rms_eps),
+                   "RMSNorm (Attn)");
   CHECK_HIP_KERNEL(
       launch_gemm_mixed_f16f32(stream_, norm_out, wq, q, S, D, D, D, D, D),
       "GEMM Q");
@@ -222,8 +187,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       launch_gemm_mixed_f16f32(stream_, norm_out, wv, v, S, D, D, D, D, D),
       "GEMM V");
 
-  CHECK_HIP_KERNEL(launch_rope(stream_, q, S, H, Dh, rope_base), "RoPE Q");
-  CHECK_HIP_KERNEL(launch_rope(stream_, k, S, H, Dh, rope_base), "RoPE K");
+  CHECK_HIP_KERNEL(launch_rope(stream_, q, S, H, Dh, config_.rope_base),
+                   "RoPE Q");
+  CHECK_HIP_KERNEL(launch_rope(stream_, k, S, H, Dh, config_.rope_base),
+                   "RoPE K");
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   for (uint32_t s = 0; s < S; ++s) {
@@ -235,14 +202,11 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   float scale = 1.0f / sqrtf(static_cast<float>(Dh));
   if (S == 1) {
-    CHECK_HIP_KERNEL(
-        launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
-                                      pos + 1, config_.max_seq_len, Dh, scale),
-        "FlashAttn Decode");
+    launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
+                                  pos + 1, config_.max_seq_len, Dh, scale);
   } else {
-    CHECK_HIP_KERNEL(launch_flash_attention_prefill(stream_, q, k, v, attn_out,
-                                                    S, H, Dh, scale, true),
-                     "FlashAttn Prefill");
+    launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H, Dh, scale,
+                                   true);
   }
 
   const __half *wo = static_cast<const __half *>(b.wo.data());
@@ -252,11 +216,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   CHECK_HIP_KERNEL(launch_add(stream_, x, mlp_out, x, S * D),
                    "Residual (Attn)");
 
-  CHECK_HIP_KERNEL(
-      launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps),
-      "RMSNorm (FFN)");
+  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D,
+                                        config_.rms_eps),
+                   "RMSNorm (FFN)");
   const __half *w1 = static_cast<const __half *>(b.w1.data());
-  const __half *w2 = static_cast<const __half *>(b.w2.data());
   const __half *w3 = static_cast<const __half *>(b.w3.data());
   CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S,
                                             hidden_dim, D, D, hidden_dim,
@@ -272,6 +235,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   CHECK_HIP_KERNEL(
       launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim), "Mul");
 
+  const __half *w2 = static_cast<const __half *>(b.w2.data());
   CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, mlp_gate, w2, mlp_out, S,
                                             D, hidden_dim, hidden_dim, D, D),
                    "GEMM W2");
@@ -287,8 +251,7 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t V = static_cast<uint32_t>(config_.vocab_size);
 
-  if (!activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err))
-    return false;
+  activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err);
 
   float *x = static_cast<float *>(activations_.x.data());
   const float *embd_w = static_cast<const float *>(token_embd_.data());
@@ -316,8 +279,11 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                    "Logits GEMM");
 
   hipError_t err_code = hipStreamSynchronize(stream_);
-  if (err_code != hipSuccess)
+  if (err_code != hipSuccess) {
+    if (err)
+      *err = "Final sync failed: " + std::string(hipGetErrorString(err_code));
     return false;
+  }
   return true;
 }
 
