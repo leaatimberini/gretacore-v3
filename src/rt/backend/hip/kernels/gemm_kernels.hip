@@ -308,7 +308,7 @@ __global__ void gemm_mixed_f16f32_kernel(const float *__restrict__ a,
   float acc = 0.0f;
 
   for (uint32_t k0 = 0; k0 < K; k0 += TILE_SIZE_FP16) {
-    // Load tile A (FP32 activations)
+    // Load tile A (FP32 activations, M x K)
     uint32_t ak = k0 + lx;
     if (row < M && ak < K) {
       As[ly][lx] = a[row * lda + ak];
@@ -316,17 +316,22 @@ __global__ void gemm_mixed_f16f32_kernel(const float *__restrict__ a,
       As[ly][lx] = 0.0f;
     }
 
-    // Load tile B (FP16 weights)
-    uint32_t bk = k0 + ly;
-    if (col < N && bk < K) {
-      Bs[ly][lx] = b[bk * ldb + col];
+    // Load tile B (FP16 weights, N x K GGUF layout)
+    // We want to load a tile of N (outputs) and K (inputs).
+    // GGUF stores data as weight[n][k].
+    // Sequential threads in a warp (lx) should read sequential k.
+    uint32_t bn = col; // row index in weight matrix
+    uint32_t bk = k0 + ly; // col index in weight matrix
+    if (bn < N && bk < K) {
+      // Direct load from w[n * K + k]
+      Bs[ly][lx] = b[bn * K + bk]; 
     } else {
       Bs[ly][lx] = __float2half(0.0f);
     }
 
     __syncthreads();
 
-    // Compute - weights promoted to FP32 for multiply
+    // Compute - accumulate partials
     for (uint32_t k = 0; k < TILE_SIZE_FP16; ++k) {
       acc += As[ly][k] * __half2float(Bs[k][lx]);
     }

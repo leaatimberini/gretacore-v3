@@ -336,6 +336,8 @@ struct GGUFLoader::Impl {
     info.dtype = ggml_type_name(static_cast<GGMLType>(type));
     uint64_t offset;
     file.read(reinterpret_cast<char *>(&offset), 8);
+    info.offset = offset; // Relative to data section
+
     GGMLType gtype = static_cast<GGMLType>(type);
     size_t ts = ggml_type_size(gtype), bs = ggml_block_size(gtype);
     if (gtype <= GGMLType::F16)
@@ -379,11 +381,9 @@ struct GGUFLoader::Impl {
     }
     size_t pos = file.tellg();
     data_offset = (pos + 31) & ~31ULL;
-    size_t cur = data_offset;
     for (auto &t : tensors) {
-      t.offset = cur;
-      cur += (t.size_bytes + 31) & ~31ULL;
-    }
+      t.offset += data_offset;
+    } // Map relative to absolute
     loaded = true;
     return true;
   }
@@ -481,14 +481,6 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
       fp16[i] = fp32_to_fp16(tmp[i]);
   } else
     return false;
-  if (it->shape.size() == 2) {
-    size_t K = it->shape[0], N = it->shape[1];
-    std::vector<uint16_t> tr(n_elem);
-    for (size_t n = 0; n < N; ++n)
-      for (size_t k = 0; k < K; ++k)
-        tr[k * N + n] = fp16[n * K + k];
-    fp16 = std::move(tr);
-  }
   size_t ups = n_elem * 2;
   if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly, err))
     return false;
