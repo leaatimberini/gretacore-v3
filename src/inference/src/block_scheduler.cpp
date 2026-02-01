@@ -240,60 +240,54 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   uint32_t Dh = D / H;                                             // 128
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim); // 11008
   uint32_t S = static_cast<uint32_t>(seq_len);
-  float eps = 1e-6f;
+  float eps = config_.norm_eps;
   float rope_base = 10000.0f;
 
-  // Get buffer pointers (all FP32)
-  float *x = reinterpret_cast<float *>(activations_.x.data());
-  float *residual = reinterpret_cast<float *>(activations_.residual.data());
-  float *norm_out = reinterpret_cast<float *>(activations_.norm_out.data());
-  float *q = reinterpret_cast<float *>(activations_.q.data());
-  float *k = reinterpret_cast<float *>(activations_.k.data());
-  float *v = reinterpret_cast<float *>(activations_.v.data());
-  float *attn_out = reinterpret_cast<float *>(activations_.attn_out.data());
-  float *mlp_gate = reinterpret_cast<float *>(activations_.mlp_gate.data());
-  float *mlp_up = reinterpret_cast<float *>(activations_.mlp_up.data());
-  float *mlp_out = reinterpret_cast<float *>(activations_.mlp_out.data());
+  if (stream_ == nullptr)
+    return true;
 
-  // Weight pointers
-  float *wq = reinterpret_cast<float *>(b.wq.data());
-  float *wk = reinterpret_cast<float *>(b.wk.data());
-  float *wv = reinterpret_cast<float *>(b.wv.data());
-  float *wo = reinterpret_cast<float *>(b.wo.data());
-  float *w1 = reinterpret_cast<float *>(b.w1.data());
-  float *w2 = reinterpret_cast<float *>(b.w2.data());
-  float *w3 = reinterpret_cast<float *>(b.w3.data());
-  float *attn_norm = reinterpret_cast<float *>(b.attn_norm.data());
-  float *ffn_norm = reinterpret_cast<float *>(b.ffn_norm.data());
+  using namespace gcore::rt::hip::kernels;
 
-  // KV cache pointers (for this layer)
-  float *kv_k = reinterpret_cast<float *>(activations_.kv_cache_k.data());
-  float *kv_v = reinterpret_cast<float *>(activations_.kv_cache_v.data());
+  // Setup pointers for activations (FP32)
+  float *x = static_cast<float *>(activations_.x.data());
+  float *norm_out = static_cast<float *>(activations_.norm_out.data());
+  float *q = static_cast<float *>(activations_.q.data());
+  float *k = static_cast<float *>(activations_.k.data());
+  float *v = static_cast<float *>(activations_.v.data());
+  float *attn_out = static_cast<float *>(activations_.attn_out.data());
+  float *mlp_gate = static_cast<float *>(activations_.mlp_gate.data());
+  float *mlp_up = static_cast<float *>(activations_.mlp_up.data());
+  float *mlp_out = static_cast<float *>(activations_.mlp_out.data());
+
+  // Setup pointers for weights (FP32 for norms, FP16 for projections)
+  const float *attn_norm = static_cast<const float *>(b.attn_norm.data());
+  const float *ffn_norm = static_cast<const float *>(b.ffn_norm.data());
+
+  const __half *wq = static_cast<const __half *>(b.wq.data());
+  const __half *wk = static_cast<const __half *>(b.wk.data());
+  const __half *wv = static_cast<const __half *>(b.wv.data());
+  const __half *wo = static_cast<const __half *>(b.wo.data());
+  const __half *w1 = static_cast<const __half *>(b.w1.data());
+  const __half *w2 = static_cast<const __half *>(b.w2.data());
+  const __half *w3 = static_cast<const __half *>(b.w3.data());
+
+  // KV cache pointers
+  float *kv_k = static_cast<float *>(activations_.kv_cache_k.data());
+  float *kv_v = static_cast<float *>(activations_.kv_cache_v.data());
   size_t layer_cache_offset = layer_idx * config_.max_seq_len * H * Dh;
   float *cache_k = kv_k + layer_cache_offset;
   float *cache_v = kv_v + layer_cache_offset;
-
-  // Skip execution if stream not initialized (demo mode)
-  if (stream_ == nullptr) {
-    return true;
-  }
-
-  using namespace gcore::rt::hip::kernels;
 
   // ====== ATTENTION BLOCK ======
 
   // Step 1: RMSNorm(x) -> norm_out
   launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps);
 
-  // Save residual for skip connection
-  // (In production, we'd use async copy or fuse with norm)
-  // For now, x stays as residual
-
   // Step 2-4: Linear projections (Q, K, V)
   // Use mixed-precision GEMM: FP32 activations * FP16 weights -> FP32 output
-  launch_gemm_mixed_f16f32(stream_, norm_out, b.wq, q, S, D, D, D, D, D);
-  launch_gemm_mixed_f16f32(stream_, norm_out, b.wk, k, S, D, D, D, D, D);
-  launch_gemm_mixed_f16f32(stream_, norm_out, b.wv, v, S, D, D, D, D, D);
+  launch_gemm_mixed_f16f32(stream_, norm_out, wq, q, S, D, D, D, D, D);
+  launch_gemm_mixed_f16f32(stream_, norm_out, wk, k, S, D, D, D, D, D);
+  launch_gemm_mixed_f16f32(stream_, norm_out, wv, v, S, D, D, D, D, D);
 
   // Step 5: RoPE embeddings on Q and K
   launch_rope(stream_, q, S, H, Dh, rope_base);
@@ -309,21 +303,17 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   // Step 7: FlashAttention v2
   float scale = 1.0f / sqrtf(static_cast<float>(Dh));
   if (S == 1) {
-    // Decode mode: single query against full KV cache
     launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
                                   pos + S, Dh, scale);
   } else {
-    // Prefill mode: multiple queries with causal masking
-    // (FlashAttention handle KV update internally or we use the updated cache)
-    // For now, simpler to use the cache we just updated
     launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H, Dh, scale,
                                    true);
   }
 
   // Step 8: Output projection + residual
   // Mixed-precision GEMM: attn_out [S, D] * Wo [D, D] (FP16) -> mlp_out [S, D]
-  // (FP32) We reuse mlp_out as a temp buffer for attn output projection
-  launch_gemm_mixed_f16f32(stream_, attn_out, b.wo, mlp_out, S, D, D, D, D, D);
+  // (FP32)
+  launch_gemm_mixed_f16f32(stream_, attn_out, wo, mlp_out, S, D, D, D, D, D);
   launch_add(stream_, x, mlp_out, x, S * D);
 
   // ====== MLP BLOCK ======
@@ -332,10 +322,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps);
 
   // Step 10-11: Gate and Up projections
-  // Mixed-precision GEMM: norm_out [S, D] * W1/W3 [D, hidden_dim] (FP16)
-  launch_gemm_mixed_f16f32(stream_, norm_out, b.w1, mlp_gate, S, hidden_dim, D,
-                           D, hidden_dim, hidden_dim);
-  launch_gemm_mixed_f16f32(stream_, norm_out, b.w3, mlp_up, S, hidden_dim, D, D,
+  launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S, hidden_dim, D, D,
+                           hidden_dim, hidden_dim);
+  launch_gemm_mixed_f16f32(stream_, norm_out, w3, mlp_up, S, hidden_dim, D, D,
                            hidden_dim, hidden_dim);
 
   // Step 12: SiLU(gate) * up -> mlp_gate
@@ -343,8 +332,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim);
 
   // Step 13: Down projection + residual
-  // Mixed-precision GEMM: mlp_gate [S, hidden_dim] * W2 [hidden_dim, D] (FP16)
-  launch_gemm_mixed_f16f32(stream_, mlp_gate, b.w2, mlp_out, S, D, hidden_dim,
+  launch_gemm_mixed_f16f32(stream_, mlp_gate, w2, mlp_out, S, D, hidden_dim,
                            hidden_dim, D, D);
   launch_add(stream_, x, mlp_out, x, S * D);
 
