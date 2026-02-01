@@ -322,55 +322,85 @@ struct GGUFLoader::Impl {
     return true;
   }
 
-  bool skip_kv_pair(std::string *err) {
-    // Read key length + key
+  bool parse_kv_pairs(uint64_t count, std::string *err) {
+    for (uint64_t i = 0; i < count; ++i) {
+      if (!parse_kv_pair(err))
+        return false;
+    }
+    return true;
+  }
+
+  bool parse_kv_pair(std::string *err) {
     uint64_t key_len;
     file.read(reinterpret_cast<char *>(&key_len), 8);
-
-    // Sanity check: key should not exceed 256 bytes
-    if (key_len > 256) {
-      *err = "Key length too large: " + std::to_string(key_len);
+    if (key_len > 1024) {
+      *err = "Key length too large";
       return false;
     }
-    file.seekg(key_len, std::ios::cur);
+    std::string key(key_len, '\0');
+    file.read(&key[0], key_len);
 
-    // Read value type
     uint32_t value_type;
     file.read(reinterpret_cast<char *>(&value_type), 4);
 
-    // Skip value based on type (simplified)
+    if (key == "tokenizer.ggml.tokens") {
+      // It's an array of strings
+      uint32_t arr_type;
+      uint64_t arr_len;
+      file.read(reinterpret_cast<char *>(&arr_type), 4);
+      file.read(reinterpret_cast<char *>(&arr_len), 8);
+      if (arr_type != 8) { // String type
+        *err = "tokenizer.ggml.tokens is not a string array";
+        return false;
+      }
+      config.vocabulary.clear();
+      config.vocabulary.reserve(arr_len);
+      for (uint64_t i = 0; i < arr_len; ++i) {
+        uint64_t slen;
+        file.read(reinterpret_cast<char *>(&slen), 8);
+        std::string s(slen, '\0');
+        file.read(&s[0], slen);
+        config.vocabulary.push_back(s);
+      }
+      config.vocab_size = static_cast<uint32_t>(arr_len);
+    } else if (key == "llama.rope.freq_base") {
+      if (value_type == 6) { // FLOAT32
+        file.read(reinterpret_cast<char *>(&config.rope_base), 4);
+      } else {
+        skip_value(value_type, err);
+      }
+    } else if (key == "llama.attention.layer_norm_rms_epsilon") {
+      if (value_type == 6) { // FLOAT32
+        file.read(reinterpret_cast<char *>(&config.rms_eps), 4);
+      } else {
+        skip_value(value_type, err);
+      }
+    } else {
+      if (!skip_value(value_type, err))
+        return false;
+    }
+    return true;
+  }
+
+  bool skip_value(uint32_t value_type, std::string *err) {
     switch (value_type) {
-    case 0: // UINT8
+    case 0:
+    case 1:
+    case 7:
       file.seekg(1, std::ios::cur);
       break;
-    case 1: // INT8
-      file.seekg(1, std::ios::cur);
-      break;
-    case 2: // UINT16
+    case 2:
+    case 3:
       file.seekg(2, std::ios::cur);
       break;
-    case 3: // INT16
-      file.seekg(2, std::ios::cur);
-      break;
-    case 4: // UINT32
+    case 4:
+    case 5:
+    case 6:
       file.seekg(4, std::ios::cur);
-      break;
-    case 5: // INT32
-      file.seekg(4, std::ios::cur);
-      break;
-    case 6: // FLOAT32
-      file.seekg(4, std::ios::cur);
-      break;
-    case 7: // BOOL
-      file.seekg(1, std::ios::cur);
       break;
     case 8: { // STRING
       uint64_t len;
       file.read(reinterpret_cast<char *>(&len), 8);
-      if (len > 1000000) { // Max 1MB string
-        *err = "String value too large: " + std::to_string(len);
-        return false;
-      }
       file.seekg(len, std::ios::cur);
       break;
     }
@@ -379,43 +409,33 @@ struct GGUFLoader::Impl {
       uint64_t arr_len;
       file.read(reinterpret_cast<char *>(&arr_type), 4);
       file.read(reinterpret_cast<char *>(&arr_len), 8);
-      // Skip array elements based on type size
-      size_t elem_size = 1;
-      if (arr_type <= 1)
-        elem_size = 1;
-      else if (arr_type <= 3)
-        elem_size = 2;
-      else if (arr_type <= 6)
-        elem_size = 4;
-      else if (arr_type <= 7)
-        elem_size = 1;
-      else if (arr_type == 8) {
-        // String array - skip each string
+      size_t elem_size = 0;
+      if (arr_type == 8) { // String array
         for (uint64_t i = 0; i < arr_len; ++i) {
           uint64_t slen;
           file.read(reinterpret_cast<char *>(&slen), 8);
-          if (slen > 1000000) {
-            *err = "Array string too large";
-            return false;
-          }
           file.seekg(slen, std::ios::cur);
         }
-        break;
-      } else if (arr_type >= 10)
-        elem_size = 8;
-
-      if (arr_type != 8) {
+      } else {
+        if (arr_type <= 1 || arr_type == 7)
+          elem_size = 1;
+        else if (arr_type <= 3)
+          elem_size = 2;
+        else if (arr_type <= 6)
+          elem_size = 4;
+        else
+          elem_size = 8;
         file.seekg(arr_len * elem_size, std::ios::cur);
       }
       break;
     }
-    case 10: // UINT64
-    case 11: // INT64
-    case 12: // FLOAT64
+    case 10:
+    case 11:
+    case 12:
       file.seekg(8, std::ios::cur);
       break;
     default:
-      break;
+      return false;
     }
     return true;
   }

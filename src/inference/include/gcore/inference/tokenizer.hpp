@@ -18,6 +18,9 @@ public:
   /// Supports: tokenizer.model (SentencePiece), tokenizer.json (HF), vocab.txt
   bool load(const std::string &path, std::string *err);
 
+  /// Set the vocabulary directly (e.g., from GGUF)
+  void set_vocabulary(const std::vector<std::string> &vocab) { vocab_ = vocab; }
+
   /// Encode text to token IDs.
   std::vector<int32_t> encode(const std::string &text) const;
 

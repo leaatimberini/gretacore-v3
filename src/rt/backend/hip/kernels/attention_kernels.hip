@@ -6,31 +6,36 @@ namespace gcore::rt::hip::kernels {
 __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads, 
                             uint32_t head_dim, float base, uint32_t pos_offset) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  uint32_t total_pairs = seq_len * num_heads * (head_dim / 2);
+  uint32_t half_dim = head_dim / 2;
+  uint32_t total_pairs = seq_len * num_heads * half_dim;
   
   if (idx >= total_pairs) return;
 
-  uint32_t half_dim = head_dim / 2;
   uint32_t pair_idx = idx % half_dim;
   uint32_t head_idx = (idx / half_dim) % num_heads;
-  uint32_t pos = pos_offset + (idx / (half_dim * num_heads));
+  uint32_t s_batch = idx / (half_dim * num_heads);
+  uint32_t pos = pos_offset + s_batch;
 
   float theta = (float)pos * powf(base, -2.0f * (float)pair_idx / (float)head_dim);
   float cos_val = cosf(theta);
   float sin_val = sinf(theta);
 
-  uint32_t base_idx = (pos - pos_offset) * (num_heads * head_dim) + head_idx * head_dim + (2 * pair_idx);
+  // Llama-2 RoPE: split-half pairs
+  // v[i] = v[i]*cos - v[i+d/2]*sin
+  // v[i+d/2] = v[i]*sin + v[i+d/2]*cos
+  uint32_t base_idx = s_batch * (num_heads * head_dim) + head_idx * head_dim + pair_idx;
   
   float v0 = x[base_idx];
-  float v1 = x[base_idx + 1];
+  float v1 = x[base_idx + half_dim];
 
   x[base_idx] = v0 * cos_val - v1 * sin_val;
-  x[base_idx + 1] = v0 * sin_val + v1 * cos_val;
+  x[base_idx + half_dim] = v0 * sin_val + v1 * cos_val;
 }
 
 void launch_rope(hipStream_t stream, float *x, uint32_t seq_len, 
                  uint32_t num_heads, uint32_t head_dim, float base, uint32_t pos_offset) {
-  uint32_t total_pairs = seq_len * num_heads * (head_dim / 2);
+  uint32_t half_dim = head_dim / 2;
+  uint32_t total_pairs = seq_len * num_heads * half_dim;
   int block_size = 256;
   int grid_size = (total_pairs + block_size - 1) / block_size;
   
@@ -111,7 +116,6 @@ __global__ void flash_attention_decode_kernel(
   __syncthreads();
 
   const float *q_ptr = Q + head * head_dim;
-  // Use max_seq_len for head stride to match kv_update_kernel
   const float *k_ptr = K + head * max_seq_len * head_dim;
   const float *v_ptr = V + head * max_seq_len * head_dim;
   float *o_ptr = O + head * head_dim;
@@ -132,22 +136,15 @@ __global__ void flash_attention_decode_kernel(
     }
     __syncthreads();
     
-    // Max reduction
-    float val = s_score[tid < FLASH_BLOCK_SIZE ? tid : 0];
-    for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
-      float other = __shfl_down_sync(0xFFFFFFFFFFFFFFFFULL, val, stride);
-      val = fmaxf(val, other);
-    }
-    if (tid == 0) s_score[0] = val; 
-    
-    // Re-doing simple shared reduction to avoid shfl issues if not available or complicated
+    // Max reduction in shared memory (Block size 64)
     for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
       if (tid < stride) s_score[tid] = fmaxf(s_score[tid], s_score[tid + stride]);
       __syncthreads();
     }
     float new_max = fmaxf(s_max, s_score[0]);
-    __syncthreads();
+    __syncthreads(); // Wait for thread 0 to get the block max
     
+    // Compute exp(x - new_max) and store back to s_score
     if (tid < block_len) {
       uint32_t k_idx = k_start + tid;
       float dot = 0.0f;
@@ -169,20 +166,30 @@ __global__ void flash_attention_decode_kernel(
     float correction = expf(s_max - new_max);
     if (tid == 0) {
       s_sum = correction * s_sum + s_score[0];
-      s_max = new_max;
+    }
+    __syncthreads();
+    
+    // Critical: Update s_max and sync BEFORE rewriting s_score for output update
+    if (tid == 0) s_max = new_max;
+    __syncthreads();
+
+    // Re-calculate local scores for this block using the updated s_max
+    if (tid < block_len) {
+      uint32_t k_idx = k_start + tid;
+      float dot = 0.0f;
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        dot += q_ptr[d] * k_ptr[k_idx * head_dim + d];
+      }
+      s_score[tid] = expf(dot * scale - s_max);
+    } else if (tid < FLASH_BLOCK_SIZE) {
+      s_score[tid] = 0.0f;
     }
     __syncthreads();
     
     if (tid < head_dim) {
       float o_update = correction * s_output[tid];
       for (uint32_t ki = 0; ki < block_len; ++ki) {
-        uint32_t k_idx = k_start + ki;
-        float dot = 0.0f;
-        for (uint32_t d = 0; d < head_dim; ++d) {
-          dot += q_ptr[d] * k_ptr[k_idx * head_dim + d];
-        }
-        float score_exp = expf(dot * scale - s_max);
-        o_update += score_exp * v_ptr[k_idx * head_dim + tid];
+        o_update += s_score[ki] * v_ptr[(k_start + ki) * head_dim + tid];
       }
       s_output[tid] = o_update;
     }

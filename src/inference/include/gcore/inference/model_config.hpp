@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace gcore::inference {
 
@@ -16,6 +17,7 @@ struct ModelConfig {
   uint32_t max_seq_len = 2048; // Maximum sequence length
   float rope_base = 10000.0f;  // RoPE base frequency
   float rms_eps = 1e-5f;       // RMSNorm epsilon
+  std::vector<std::string> vocabulary; // Global vocabulary
 
   /// Create a Llama-2-7B configuration.
   static ModelConfig llama2_7b() {
