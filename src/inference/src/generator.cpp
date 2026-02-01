@@ -25,6 +25,38 @@ bool Generator::init(const ModelConfig &config, BlockScheduler *scheduler,
 
 int32_t Generator::sample(const float *logits, size_t vocab_size,
                           const SamplingParams &params) {
+  // Diagnostic: Check if logits are sane
+  float min_l = logits[0], max_l = logits[0], sum_l = 0.0f;
+  int nan_count = 0;
+  for (size_t i = 0; i < vocab_size; ++i) {
+    float v = logits[i];
+    if (std::isnan(v))
+      nan_count++;
+    else {
+      if (v < min_l)
+        min_l = v;
+      if (v > max_l)
+        max_l = v;
+      sum_l += v;
+    }
+  }
+
+  static int sample_count = 0;
+  if (sample_count++ < 3) { // Print only for first 3 tokens
+    std::cout << "[SAMPLE DEBUG] Logits stats: min=" << min_l
+              << " max=" << max_l << " avg=" << (sum_l / vocab_size)
+              << " NaNs=" << nan_count << std::endl;
+    // Print top 5 logits
+    std::vector<std::pair<float, int>> top;
+    for (int i = 0; i < (int)vocab_size; ++i)
+      top.push_back({logits[i], i});
+    std::sort(top.rbegin(), top.rend());
+    std::cout << "  Top tokens: ";
+    for (int i = 0; i < 5; ++i)
+      std::cout << top[i].second << "(" << top[i].first << ") ";
+    std::cout << std::endl;
+  }
+
   if (params.greedy) {
     int32_t max_id = 0;
     float max_val = logits[0];
