@@ -187,6 +187,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       launch_gemm_mixed_f16f32(stream_, norm_out, wv, v, S, D, D, D, D, D),
       "GEMM V");
 
+  uint32_t pos = static_cast<uint32_t>(seq_start);
+
   CHECK_HIP_KERNEL(launch_rope(stream_, q, S, H, Dh, config_.rope_base, pos),
                    "RoPE Q");
   CHECK_HIP_KERNEL(launch_rope(stream_, k, S, H, Dh, config_.rope_base, pos),
