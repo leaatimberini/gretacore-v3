@@ -746,6 +746,26 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
 
 ModelConfig GGUFLoader::get_config() const { return impl_->config; }
 
+SafeTensorsLoader::SafeTensorsLoader() : impl_(std::make_unique<Impl>()) {}
+SafeTensorsLoader::~SafeTensorsLoader() = default;
+bool SafeTensorsLoader::open(const std::string &path, std::string *err) {
+  return false;
+}
+std::vector<TensorInfo> SafeTensorsLoader::list_tensors() const { return {}; }
+bool SafeTensorsLoader::load_tensor(const std::string &name,
+                                    gcore::rt::hip::Buffer &buffer,
+                                    std::string *err) {
+  return false;
+}
+bool SafeTensorsLoader::load_tensor_fp16(const std::string &name,
+                                         gcore::rt::hip::Buffer &buffer,
+                                         std::string *err) {
+  return false;
+}
+ModelConfig SafeTensorsLoader::get_config() const {
+  return ModelConfig::llama2_7b();
+}
+
 // Factory function
 std::unique_ptr<WeightLoader> create_weight_loader(const std::string &path,
                                                    std::string *err) {
@@ -759,13 +779,6 @@ std::unique_ptr<WeightLoader> create_weight_loader(const std::string &path,
   // TODO: Add SafeTensorsLoader
   *err = "Unsupported weight format: " + path;
   return nullptr;
-}
-
-bool SafeTensorsLoader::load_tensor_fp16(const std::string &name,
-                                         gcore::rt::hip::Buffer &buffer,
-                                         std::string *err) {
-  *err = "load_tensor_fp16 not implemented for SafeTensors yet";
-  return false;
 }
 
 } // namespace gcore::inference

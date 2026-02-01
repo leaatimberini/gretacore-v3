@@ -105,7 +105,9 @@ int main(int argc, char *argv[]) {
       std::cerr << "Weight loading failed: " << err << "\n";
       return 1;
     }
-    std::cout << "Weights loaded\n";
+    config = loader->get_config();
+    std::cout << "Weights loaded and config updated (vocab size: "
+              << config.vocab_size << ")\n";
   }
 
   // Initialize tokenizer
