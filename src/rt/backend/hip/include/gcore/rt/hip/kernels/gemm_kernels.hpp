@@ -1,21 +1,35 @@
 #pragma once
 
 #include <cstdint>
+#include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
 namespace gcore::rt::hip::kernels {
 
-// Standard Tiled SGEMM (C = A * B)
+// Standard Tiled SGEMM (C = A * B) - FP32
 // A is M x K, B is K x N, C is M x N
 // lda, ldb, ldc are strides
 void launch_gemm_tiled_f32(hipStream_t stream, const float *a, const float *b,
                            float *c, uint32_t M, uint32_t N, uint32_t K,
                            uint32_t lda, uint32_t ldb, uint32_t ldc);
 
-// Matrix Core GEMM (MFMA)
+// Matrix Core GEMM (MFMA) - FP32
 // Uses __builtin_amdgcn_mfma_f32_16x16x4f32
 void launch_gemm_mfma_f32(hipStream_t stream, const float *a, const float *b,
                           float *c, uint32_t M, uint32_t N, uint32_t K,
                           uint32_t lda, uint32_t ldb, uint32_t ldc);
+
+// Tiled HGEMM (C = A * B) - FP16
+// All inputs/outputs in half precision, accumulator in FP32
+void launch_gemm_tiled_f16(hipStream_t stream, const __half *a, const __half *b,
+                           __half *c, uint32_t M, uint32_t N, uint32_t K,
+                           uint32_t lda, uint32_t ldb, uint32_t ldc);
+
+// Mixed Precision GEMM - FP32 activations, FP16 weights, FP32 output
+// Allows 2x memory savings on weights while keeping activation precision
+void launch_gemm_mixed_f16f32(hipStream_t stream, const float *a,
+                              const __half *b, float *c, uint32_t M, uint32_t N,
+                              uint32_t K, uint32_t lda, uint32_t ldb,
+                              uint32_t ldc);
 
 } // namespace gcore::rt::hip::kernels

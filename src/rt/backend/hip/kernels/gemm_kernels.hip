@@ -220,5 +220,135 @@ void launch_gemm_mfma_f32(hipStream_t stream,
   gemm_mfma_f32_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K, lda, ldb, ldc);
 }
 
+// =================================================================================================
+// FP16 GEMM Implementation
+// =================================================================================================
+
+#include <hip/hip_fp16.h>
+
+#define TILE_SIZE_FP16 16
+
+__global__ void gemm_tiled_f16_kernel(const __half *__restrict__ a, 
+                                      const __half *__restrict__ b, 
+                                      __half *__restrict__ c,
+                                      uint32_t M, uint32_t N, uint32_t K,
+                                      uint32_t lda, uint32_t ldb, uint32_t ldc) {
+  
+  uint32_t row = blockIdx.y * blockDim.y + threadIdx.y;
+  uint32_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+  uint32_t lx = threadIdx.x;
+  uint32_t ly = threadIdx.y;
+
+  __shared__ __half As[TILE_SIZE_FP16][TILE_SIZE_FP16];
+  __shared__ __half Bs[TILE_SIZE_FP16][TILE_SIZE_FP16];
+
+  float acc = 0.0f; // Accumulate in FP32 for precision
+
+  for (uint32_t k0 = 0; k0 < K; k0 += TILE_SIZE_FP16) {
+    // Load tile A
+    uint32_t ak = k0 + lx;
+    if (row < M && ak < K) {
+      As[ly][lx] = a[row * lda + ak];
+    } else {
+      As[ly][lx] = __float2half(0.0f);
+    }
+
+    // Load tile B
+    uint32_t bk = k0 + ly;
+    if (col < N && bk < K) {
+      Bs[ly][lx] = b[bk * ldb + col];
+    } else {
+      Bs[ly][lx] = __float2half(0.0f);
+    }
+
+    __syncthreads();
+
+    // Compute partial - accumulate in FP32
+    for (uint32_t k = 0; k < TILE_SIZE_FP16; ++k) {
+      acc += __half2float(As[ly][k]) * __half2float(Bs[k][lx]);
+    }
+
+    __syncthreads();
+  }
+
+  if (row < M && col < N) {
+    c[row * ldc + col] = __float2half(acc);
+  }
+}
+
+void launch_gemm_tiled_f16(hipStream_t stream, 
+                           const __half *a, const __half *b, __half *c,
+                           uint32_t M, uint32_t N, uint32_t K,
+                           uint32_t lda, uint32_t ldb, uint32_t ldc) {
+  
+  dim3 block(TILE_SIZE_FP16, TILE_SIZE_FP16);
+  dim3 grid((N + TILE_SIZE_FP16 - 1) / TILE_SIZE_FP16, 
+            (M + TILE_SIZE_FP16 - 1) / TILE_SIZE_FP16);
+
+  gemm_tiled_f16_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K, lda, ldb, ldc);
+}
+
+// Mixed precision: FP16 weights, FP32 activations, FP32 output
+__global__ void gemm_mixed_f16f32_kernel(const float *__restrict__ a, 
+                                         const __half *__restrict__ b, 
+                                         float *__restrict__ c,
+                                         uint32_t M, uint32_t N, uint32_t K,
+                                         uint32_t lda, uint32_t ldb, uint32_t ldc) {
+  
+  uint32_t row = blockIdx.y * blockDim.y + threadIdx.y;
+  uint32_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+  uint32_t lx = threadIdx.x;
+  uint32_t ly = threadIdx.y;
+
+  __shared__ float As[TILE_SIZE_FP16][TILE_SIZE_FP16];
+  __shared__ __half Bs[TILE_SIZE_FP16][TILE_SIZE_FP16];
+
+  float acc = 0.0f;
+
+  for (uint32_t k0 = 0; k0 < K; k0 += TILE_SIZE_FP16) {
+    // Load tile A (FP32 activations)
+    uint32_t ak = k0 + lx;
+    if (row < M && ak < K) {
+      As[ly][lx] = a[row * lda + ak];
+    } else {
+      As[ly][lx] = 0.0f;
+    }
+
+    // Load tile B (FP16 weights)
+    uint32_t bk = k0 + ly;
+    if (col < N && bk < K) {
+      Bs[ly][lx] = b[bk * ldb + col];
+    } else {
+      Bs[ly][lx] = __float2half(0.0f);
+    }
+
+    __syncthreads();
+
+    // Compute - weights promoted to FP32 for multiply
+    for (uint32_t k = 0; k < TILE_SIZE_FP16; ++k) {
+      acc += As[ly][k] * __half2float(Bs[k][lx]);
+    }
+
+    __syncthreads();
+  }
+
+  if (row < M && col < N) {
+    c[row * ldc + col] = acc;
+  }
+}
+
+void launch_gemm_mixed_f16f32(hipStream_t stream, 
+                              const float *a, const __half *b, float *c,
+                              uint32_t M, uint32_t N, uint32_t K,
+                              uint32_t lda, uint32_t ldb, uint32_t ldc) {
+  
+  dim3 block(TILE_SIZE_FP16, TILE_SIZE_FP16);
+  dim3 grid((N + TILE_SIZE_FP16 - 1) / TILE_SIZE_FP16, 
+            (M + TILE_SIZE_FP16 - 1) / TILE_SIZE_FP16);
+
+  gemm_mixed_f16f32_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K, lda, ldb, ldc);
+}
 
 } // namespace gcore::rt::hip::kernels
