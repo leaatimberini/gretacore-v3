@@ -128,48 +128,63 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
 
   // Load per-layer weights
   size_t loaded = 0;
+  size_t load_errors = 0;
+  bool verbose = (config_.num_layers <= 32);
+
   for (size_t i = 0; i < config_.num_layers; ++i) {
     auto &b = blocks_[i];
     std::string prefix = "blk." + std::to_string(i) + ".";
 
-    // Attention weights
+    // Norms (FP32, small - load these first as test)
+    std::string attn_norm_name = prefix + "attn_norm.weight";
+    std::string ffn_norm_name = prefix + "ffn_norm.weight";
+
+    if (tensor_map.count(attn_norm_name)) {
+      if (loader.load_tensor(attn_norm_name, b.attn_norm, err)) {
+        loaded++;
+        if (verbose && i == 0) {
+          std::cout << "  Layer 0: Loaded " << attn_norm_name << " to GPU\n";
+        }
+      } else {
+        std::cerr << "  Warning: Failed to load " << attn_norm_name << ": "
+                  << *err << "\n";
+        load_errors++;
+      }
+    }
+
+    if (tensor_map.count(ffn_norm_name)) {
+      if (loader.load_tensor(ffn_norm_name, b.ffn_norm, err)) {
+        loaded++;
+      } else {
+        load_errors++;
+      }
+    }
+
+    // Attention weights (Q4_K - skip actual load for now, just count)
     std::string wq_name = prefix + "attn_q.weight";
     std::string wk_name = prefix + "attn_k.weight";
     std::string wv_name = prefix + "attn_v.weight";
     std::string wo_name = prefix + "attn_output.weight";
 
-    // MLP weights
-    std::string w1_name = prefix + "ffn_gate.weight";
-    std::string w2_name = prefix + "ffn_down.weight";
-    std::string w3_name = prefix + "ffn_up.weight";
-
-    // Norms
-    std::string attn_norm_name = prefix + "attn_norm.weight";
-    std::string ffn_norm_name = prefix + "ffn_norm.weight";
-
-    // Load each tensor (for now, just log that we found them)
-    if (tensor_map.count(wq_name)) {
-      std::cout << "  Layer " << i << ": Found " << wq_name << " ["
-                << tensor_map[wq_name]->size_bytes / 1024 << " KB]\n";
-      // TODO: Actually load tensor data to GPU buffer
-      // loader.load_tensor(wq_name, b.wq, err);
+    if (tensor_map.count(wq_name))
       loaded++;
-    }
     if (tensor_map.count(wk_name))
       loaded++;
     if (tensor_map.count(wv_name))
       loaded++;
     if (tensor_map.count(wo_name))
       loaded++;
+
+    // MLP weights (Q4_K/Q6_K - skip actual load for now, just count)
+    std::string w1_name = prefix + "ffn_gate.weight";
+    std::string w2_name = prefix + "ffn_down.weight";
+    std::string w3_name = prefix + "ffn_up.weight";
+
     if (tensor_map.count(w1_name))
       loaded++;
     if (tensor_map.count(w2_name))
       loaded++;
     if (tensor_map.count(w3_name))
-      loaded++;
-    if (tensor_map.count(attn_norm_name))
-      loaded++;
-    if (tensor_map.count(ffn_norm_name))
       loaded++;
   }
 
