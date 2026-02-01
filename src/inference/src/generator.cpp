@@ -14,17 +14,16 @@ Generator::Generator() = default;
 
 Generator::~Generator() = default;
 
-bool Generator::init(
-    const ModelConfig &config, BlockScheduler *scheduler,
-    /* Tokenizer *tokenizer, */ std::string *err) { // Removed Tokenizer*
-                                                    // tokenizer parameter
+bool Generator::init(const ModelConfig &config, BlockScheduler *scheduler,
+                     std::string *err) {
   config_ = config;
-  scheduler_ = scheduler; // Keep scheduler initialization
+  scheduler_ = scheduler;
+
   // Initialize tokenizer
   tokenizer_ = std::make_unique<Tokenizer>();
   tokenizer_->set_vocabulary(config_.vocabulary);
 
-  loaded_ = true; // Changed initialized_ to loaded_
+  initialized_ = true;
   return true;
 }
 

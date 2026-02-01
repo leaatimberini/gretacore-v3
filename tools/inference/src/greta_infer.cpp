@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
 
   // Initialize generator
   gcore::inference::Generator generator;
-  if (!generator.init(config, &scheduler, &tokenizer, &err)) {
+  if (!generator.init(config, &scheduler, &err)) {
     std::cerr << "Generator init failed: " << err << "\n";
     return 1;
   }

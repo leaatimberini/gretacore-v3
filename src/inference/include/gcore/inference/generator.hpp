@@ -42,7 +42,7 @@ public:
 
   /// Initialize with model configuration and pre-allocated scheduler.
   bool init(const ModelConfig &config, BlockScheduler *scheduler,
-            Tokenizer *tokenizer, std::string *err);
+            std::string *err);
 
   /// Generate text from a prompt.
   std::string generate(const std::string &prompt, const SamplingParams &params,

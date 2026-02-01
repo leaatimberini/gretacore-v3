@@ -283,15 +283,9 @@ struct GGUFLoader::Impl {
       return false;
     }
 
-    // Skip KV pairs for now (TODO: parse for config extraction)
-    // For simplicity, we'll use default Llama-2-7B config
-    config = ModelConfig::llama2_7b();
-
-    // Skip to tensor info section
-    for (uint64_t i = 0; i < kv_count; ++i) {
-      if (!skip_kv_pair(err)) {
-        return false;
-      }
+    // Parse KV pairs
+    if (!parse_kv_pairs(kv_count, err)) {
+      return false;
     }
 
     std::cerr << "[GGUF] After KV pairs, position: " << file.tellg() << "\n";
