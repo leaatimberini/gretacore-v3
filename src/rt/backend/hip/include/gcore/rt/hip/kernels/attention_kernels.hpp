@@ -16,7 +16,8 @@ namespace gcore::rt::hip::kernels {
  * @param base Frequency base (e.g., 10000.0).
  */
 void launch_rope(hipStream_t stream, float *x, uint32_t seq_len,
-                 uint32_t num_heads, uint32_t head_dim, float base);
+                 uint32_t num_heads, uint32_t head_dim, float base,
+                 uint32_t pos_offset);
 
 /**
  * @brief Apply Causal Masking (inplace).

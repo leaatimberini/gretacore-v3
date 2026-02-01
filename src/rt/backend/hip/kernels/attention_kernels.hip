@@ -4,7 +4,7 @@
 namespace gcore::rt::hip::kernels {
 
 __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads, 
-                            uint32_t head_dim, float base) {
+                            uint32_t head_dim, float base, uint32_t pos_offset) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   uint32_t total_pairs = seq_len * num_heads * (head_dim / 2);
   
@@ -13,13 +13,13 @@ __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads,
   uint32_t half_dim = head_dim / 2;
   uint32_t pair_idx = idx % half_dim;
   uint32_t head_idx = (idx / half_dim) % num_heads;
-  uint32_t pos = idx / (half_dim * num_heads);
+  uint32_t pos = pos_offset + (idx / (half_dim * num_heads));
 
   float theta = (float)pos * powf(base, -2.0f * (float)pair_idx / (float)head_dim);
   float cos_val = cosf(theta);
   float sin_val = sinf(theta);
 
-  uint32_t base_idx = pos * (num_heads * head_dim) + head_idx * head_dim + (2 * pair_idx);
+  uint32_t base_idx = (pos - pos_offset) * (num_heads * head_dim) + head_idx * head_dim + (2 * pair_idx);
   
   float v0 = x[base_idx];
   float v1 = x[base_idx + 1];
@@ -29,12 +29,12 @@ __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads,
 }
 
 void launch_rope(hipStream_t stream, float *x, uint32_t seq_len, 
-                 uint32_t num_heads, uint32_t head_dim, float base) {
+                 uint32_t num_heads, uint32_t head_dim, float base, uint32_t pos_offset) {
   uint32_t total_pairs = seq_len * num_heads * (head_dim / 2);
   int block_size = 256;
   int grid_size = (total_pairs + block_size - 1) / block_size;
   
-  rope_kernel<<<grid_size, block_size, 0, stream>>>(x, seq_len, num_heads, head_dim, base);
+  rope_kernel<<<grid_size, block_size, 0, stream>>>(x, seq_len, num_heads, head_dim, base, pos_offset);
 }
 
 __global__ void causal_mask_kernel(float *data, uint32_t seq_len, float mask_val) {
