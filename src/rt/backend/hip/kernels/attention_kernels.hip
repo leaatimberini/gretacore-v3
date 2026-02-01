@@ -135,11 +135,10 @@ __global__ void flash_attention_decode_kernel(
     // Max reduction
     float val = s_score[tid < FLASH_BLOCK_SIZE ? tid : 0];
     for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
-      float other = __shfl_down_sync(0xFFFFFFFF, val, stride);
+      float other = __shfl_down_sync(0xFFFFFFFFFFFFFFFFULL, val, stride);
       val = fmaxf(val, other);
     }
-    // Optimization: avoid shared memory reduction for max if threads per block > block size
-    if (tid == 0) s_score[0] = val; // Actually let's keep it simple for now
+    if (tid == 0) s_score[0] = val; 
     
     // Re-doing simple shared reduction to avoid shfl issues if not available or complicated
     for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
