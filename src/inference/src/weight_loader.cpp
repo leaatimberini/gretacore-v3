@@ -152,14 +152,27 @@ struct GGUFLoader::Impl {
     file.read(reinterpret_cast<char *>(&tensor_count), 8);
     file.read(reinterpret_cast<char *>(&kv_count), 8);
 
+    std::cerr << "[GGUF] Version: " << version << ", Tensors: " << tensor_count
+              << ", KV pairs: " << kv_count << "\n";
+
+    // Sanity check
+    if (tensor_count > 10000 || kv_count > 10000) {
+      *err = "Suspicious tensor/kv counts, file may be corrupted";
+      return false;
+    }
+
     // Skip KV pairs for now (TODO: parse for config extraction)
     // For simplicity, we'll use default Llama-2-7B config
     config = ModelConfig::llama2_7b();
 
     // Skip to tensor info section
     for (uint64_t i = 0; i < kv_count; ++i) {
-      skip_kv_pair();
+      if (!skip_kv_pair(err)) {
+        return false;
+      }
     }
+
+    std::cerr << "[GGUF] After KV pairs, position: " << file.tellg() << "\n";
 
     // Parse tensor info
     tensors.reserve(tensor_count);
@@ -187,10 +200,16 @@ struct GGUFLoader::Impl {
     return true;
   }
 
-  void skip_kv_pair() {
+  bool skip_kv_pair(std::string *err) {
     // Read key length + key
     uint64_t key_len;
     file.read(reinterpret_cast<char *>(&key_len), 8);
+
+    // Sanity check: key should not exceed 256 bytes
+    if (key_len > 256) {
+      *err = "Key length too large: " + std::to_string(key_len);
+      return false;
+    }
     file.seekg(key_len, std::ios::cur);
 
     // Read value type
@@ -226,6 +245,10 @@ struct GGUFLoader::Impl {
     case 8: { // STRING
       uint64_t len;
       file.read(reinterpret_cast<char *>(&len), 8);
+      if (len > 1000000) { // Max 1MB string
+        *err = "String value too large: " + std::to_string(len);
+        return false;
+      }
       file.seekg(len, std::ios::cur);
       break;
     }
@@ -234,12 +257,33 @@ struct GGUFLoader::Impl {
       uint64_t arr_len;
       file.read(reinterpret_cast<char *>(&arr_type), 4);
       file.read(reinterpret_cast<char *>(&arr_len), 8);
-      // Skip array elements (simplified)
-      for (uint64_t i = 0; i < arr_len; ++i) {
-        // Recursively skip based on arr_type
-        if (arr_type <= 7) {
-          file.seekg(8, std::ios::cur); // Max primitive size
+      // Skip array elements based on type size
+      size_t elem_size = 1;
+      if (arr_type <= 1)
+        elem_size = 1;
+      else if (arr_type <= 3)
+        elem_size = 2;
+      else if (arr_type <= 6)
+        elem_size = 4;
+      else if (arr_type <= 7)
+        elem_size = 1;
+      else if (arr_type == 8) {
+        // String array - skip each string
+        for (uint64_t i = 0; i < arr_len; ++i) {
+          uint64_t slen;
+          file.read(reinterpret_cast<char *>(&slen), 8);
+          if (slen > 1000000) {
+            *err = "Array string too large";
+            return false;
+          }
+          file.seekg(slen, std::ios::cur);
         }
+        break;
+      } else if (arr_type >= 10)
+        elem_size = 8;
+
+      if (arr_type != 8) {
+        file.seekg(arr_len * elem_size, std::ios::cur);
       }
       break;
     }
@@ -251,18 +295,33 @@ struct GGUFLoader::Impl {
     default:
       break;
     }
+    return true;
   }
 
   bool parse_tensor_info(TensorInfo &info, std::string *err) {
     // Read name
     uint64_t name_len;
     file.read(reinterpret_cast<char *>(&name_len), 8);
+
+    // Sanity check: tensor names should be reasonable
+    if (name_len > 512) {
+      *err = "Tensor name too long: " + std::to_string(name_len);
+      return false;
+    }
+
     info.name.resize(name_len);
     file.read(info.name.data(), name_len);
 
     // Read dimensions
     uint32_t n_dims;
     file.read(reinterpret_cast<char *>(&n_dims), 4);
+
+    // Sanity check: tensors shouldn't have > 8 dimensions
+    if (n_dims > 8) {
+      *err = "Too many dimensions: " + std::to_string(n_dims);
+      return false;
+    }
+
     info.shape.resize(n_dims);
     for (uint32_t i = 0; i < n_dims; ++i) {
       uint64_t dim;
