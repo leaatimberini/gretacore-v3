@@ -22,4 +22,8 @@ void launch_silu(hipStream_t stream, const float *x, float *y, size_t n);
 void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
                 size_t n);
 
+void launch_embedding_lookup(hipStream_t stream, const int32_t *tokens,
+                             const float *embeddings, float *output,
+                             uint32_t seq_len, uint32_t dim);
+
 } // namespace gcore::rt::hip::kernels

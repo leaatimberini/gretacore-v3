@@ -119,6 +119,10 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
   if (!activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly, err))
     return false;
 
+  size_t tokens_size = batch_size * max_seq_len * sizeof(int32_t);
+  if (!activations_.tokens.allocate(tokens_size, Usage::DeviceOnly, err))
+    return false;
+
   size_t logits_size =
       batch_size * max_seq_len * config_.vocab_size * sizeof(float);
   if (!logits_.allocate(logits_size, Usage::DeviceOnly, err))
@@ -304,21 +308,32 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   return true;
 }
 
-#include <hip/hip_runtime.h>
-
-bool BlockScheduler::forward(size_t seq_start, size_t seq_len,
-                             std::string *err) {
-  for (size_t i = 0; i < config_.num_layers; ++i) {
-    if (!execute_layer(i, seq_start, seq_len, err))
-      return false;
-  }
-
+bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
+                             size_t seq_len, std::string *err) {
   using namespace gcore::rt::hip::kernels;
   uint32_t S = static_cast<uint32_t>(seq_len);
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t V = static_cast<uint32_t>(config_.vocab_size);
 
+  // 1. Copy tokens to device
+  if (!activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err))
+    return false;
+
+  // 2. Embedding Lookup
   float *x = static_cast<float *>(activations_.x.data());
+  const float *embd_w = static_cast<const float *>(token_embd_.data());
+  const int32_t *d_tokens =
+      static_cast<const int32_t *>(activations_.tokens.data());
+  CHECK_HIP_KERNEL(launch_embedding_lookup(stream_, d_tokens, embd_w, x, S, D),
+                   "Embedding Lookup");
+
+  // 3. Transformer Blocks
+  for (size_t i = 0; i < config_.num_layers; ++i) {
+    if (!execute_layer(i, seq_start, seq_len, err))
+      return false;
+  }
+
+  // 4. Final Output Layer
   float *norm_out = static_cast<float *>(activations_.norm_out.data());
   float *logits = static_cast<float *>(logits_.data());
   const float *onorm_w = static_cast<const float *>(output_norm_.data());

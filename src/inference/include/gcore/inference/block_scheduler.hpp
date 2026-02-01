@@ -48,6 +48,8 @@ struct ActivationBuffers {
   // KV Cache (persistent across tokens)
   gcore::rt::hip::Buffer kv_cache_k; // [L, max_seq, H, Dh]
   gcore::rt::hip::Buffer kv_cache_v; // [L, max_seq, H, Dh]
+  // Input tokens [B, S]
+  gcore::rt::hip::Buffer tokens;
 };
 
 /// Block Scheduler: Manages execution of N transformer layers.
@@ -74,7 +76,8 @@ public:
                      std::string *err);
 
   /// Execute forward pass through all layers.
-  bool forward(size_t seq_start, size_t seq_len, std::string *err);
+  bool forward(const int32_t *tokens, size_t seq_start, size_t seq_len,
+               std::string *err);
 
   /// Get the final hidden state buffer.
   gcore::rt::hip::Buffer &get_hidden_state();

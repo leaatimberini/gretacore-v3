@@ -41,8 +41,6 @@ __global__ void rmsnorm_naive_kernel(const float *x, const float *gamma,
 void launch_rmsnorm_naive(hipStream_t stream, const float *x,
                           const float *gamma, float *y, uint32_t rows,
                           uint32_t cols, float eps) {
-  // Naive launch: 1 thread per row.
-  // Very inefficient for large cols, but matches Vulkan reference logic.
   int block_size = 256;
   int grid_size = (rows + block_size - 1) / block_size;
   rmsnorm_naive_kernel<<<grid_size, block_size, 0, stream>>>(x, gamma, y, rows,
@@ -124,6 +122,30 @@ void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
   int block_size = 256;
   int grid_size = (n + block_size - 1) / block_size;
   mul_kernel<<<grid_size, block_size, 0, stream>>>(a, b, c, n);
+}
+
+__global__ void embedding_lookup_kernel(const int32_t *tokens,
+                                        const float *embeddings, float *output,
+                                        uint32_t seq_len, uint32_t dim) {
+  uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  uint32_t total = seq_len * dim;
+  if (idx >= total) return;
+
+  uint32_t s = idx / dim;
+  uint32_t d = idx % dim;
+  int32_t token = tokens[s];
+  
+  output[idx] = embeddings[token * dim + d];
+}
+
+void launch_embedding_lookup(hipStream_t stream, const int32_t *tokens,
+                             const float *embeddings, float *output,
+                             uint32_t seq_len, uint32_t dim) {
+  uint32_t total = seq_len * dim;
+  int block_size = 256;
+  int grid_size = (total + block_size - 1) / block_size;
+  embedding_lookup_kernel<<<grid_size, block_size, 0, stream>>>(
+      tokens, embeddings, output, seq_len, dim);
 }
 
 } // namespace gcore::rt::hip::kernels
