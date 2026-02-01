@@ -25,6 +25,8 @@ public:
 
   bool copy_to_device(const void *host_ptr, size_t size, std::string *err);
   bool copy_to_host(void *host_ptr, size_t size, std::string *err);
+  bool copy_to_host_offset(void *host_ptr, size_t offset, size_t size,
+                           std::string *err);
 
 private:
   void *ptr_ = nullptr;

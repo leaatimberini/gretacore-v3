@@ -62,4 +62,23 @@ bool Buffer::copy_to_host(void *host_ptr, size_t size, std::string *err) {
   return true;
 }
 
+bool Buffer::copy_to_host_offset(void *host_ptr, size_t offset, size_t size,
+                                 std::string *err) {
+  if (offset + size > size_) {
+    if (err)
+      *err = "Buffer copy out of bounds: offset=" + std::to_string(offset) +
+             ", size=" + std::to_string(size) +
+             ", total_size=" + std::to_string(size_);
+    return false;
+  }
+  char *device_ptr = static_cast<char *>(ptr_) + offset;
+  hipError_t res = hipMemcpy(host_ptr, device_ptr, size, hipMemcpyDeviceToHost);
+  if (res != hipSuccess) {
+    if (err)
+      *err = "hipMemcpy D2H failed: " + std::string(hipGetErrorString(res));
+    return false;
+  }
+  return true;
+}
+
 } // namespace gcore::rt::hip

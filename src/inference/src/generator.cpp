@@ -108,31 +108,56 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
 
   std::vector<float> logits_host(config_.vocab_size);
 
-  for (int i = 0; i < params.max_tokens; ++i) {
-    std::string forward_err;
-    if (!scheduler_->forward(output.size() - 1, 1, &forward_err)) {
-      std::cerr << "Forward pass failed: " << forward_err << "\n";
+  std::vector<float> logits_host(config_.vocab_size);
+
+  // 1. Prefill
+  if (!scheduler_->forward(0, prompt_tokens.size(), err)) {
+    return {};
+  }
+
+  // Sample first generated token from the last logits of the prefill
+  // Logits buffer has [seq_len, vocab_size]. We need index [seq_len - 1].
+  size_t last_token_offset =
+      (prompt_tokens.size() - 1) * config_.vocab_size * sizeof(float);
+  if (!scheduler_->get_logits().copy_to_host_offset(
+          logits_host.data(), last_token_offset,
+          config_.vocab_size * sizeof(float), err)) {
+    return {};
+  }
+
+  int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
+  output.push_back(next_token);
+
+  first_token_time = std::chrono::high_resolution_clock::now();
+  first_token = false;
+
+  if (callback) {
+    callback(next_token, tokenizer_->decode_token(next_token));
+  }
+
+  // 2. Decode loop (for remaining tokens)
+  for (int i = 1; i < params.max_tokens; ++i) {
+    if (next_token == tokenizer_->eos_id())
+      break;
+
+    // Forward pass for 1 token at the current position
+    // (output.size() - 1) is the position of the last generated token
+    if (!scheduler_->forward(output.size() - 1, 1, err)) {
       break;
     }
 
-    // Copy only the last token's logits for sampling
+    // For S=1, logits are at the beginning of the buffer (if scheduler resets
+    // offset)
     if (!scheduler_->get_logits().copy_to_host(
             logits_host.data(), config_.vocab_size * sizeof(float), err)) {
       break;
     }
 
-    int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
-
-    if (first_token) {
-      first_token_time = std::chrono::high_resolution_clock::now();
-      first_token = false;
-    }
-
+    next_token = sample(logits_host.data(), config_.vocab_size, params);
     output.push_back(next_token);
 
-    // Check for EOS
-    if (next_token == tokenizer_->eos_id()) {
-      break;
+    if (callback) {
+      callback(next_token, tokenizer_->decode_token(next_token));
     }
   }
 
