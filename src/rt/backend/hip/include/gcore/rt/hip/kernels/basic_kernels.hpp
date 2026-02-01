@@ -19,4 +19,7 @@ void launch_add(hipStream_t stream, const float *a, const float *b, float *c,
 
 void launch_silu(hipStream_t stream, const float *x, float *y, size_t n);
 
+void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
+                size_t n);
+
 } // namespace gcore::rt::hip::kernels

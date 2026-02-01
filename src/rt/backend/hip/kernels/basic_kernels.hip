@@ -112,4 +112,18 @@ void launch_silu(hipStream_t stream, const float *x, float *y, size_t n) {
   silu_kernel<<<grid_size, block_size, 0, stream>>>(x, y, n);
 }
 
+__global__ void mul_kernel(const float *a, const float *b, float *c, size_t n) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    c[idx] = a[idx] * b[idx];
+  }
+}
+
+void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
+                size_t n) {
+  int block_size = 256;
+  int grid_size = (n + block_size - 1) / block_size;
+  mul_kernel<<<grid_size, block_size, 0, stream>>>(a, b, c, n);
+}
+
 } // namespace gcore::rt::hip::kernels

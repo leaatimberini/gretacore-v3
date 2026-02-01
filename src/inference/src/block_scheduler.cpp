@@ -173,16 +173,31 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     load(prefix + "attn_norm.weight", b.attn_norm);
     load(prefix + "ffn_norm.weight", b.ffn_norm);
 
-    // Attention weights (Q4_K -> FP32)
-    load(prefix + "attn_q.weight", b.wq);
-    load(prefix + "attn_k.weight", b.wk);
-    load(prefix + "attn_v.weight", b.wv);
-    load(prefix + "attn_output.weight", b.wo);
+    // Attention weights (Q4_K -> FP16)
+    auto load_fp16 = [&](const std::string &name,
+                         gcore::rt::hip::Buffer &buf) -> bool {
+      if (tensor_map.count(name)) {
+        if (loader.load_tensor_fp16(name, buf, err)) {
+          loaded++;
+          return true;
+        } else {
+          std::cerr << "  Warning: Failed to load " << name << ": " << *err
+                    << "\n";
+          load_errors++;
+        }
+      }
+      return false;
+    };
 
-    // MLP weights (Q4_K/Q6_K -> FP32)
-    load(prefix + "ffn_gate.weight", b.w1);
-    load(prefix + "ffn_down.weight", b.w2);
-    load(prefix + "ffn_up.weight", b.w3);
+    load_fp16(prefix + "attn_q.weight", b.wq);
+    load_fp16(prefix + "attn_k.weight", b.wk);
+    load_fp16(prefix + "attn_v.weight", b.wv);
+    load_fp16(prefix + "attn_output.weight", b.wo);
+
+    // MLP weights (Q4_K/Q6_K -> FP16)
+    load_fp16(prefix + "ffn_gate.weight", b.w1);
+    load_fp16(prefix + "ffn_down.weight", b.w2);
+    load_fp16(prefix + "ffn_up.weight", b.w3);
 
     if (verbose && i == 0) {
       std::cout << "  Layer 0: Loaded " << (loaded - load_errors)
@@ -275,42 +290,41 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   // For now, x stays as residual
 
   // Step 2-4: Linear projections (Q, K, V)
-  // norm_out: [S, D], Wq: [D, D], q: [S, D]
-  launch_gemm_tiled_f32(stream_, norm_out, wq, q, S, D, D, D, D, D);
-  launch_gemm_tiled_f32(stream_, norm_out, wk, k, S, D, D, D, D, D);
-  launch_gemm_tiled_f32(stream_, norm_out, wv, v, S, D, D, D, D, D);
+  // Use mixed-precision GEMM: FP32 activations * FP16 weights -> FP32 output
+  launch_gemm_mixed_f16f32(stream_, norm_out, b.wq, q, S, D, D, D, D, D);
+  launch_gemm_mixed_f16f32(stream_, norm_out, b.wk, k, S, D, D, D, D, D);
+  launch_gemm_mixed_f16f32(stream_, norm_out, b.wv, v, S, D, D, D, D, D);
 
   // Step 5: RoPE embeddings on Q and K
   launch_rope(stream_, q, S, H, Dh, rope_base);
   launch_rope(stream_, k, S, H, Dh, rope_base);
 
-  // Step 6: Update KV cache (for autoregressive generation)
+  // Step 6: Update KV cache
   uint32_t pos = static_cast<uint32_t>(seq_start);
   for (uint32_t s = 0; s < S; ++s) {
     launch_kv_update(stream_, cache_k, cache_v, k + s * D, v + s * D, pos + s,
                      config_.max_seq_len, H, Dh);
   }
 
-  // Step 7: Scaled Dot-Product Attention
-  // For simplicity, compute Q @ K^T -> scores -> softmax -> @ V -> attn_out
-  // Full attention: [S, H, Dh] @ [H, seq_pos, Dh]^T @ [H, seq_pos, Dh]
-  // This is simplified - production would use FlashAttention
-
-  // For single-token decode (S=1):
-  // Q: [1, D], K_cache: [seq_pos, D], V_cache: [seq_pos, D]
-  // scores = Q @ K_cache^T = [1, seq_pos]
-  // attn_out = softmax(scores / sqrt(Dh)) @ V_cache = [1, D]
-
-  // TODO: Implement proper batched attention
-  // For now, use simplified single-head attention approximation
-  // (This is a placeholder - real impl needs proper multi-head attention)
+  // Step 7: FlashAttention v2
+  float scale = 1.0f / sqrtf(static_cast<float>(Dh));
+  if (S == 1) {
+    // Decode mode: single query against full KV cache
+    launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
+                                  pos + S, Dh, scale);
+  } else {
+    // Prefill mode: multiple queries with causal masking
+    // (FlashAttention handle KV update internally or we use the updated cache)
+    // For now, simpler to use the cache we just updated
+    launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H, Dh, scale,
+                                   true);
+  }
 
   // Step 8: Output projection + residual
-  // attn_out: [S, D], Wo: [D, D] -> x: [S, D]
-  // x = x + attn_out @ Wo
-  launch_gemm_tiled_f32(stream_, v, wo, attn_out, S, D, D, D, D,
-                        D); // Placeholder: use v as attn for now
-  launch_add(stream_, x, attn_out, x, S * D);
+  // Mixed-precision GEMM: attn_out [S, D] * Wo [D, D] (FP16) -> mlp_out [S, D]
+  // (FP32) We reuse mlp_out as a temp buffer for attn output projection
+  launch_gemm_mixed_f16f32(stream_, attn_out, b.wo, mlp_out, S, D, D, D, D, D);
+  launch_add(stream_, x, mlp_out, x, S * D);
 
   // ====== MLP BLOCK ======
 
@@ -318,23 +332,20 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps);
 
   // Step 10-11: Gate and Up projections
-  // norm_out: [S, D], W1: [D, hidden_dim] -> mlp_gate: [S, hidden_dim]
-  // norm_out: [S, D], W3: [D, hidden_dim] -> mlp_up: [S, hidden_dim]
-  launch_gemm_tiled_f32(stream_, norm_out, w1, mlp_gate, S, hidden_dim, D, D,
-                        hidden_dim, hidden_dim);
-  launch_gemm_tiled_f32(stream_, norm_out, w3, mlp_up, S, hidden_dim, D, D,
-                        hidden_dim, hidden_dim);
+  // Mixed-precision GEMM: norm_out [S, D] * W1/W3 [D, hidden_dim] (FP16)
+  launch_gemm_mixed_f16f32(stream_, norm_out, b.w1, mlp_gate, S, hidden_dim, D,
+                           D, hidden_dim, hidden_dim);
+  launch_gemm_mixed_f16f32(stream_, norm_out, b.w3, mlp_up, S, hidden_dim, D, D,
+                           hidden_dim, hidden_dim);
 
-  // Step 12: SiLU(gate) * up -> mlp_out
+  // Step 12: SiLU(gate) * up -> mlp_gate
   launch_silu(stream_, mlp_gate, mlp_gate, S * hidden_dim);
-  // Element-wise multiply: mlp_out = mlp_gate * mlp_up
-  // (Need to add a mul kernel - for now, skip)
+  launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim);
 
   // Step 13: Down projection + residual
-  // mlp_gate: [S, hidden_dim], W2: [hidden_dim, D] -> temp: [S, D]
-  // x = x + temp
-  launch_gemm_tiled_f32(stream_, mlp_gate, w2, mlp_out, S, D, hidden_dim,
-                        hidden_dim, D, D);
+  // Mixed-precision GEMM: mlp_gate [S, hidden_dim] * W2 [hidden_dim, D] (FP16)
+  launch_gemm_mixed_f16f32(stream_, mlp_gate, b.w2, mlp_out, S, D, hidden_dim,
+                           hidden_dim, D, D);
   launch_add(stream_, x, mlp_out, x, S * D);
 
   return true;
