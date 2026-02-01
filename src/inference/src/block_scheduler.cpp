@@ -1,5 +1,8 @@
 #include "gcore/inference/block_scheduler.hpp"
 #include "gcore/inference/weight_loader.hpp"
+#include "gcore/rt/hip/kernels/attention_kernels.hpp"
+#include "gcore/rt/hip/kernels/basic_kernels.hpp"
+#include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 
 #include <iostream>
 #include <unordered_map>
@@ -215,23 +218,41 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     return false;
   }
 
-  // The actual execution would use the GraphRunner with HIP nodes:
-  // 1. RMSNorm(x) -> norm_out
-  // 2. GEMM(norm_out, Wq) -> q
-  // 3. GEMM(norm_out, Wk) -> k
-  // 4. GEMM(norm_out, Wv) -> v
-  // 5. RoPE(q, k)
-  // 6. KV-Cache update
-  // 7. Attention(q, k, v) -> attn_out
-  // 8. GEMM(attn_out, Wo) + residual -> x
-  // 9. RMSNorm(x) -> norm_out
-  // 10. GEMM(norm_out, W1) -> mlp_gate
-  // 11. GEMM(norm_out, W3) -> mlp_up
-  // 12. SiLU(mlp_gate) * mlp_up -> mlp_out
-  // 13. GEMM(mlp_out, W2) + residual -> x
+  auto &b = blocks_[layer_idx];
 
-  // For now, we just log the execution
-  // Real implementation connects to HIPGraphRunner
+  // Get pointers to buffers (assuming FP32 layout)
+  float *x_ptr = reinterpret_cast<float *>(activations_.x.data());
+  float *norm_out_ptr = reinterpret_cast<float *>(activations_.norm_out.data());
+  float *attn_norm_ptr = reinterpret_cast<float *>(b.attn_norm.data());
+
+  uint32_t batch_size = 1;
+  uint32_t D = static_cast<uint32_t>(config_.dim);
+  uint32_t rows = static_cast<uint32_t>(batch_size * seq_len);
+  float eps = 1e-6f;
+
+  // Step 1: RMSNorm on input
+  // For now, skip if stream is not initialized (demo mode)
+  if (stream_ != nullptr) {
+    gcore::rt::hip::kernels::launch_rmsnorm_naive(stream_, x_ptr, attn_norm_ptr,
+                                                  norm_out_ptr, rows, D, eps);
+
+    // TODO: Add remaining steps:
+    // 2. GEMM(norm_out, Wq) -> q
+    // 3. GEMM(norm_out, Wk) -> k
+    // 4. GEMM(norm_out, Wv) -> v
+    // 5. RoPE(q, k)
+    // 6. KV-Cache update
+    // 7. Attention(q, k, v) -> attn_out
+    // 8. GEMM(attn_out, Wo) + residual -> x
+    // 9. RMSNorm(x) -> norm_out
+    // 10. GEMM(norm_out, W1) -> mlp_gate
+    // 11. GEMM(norm_out, W3) -> mlp_up
+    // 12. SiLU(mlp_gate) * mlp_up -> mlp_out
+    // 13. GEMM(mlp_out, W2) + residual -> x
+
+    // Synchronize (for debugging - remove in production)
+    hipStreamSynchronize(stream_);
+  }
 
   return true;
 }

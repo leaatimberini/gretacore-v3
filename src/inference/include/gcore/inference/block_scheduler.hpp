@@ -2,6 +2,7 @@
 
 #include "gcore/inference/model_config.hpp"
 #include "gcore/rt/hip/buffer.hpp"
+#include <hip/hip_runtime.h>
 
 #include <cstddef>
 #include <memory>
@@ -88,6 +89,7 @@ private:
   ModelConfig config_;
   std::vector<BlockBuffers> blocks_;
   ActivationBuffers activations_;
+  hipStream_t stream_ = nullptr;
   bool initialized_ = false;
   size_t current_seq_pos_ = 0;
 };
