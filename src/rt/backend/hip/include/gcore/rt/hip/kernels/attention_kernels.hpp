@@ -66,7 +66,8 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
 void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
                                    uint32_t num_heads, uint32_t seq_len,
-                                   uint32_t head_dim, float scale);
+                                   uint32_t max_seq_len, uint32_t head_dim,
+                                   float scale);
 
 /**
  * @brief FlashAttention v2 for prefill mode (multiple queries).

@@ -277,7 +277,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   float scale = 1.0f / sqrtf(static_cast<float>(Dh));
   if (S == 1) {
     launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
-                                  pos + S, Dh, scale);
+                                  pos + S, config_.max_seq_len, Dh, scale);
   } else {
     launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H, Dh, scale,
                                    true);
