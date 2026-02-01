@@ -184,7 +184,7 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
   do {                                                                         \
     hipError_t err_code = cmd;                                                 \
     if (err_code != hipSuccess) {                                              \
-      std::cout << "[HIP ERROR] " << name << ": "                              \
+      std::cout << "[HIP ERROR] " << name << " failed with "                   \
                 << hipGetErrorString(err_code) << std::endl;                   \
       if (err)                                                                 \
         *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
@@ -197,7 +197,7 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     cmd;                                                                       \
     hipError_t err_code = hipStreamSynchronize(stream_);                       \
     if (err_code != hipSuccess) {                                              \
-      std::cout << "[HIP KERNEL ERROR] " << name << ": "                       \
+      std::cout << "[HIP KERNEL ERROR] " << name << " failed with "            \
                 << hipGetErrorString(err_code) << std::endl;                   \
       if (err)                                                                 \
         *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
@@ -239,6 +239,17 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const __half *w1 = static_cast<const __half *>(b.w1.data());
   const __half *w2 = static_cast<const __half *>(b.w2.data());
   const __half *w3 = static_cast<const __half *>(b.w3.data());
+
+  if (!x || !norm_out || !q || !k || !v || !attn_out || !mlp_gate || !mlp_up ||
+      !mlp_out) {
+    std::cout << "NULL Activations at layer " << layer_idx << std::endl;
+    return false;
+  }
+  if (!attn_norm || !ffn_norm || !wq || !wk || !wv || !wo || !w1 || !w2 ||
+      !w3) {
+    std::cout << "NULL Weights at layer " << layer_idx << std::endl;
+    return false;
+  }
 
   float *cache_k = static_cast<float *>(activations_.kv_cache_k.data()) +
                    layer_idx * config_.max_seq_len * H * Dh;
@@ -331,6 +342,11 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   const float *embd_w = static_cast<const float *>(token_embd_.data());
   const int32_t *d_tokens =
       static_cast<const int32_t *>(activations_.tokens.data());
+
+  if (!x || !embd_w || !d_tokens) {
+    std::cout << "NULL Input buffers" << std::endl;
+    return false;
+  }
   CHECK_HIP_KERNEL(launch_embedding_lookup(stream_, d_tokens, embd_w, x, S, D),
                    "Embedding Lookup");
 
@@ -348,6 +364,10 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   const float *onorm_w = static_cast<const float *>(output_norm_.data());
   const __half *ow_w = static_cast<const __half *>(output_weight_.data());
 
+  if (!norm_out || !logits || !onorm_w || !ow_w) {
+    std::cout << "NULL Output buffers" << std::endl;
+    return false;
+  }
   CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, onorm_w, norm_out, S, D,
                                         config_.rms_eps),
                    "Final RMSNorm");
