@@ -220,39 +220,123 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   auto &b = blocks_[layer_idx];
 
-  // Get pointers to buffers (assuming FP32 layout)
-  float *x_ptr = reinterpret_cast<float *>(activations_.x.data());
-  float *norm_out_ptr = reinterpret_cast<float *>(activations_.norm_out.data());
-  float *attn_norm_ptr = reinterpret_cast<float *>(b.attn_norm.data());
-
-  uint32_t batch_size = 1;
-  uint32_t D = static_cast<uint32_t>(config_.dim);
-  uint32_t rows = static_cast<uint32_t>(batch_size * seq_len);
+  // Model dimensions
+  uint32_t D = static_cast<uint32_t>(config_.dim);                 // 4096
+  uint32_t H = static_cast<uint32_t>(config_.num_heads);           // 32
+  uint32_t Dh = D / H;                                             // 128
+  uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim); // 11008
+  uint32_t S = static_cast<uint32_t>(seq_len);
   float eps = 1e-6f;
+  float rope_base = 10000.0f;
 
-  // Step 1: RMSNorm on input
-  // For now, skip if stream is not initialized (demo mode)
-  if (stream_ != nullptr) {
-    gcore::rt::hip::kernels::launch_rmsnorm_naive(stream_, x_ptr, attn_norm_ptr,
-                                                  norm_out_ptr, rows, D, eps);
+  // Get buffer pointers (all FP32)
+  float *x = reinterpret_cast<float *>(activations_.x.data());
+  float *residual = reinterpret_cast<float *>(activations_.residual.data());
+  float *norm_out = reinterpret_cast<float *>(activations_.norm_out.data());
+  float *q = reinterpret_cast<float *>(activations_.q.data());
+  float *k = reinterpret_cast<float *>(activations_.k.data());
+  float *v = reinterpret_cast<float *>(activations_.v.data());
+  float *attn_out = reinterpret_cast<float *>(activations_.attn_out.data());
+  float *mlp_gate = reinterpret_cast<float *>(activations_.mlp_gate.data());
+  float *mlp_up = reinterpret_cast<float *>(activations_.mlp_up.data());
+  float *mlp_out = reinterpret_cast<float *>(activations_.mlp_out.data());
 
-    // TODO: Add remaining steps:
-    // 2. GEMM(norm_out, Wq) -> q
-    // 3. GEMM(norm_out, Wk) -> k
-    // 4. GEMM(norm_out, Wv) -> v
-    // 5. RoPE(q, k)
-    // 6. KV-Cache update
-    // 7. Attention(q, k, v) -> attn_out
-    // 8. GEMM(attn_out, Wo) + residual -> x
-    // 9. RMSNorm(x) -> norm_out
-    // 10. GEMM(norm_out, W1) -> mlp_gate
-    // 11. GEMM(norm_out, W3) -> mlp_up
-    // 12. SiLU(mlp_gate) * mlp_up -> mlp_out
-    // 13. GEMM(mlp_out, W2) + residual -> x
+  // Weight pointers
+  float *wq = reinterpret_cast<float *>(b.wq.data());
+  float *wk = reinterpret_cast<float *>(b.wk.data());
+  float *wv = reinterpret_cast<float *>(b.wv.data());
+  float *wo = reinterpret_cast<float *>(b.wo.data());
+  float *w1 = reinterpret_cast<float *>(b.w1.data());
+  float *w2 = reinterpret_cast<float *>(b.w2.data());
+  float *w3 = reinterpret_cast<float *>(b.w3.data());
+  float *attn_norm = reinterpret_cast<float *>(b.attn_norm.data());
+  float *ffn_norm = reinterpret_cast<float *>(b.ffn_norm.data());
 
-    // Synchronize (for debugging - remove in production)
-    hipStreamSynchronize(stream_);
+  // KV cache pointers (for this layer)
+  float *kv_k = reinterpret_cast<float *>(activations_.kv_cache_k.data());
+  float *kv_v = reinterpret_cast<float *>(activations_.kv_cache_v.data());
+  size_t layer_cache_offset = layer_idx * config_.max_seq_len * H * Dh;
+  float *cache_k = kv_k + layer_cache_offset;
+  float *cache_v = kv_v + layer_cache_offset;
+
+  // Skip execution if stream not initialized (demo mode)
+  if (stream_ == nullptr) {
+    return true;
   }
+
+  using namespace gcore::rt::hip::kernels;
+
+  // ====== ATTENTION BLOCK ======
+
+  // Step 1: RMSNorm(x) -> norm_out
+  launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps);
+
+  // Save residual for skip connection
+  // (In production, we'd use async copy or fuse with norm)
+  // For now, x stays as residual
+
+  // Step 2-4: Linear projections (Q, K, V)
+  // norm_out: [S, D], Wq: [D, D], q: [S, D]
+  launch_gemm_tiled_f32(stream_, norm_out, wq, q, S, D, D, D, D, D);
+  launch_gemm_tiled_f32(stream_, norm_out, wk, k, S, D, D, D, D, D);
+  launch_gemm_tiled_f32(stream_, norm_out, wv, v, S, D, D, D, D, D);
+
+  // Step 5: RoPE embeddings on Q and K
+  launch_rope(stream_, q, S, H, Dh, rope_base);
+  launch_rope(stream_, k, S, H, Dh, rope_base);
+
+  // Step 6: Update KV cache (for autoregressive generation)
+  uint32_t pos = static_cast<uint32_t>(seq_start);
+  for (uint32_t s = 0; s < S; ++s) {
+    launch_kv_update(stream_, cache_k, cache_v, k + s * D, v + s * D, pos + s,
+                     config_.max_seq_len, H, Dh);
+  }
+
+  // Step 7: Scaled Dot-Product Attention
+  // For simplicity, compute Q @ K^T -> scores -> softmax -> @ V -> attn_out
+  // Full attention: [S, H, Dh] @ [H, seq_pos, Dh]^T @ [H, seq_pos, Dh]
+  // This is simplified - production would use FlashAttention
+
+  // For single-token decode (S=1):
+  // Q: [1, D], K_cache: [seq_pos, D], V_cache: [seq_pos, D]
+  // scores = Q @ K_cache^T = [1, seq_pos]
+  // attn_out = softmax(scores / sqrt(Dh)) @ V_cache = [1, D]
+
+  // TODO: Implement proper batched attention
+  // For now, use simplified single-head attention approximation
+  // (This is a placeholder - real impl needs proper multi-head attention)
+
+  // Step 8: Output projection + residual
+  // attn_out: [S, D], Wo: [D, D] -> x: [S, D]
+  // x = x + attn_out @ Wo
+  launch_gemm_tiled_f32(stream_, v, wo, attn_out, S, D, D, D, D,
+                        D); // Placeholder: use v as attn for now
+  launch_add(stream_, x, attn_out, x, S * D);
+
+  // ====== MLP BLOCK ======
+
+  // Step 9: RMSNorm(x) -> norm_out
+  launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps);
+
+  // Step 10-11: Gate and Up projections
+  // norm_out: [S, D], W1: [D, hidden_dim] -> mlp_gate: [S, hidden_dim]
+  // norm_out: [S, D], W3: [D, hidden_dim] -> mlp_up: [S, hidden_dim]
+  launch_gemm_tiled_f32(stream_, norm_out, w1, mlp_gate, S, hidden_dim, D, D,
+                        hidden_dim, hidden_dim);
+  launch_gemm_tiled_f32(stream_, norm_out, w3, mlp_up, S, hidden_dim, D, D,
+                        hidden_dim, hidden_dim);
+
+  // Step 12: SiLU(gate) * up -> mlp_out
+  launch_silu(stream_, mlp_gate, mlp_gate, S * hidden_dim);
+  // Element-wise multiply: mlp_out = mlp_gate * mlp_up
+  // (Need to add a mul kernel - for now, skip)
+
+  // Step 13: Down projection + residual
+  // mlp_gate: [S, hidden_dim], W2: [hidden_dim, D] -> temp: [S, D]
+  // x = x + temp
+  launch_gemm_tiled_f32(stream_, mlp_gate, w2, mlp_out, S, D, hidden_dim,
+                        hidden_dim, D, D);
+  launch_add(stream_, x, mlp_out, x, S * D);
 
   return true;
 }
