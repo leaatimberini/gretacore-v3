@@ -98,8 +98,8 @@ int32_t Generator::sample(const float *logits, size_t vocab_size,
 
 std::vector<int32_t>
 Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
-                           const SamplingParams &params,
-                           GenerationStats *stats) {
+                           const SamplingParams &params, GenerationStats *stats,
+                           std::string *err) {
 
   std::vector<int32_t> output = prompt_tokens;
   auto start = std::chrono::high_resolution_clock::now();
@@ -163,7 +163,11 @@ std::string Generator::generate(const std::string &prompt,
   auto prompt_tokens = tokenizer_->encode(prompt);
 
   // Generate tokens
-  auto output_tokens = generate_tokens(prompt_tokens, params, stats);
+  std::string err;
+  auto output_tokens = generate_tokens(prompt_tokens, params, stats, &err);
+  if (!err.empty()) {
+    std::cerr << "Generation error: " << err << "\n";
+  }
 
   // Decode output (skip prompt tokens)
   std::vector<int32_t> generated(output_tokens.begin() + prompt_tokens.size(),

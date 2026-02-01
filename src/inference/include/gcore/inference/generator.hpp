@@ -53,7 +53,7 @@ public:
   std::vector<int32_t>
   generate_tokens(const std::vector<int32_t> &prompt_tokens,
                   const SamplingParams &params,
-                  GenerationStats *stats = nullptr);
+                  GenerationStats *stats = nullptr, std::string *err = nullptr);
 
   /// Sample next token from logits.
   int32_t sample(const float *logits, size_t vocab_size,
