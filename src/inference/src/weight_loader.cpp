@@ -274,6 +274,12 @@ struct GGUFLoader::Impl {
     file.read(reinterpret_cast<char *>(&tensor_count), 8);
     file.read(reinterpret_cast<char *>(&kv_count), 8);
 
+    // Sanity check: GGUF usually has < 100 KV pairs
+    if (kv_count > 1000) {
+      *err = "Metadata KV count too large: " + std::to_string(kv_count);
+      return false;
+    }
+
     std::cerr << "[GGUF] Version: " << version << ", Tensors: " << tensor_count
               << ", KV pairs: " << kv_count << "\n";
 
