@@ -137,60 +137,26 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
   for (const auto &t : tensors)
     tensor_map[t.name] = &t;
 
-  size_t loaded = 0, errors = 0;
-  auto load = [&](const std::string &name,
-                  gcore::rt::hip::Buffer &buf) -> bool {
-    if (tensor_map.count(name) && loader.load_tensor(name, buf, err)) {
-      loaded++;
-      return true;
-    }
-    if (tensor_map.count(name))
-      errors++;
-    return false;
-  };
-  auto load_fp16 = [&](const std::string &name,
-                       gcore::rt::hip::Buffer &buf) -> bool {
-    if (tensor_map.count(name) && loader.load_tensor_fp16(name, buf, err)) {
-      loaded++;
-      return true;
-    }
-    if (tensor_map.count(name))
-      errors++;
-    return false;
-  };
-
   for (size_t i = 0; i < config_.num_layers; ++i) {
     std::string prefix = "blk." + std::to_string(i) + ".";
     auto &b = blocks_[i];
-    load(prefix + "attn_norm.weight", b.attn_norm);
-    load(prefix + "ffn_norm.weight", b.ffn_norm);
-    load_fp16(prefix + "attn_q.weight", b.wq);
-    load_fp16(prefix + "attn_k.weight", b.wk);
-    load_fp16(prefix + "attn_v.weight", b.wv);
-    load_fp16(prefix + "attn_output.weight", b.wo);
-    load_fp16(prefix + "ffn_gate.weight", b.w1);
-    load_fp16(prefix + "ffn_down.weight", b.w2);
-    load_fp16(prefix + "ffn_up.weight", b.w3);
+    loader.load_tensor(prefix + "attn_norm.weight", b.attn_norm, err);
+    loader.load_tensor(prefix + "ffn_norm.weight", b.ffn_norm, err);
+    loader.load_tensor_fp16(prefix + "attn_q.weight", b.wq, err);
+    loader.load_tensor_fp16(prefix + "attn_k.weight", b.wk, err);
+    loader.load_tensor_fp16(prefix + "attn_v.weight", b.wv, err);
+    loader.load_tensor_fp16(prefix + "attn_output.weight", b.wo, err);
+    loader.load_tensor_fp16(prefix + "ffn_gate.weight", b.w1, err);
+    loader.load_tensor_fp16(prefix + "ffn_down.weight", b.w2, err);
+    loader.load_tensor_fp16(prefix + "ffn_up.weight", b.w3, err);
   }
 
-  load("token_embd.weight", token_embd_);
-  load("output_norm.weight", output_norm_);
-  load_fp16("output.weight", output_weight_);
-  std::cout << "Mapped " << (loaded - errors) << " weight tensors to buffers\n";
+  loader.load_tensor("token_embd.weight", token_embd_, err);
+  loader.load_tensor("output_norm.weight", output_norm_, err);
+  loader.load_tensor_fp16("output.weight", output_weight_, err);
+  std::cout << "Mapped tensors to buffers\n";
   return true;
 }
-
-#define CHECK_HIP_CALL(cmd, name)                                              \
-  do {                                                                         \
-    hipError_t err_code = cmd;                                                 \
-    if (err_code != hipSuccess) {                                              \
-      std::cout << "[HIP ERROR] " << name << " failed with "                   \
-                << hipGetErrorString(err_code) << std::endl;                   \
-      if (err)                                                                 \
-        *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
-      return false;                                                            \
-    }                                                                          \
-  } while (0)
 
 #define CHECK_HIP_KERNEL(cmd, name)                                            \
   do {                                                                         \
@@ -235,21 +201,6 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const __half *wq = static_cast<const __half *>(b.wq.data());
   const __half *wk = static_cast<const __half *>(b.wk.data());
   const __half *wv = static_cast<const __half *>(b.wv.data());
-  const __half *wo = static_cast<const __half *>(b.wo.data());
-  const __half *w1 = static_cast<const __half *>(b.w1.data());
-  const __half *w2 = static_cast<const __half *>(b.w2.data());
-  const __half *w3 = static_cast<const __half *>(b.w3.data());
-
-  if (!x || !norm_out || !q || !k || !v || !attn_out || !mlp_gate || !mlp_up ||
-      !mlp_out) {
-    std::cout << "NULL Activations at layer " << layer_idx << std::endl;
-    return false;
-  }
-  if (!attn_norm || !ffn_norm || !wq || !wk || !wv || !wo || !w1 || !w2 ||
-      !w3) {
-    std::cout << "NULL Weights at layer " << layer_idx << std::endl;
-    return false;
-  }
 
   float *cache_k = static_cast<float *>(activations_.kv_cache_k.data()) +
                    layer_idx * config_.max_seq_len * H * Dh;
@@ -274,6 +225,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   for (uint32_t s = 0; s < S; ++s) {
+    if (layer_idx == 8)
+      std::cout << "  Layer 8 KV Update s=" << s << " pos=" << pos + s
+                << std::endl;
     CHECK_HIP_KERNEL(launch_kv_update(stream_, cache_k, cache_v, k + s * D,
                                       v + s * D, pos + s, config_.max_seq_len,
                                       H, Dh),
@@ -292,6 +246,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                      "FlashAttn Prefill");
   }
 
+  const __half *wo = static_cast<const __half *>(b.wo.data());
   CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, attn_out, wo, mlp_out, S,
                                             D, D, D, D, D),
                    "GEMM O");
@@ -301,6 +256,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   CHECK_HIP_KERNEL(
       launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps),
       "RMSNorm (FFN)");
+  const __half *w1 = static_cast<const __half *>(b.w1.data());
+  const __half *w2 = static_cast<const __half *>(b.w2.data());
+  const __half *w3 = static_cast<const __half *>(b.w3.data());
   CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S,
                                             hidden_dim, D, D, hidden_dim,
                                             hidden_dim),
@@ -333,24 +291,17 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   std::cout << "[BLOCK_SCHEDULER] Forward Start: pos=" << seq_start
             << " len=" << seq_len << std::endl;
 
-  // 1. Copy tokens to device
   if (!activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err))
     return false;
 
-  // 2. Embedding Lookup
   float *x = static_cast<float *>(activations_.x.data());
   const float *embd_w = static_cast<const float *>(token_embd_.data());
   const int32_t *d_tokens =
       static_cast<const int32_t *>(activations_.tokens.data());
 
-  if (!x || !embd_w || !d_tokens) {
-    std::cout << "NULL Input buffers" << std::endl;
-    return false;
-  }
   CHECK_HIP_KERNEL(launch_embedding_lookup(stream_, d_tokens, embd_w, x, S, D),
                    "Embedding Lookup");
 
-  // 3. Transformer Blocks
   for (size_t i = 0; i < config_.num_layers; ++i) {
     if (i % 8 == 0)
       std::cout << "  Layer " << i << "..." << std::endl;
@@ -358,16 +309,11 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
       return false;
   }
 
-  // 4. Final Output Layer
   float *norm_out = static_cast<float *>(activations_.norm_out.data());
   float *logits = static_cast<float *>(logits_.data());
   const float *onorm_w = static_cast<const float *>(output_norm_.data());
   const __half *ow_w = static_cast<const __half *>(output_weight_.data());
 
-  if (!norm_out || !logits || !onorm_w || !ow_w) {
-    std::cout << "NULL Output buffers" << std::endl;
-    return false;
-  }
   CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, onorm_w, norm_out, S, D,
                                         config_.rms_eps),
                    "Final RMSNorm");
@@ -375,7 +321,9 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                                             V, D, D, V, V),
                    "Logits GEMM");
 
-  CHECK_HIP_CALL(hipStreamSynchronize(stream_), "Final Sync");
+  hipError_t err_code = hipStreamSynchronize(stream_);
+  if (err_code != hipSuccess)
+    return false;
   std::cout << "[BLOCK_SCHEDULER] Forward Done." << std::endl;
   return true;
 }
