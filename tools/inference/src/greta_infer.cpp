@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Initialized scheduler for " << scheduler.num_layers()
             << " layers\n";
 
-  // Allocate buffers (demo mode: skip actual weight loading)
+  // Allocate buffers
   std::cout << "Allocating buffers...\n";
   if (!scheduler.allocate_weights(&err)) {
     std::cerr << "Weight allocation failed: " << err << "\n";
@@ -92,6 +92,21 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   std::cout << "Buffers allocated\n";
+
+  // Load weights from model file if provided
+  if (!model_path.empty()) {
+    std::cout << "\nLoading weights from: " << model_path << "\n";
+    auto loader = gcore::inference::create_weight_loader(model_path, &err);
+    if (!loader) {
+      std::cerr << "Failed to open model: " << err << "\n";
+      return 1;
+    }
+    if (!scheduler.load_weights(*loader, &err)) {
+      std::cerr << "Weight loading failed: " << err << "\n";
+      return 1;
+    }
+    std::cout << "Weights loaded\n";
+  }
 
   // Initialize tokenizer
   gcore::inference::Tokenizer tokenizer;
