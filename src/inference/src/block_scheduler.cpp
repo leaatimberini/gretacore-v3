@@ -184,6 +184,8 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
   do {                                                                         \
     hipError_t err_code = cmd;                                                 \
     if (err_code != hipSuccess) {                                              \
+      std::cerr << "[HIP ERROR] " << name << ": "                              \
+                << hipGetErrorString(err_code) << std::endl;                   \
       if (err)                                                                 \
         *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
       return false;                                                            \
@@ -195,6 +197,8 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     cmd;                                                                       \
     hipError_t err_code = hipStreamSynchronize(stream_);                       \
     if (err_code != hipSuccess) {                                              \
+      std::cerr << "[HIP KERNEL ERROR] " << name << ": "                       \
+                << hipGetErrorString(err_code) << std::endl;                   \
       if (err)                                                                 \
         *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
       return false;                                                            \
@@ -315,6 +319,9 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t V = static_cast<uint32_t>(config_.vocab_size);
 
+  std::cerr << "[TRACE] Forward Start: pos=" << seq_start << " len=" << seq_len
+            << std::endl;
+
   // 1. Copy tokens to device
   if (!activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err))
     return false;
@@ -329,6 +336,8 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
 
   // 3. Transformer Blocks
   for (size_t i = 0; i < config_.num_layers; ++i) {
+    if (i % 8 == 0)
+      std::cerr << "  Processing layer " << i << "..." << std::endl;
     if (!execute_layer(i, seq_start, seq_len, err))
       return false;
   }
@@ -347,6 +356,7 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                    "Logits GEMM");
 
   CHECK_HIP_CALL(hipStreamSynchronize(stream_), "Final Sync");
+  std::cerr << "[TRACE] Forward Done." << std::endl;
   return true;
 }
 
