@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,7 +63,7 @@ public:
 private:
   ModelConfig config_;
   BlockScheduler *scheduler_ = nullptr;
-  Tokenizer *tokenizer_ = nullptr;
+  std::unique_ptr<Tokenizer> tokenizer_;
   bool initialized_ = false;
 
   // Internal state
