@@ -118,9 +118,12 @@ std::string Tokenizer::decode(const std::vector<int32_t> &tokens) const {
 
 std::string Tokenizer::decode_token(int32_t token_id) const {
   if (token_id < 0 || static_cast<size_t>(token_id) >= vocab_.size()) {
-    return "";
+    return "[ID_" + std::to_string(token_id) + "]";
   }
-  return vocab_[token_id];
+  std::string t = vocab_[token_id];
+  if (t.empty())
+    return "[ID_" + std::to_string(token_id) + "]";
+  return t;
 }
 
 } // namespace gcore::inference
