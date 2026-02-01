@@ -1,5 +1,6 @@
 #include "gcore/inference/weight_loader.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -79,6 +80,108 @@ static size_t ggml_type_size(GGMLType type) {
     return 210;
   default:
     return 0;
+  }
+}
+
+// Q4_K block structure (256 elements = 144 bytes):
+// - 2 bytes: d (FP16 super-block scale)
+// - 2 bytes: dmin (FP16 super-block min)
+// - 12 bytes: scales (6-bit scales packed for 8 sub-blocks)
+// - 128 bytes: qs (4-bit quantized values, 256/2 = 128)
+struct block_q4_k {
+  uint16_t d;         // super-block scale (FP16)
+  uint16_t dmin;      // super-block min (FP16)
+  uint8_t scales[12]; // scales and mins for 8 sub-blocks
+  uint8_t qs[128];    // quantized values (4 bits each)
+};
+
+// Convert FP16 to FP32 (simplified)
+static float fp16_to_fp32(uint16_t h) {
+  uint32_t sign = (h >> 15) & 0x1;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+
+  if (exp == 0) {
+    if (mant == 0)
+      return sign ? -0.0f : 0.0f;
+    // Denormalized
+    exp = 1;
+    while ((mant & 0x400) == 0) {
+      mant <<= 1;
+      exp--;
+    }
+    mant &= ~0x400;
+  } else if (exp == 31) {
+    return sign ? -INFINITY : INFINITY;
+  }
+
+  uint32_t f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+  float result;
+  memcpy(&result, &f, sizeof(float));
+  return result;
+}
+
+// Dequantize Q4_K block to FP32
+static void dequantize_q4_k_block(const uint8_t *src, float *dst,
+                                  size_t n_elements) {
+  const block_q4_k *block = reinterpret_cast<const block_q4_k *>(src);
+
+  float d = fp16_to_fp32(block->d);
+  float dmin = fp16_to_fp32(block->dmin);
+
+  // Process 8 sub-blocks of 32 elements each
+  for (int j = 0; j < QK_K / 32; ++j) {
+    // Extract 6-bit scale and min for this sub-block
+    uint8_t sc, m;
+    if (j < 4) {
+      sc = block->scales[j] & 0x3F;
+      m = block->scales[j + 4] & 0x3F;
+    } else {
+      sc = ((block->scales[j + 4] >> 4) & 0x0F) |
+           ((block->scales[j - 4] >> 6) << 4);
+      m = ((block->scales[j + 4] & 0x0F)) | ((block->scales[j] >> 6) << 4);
+    }
+
+    float scale = d * sc;
+    float min_val = dmin * m;
+
+    // Dequantize 32 elements (16 bytes of 4-bit values)
+    for (int l = 0; l < 16; ++l) {
+      uint8_t qs = block->qs[j * 16 + l];
+      dst[j * 32 + l * 2 + 0] = scale * (qs & 0x0F) - min_val;
+      dst[j * 32 + l * 2 + 1] = scale * (qs >> 4) - min_val;
+    }
+  }
+}
+
+// Q6_K block structure (256 elements = 210 bytes)
+static void dequantize_q6_k_block(const uint8_t *src, float *dst,
+                                  size_t n_elements) {
+  // Q6_K layout:
+  // - 128 bytes: ql (lower 4 bits)
+  // - 64 bytes: qh (upper 2 bits)
+  // - 16 bytes: scales (8-bit per 16 elements)
+  // - 2 bytes: d (FP16 scale)
+
+  const uint8_t *ql = src;
+  const uint8_t *qh = src + 128;
+  const int8_t *scales = reinterpret_cast<const int8_t *>(src + 192);
+  uint16_t d_raw;
+  memcpy(&d_raw, src + 208, 2);
+  float d = fp16_to_fp32(d_raw);
+
+  for (int i = 0; i < 256; ++i) {
+    int l_idx = i / 2;
+    int shift = (i % 2) * 4;
+    uint8_t l_val = (ql[l_idx] >> shift) & 0x0F;
+
+    int h_idx = i / 4;
+    int h_shift = (i % 4) * 2;
+    uint8_t h_val = (qh[h_idx] >> h_shift) & 0x03;
+
+    int q = (l_val | (h_val << 4)) - 32; // 6-bit signed
+    int sc_idx = i / 16;
+    dst[i] = d * q * scales[sc_idx];
   }
 }
 
@@ -384,9 +487,11 @@ bool GGUFLoader::load_tensor(const std::string &name,
                              gcore::rt::hip::Buffer &buffer, std::string *err) {
   // Find tensor
   const TensorInfo *info = nullptr;
+  GGMLType gtype = GGMLType::F32;
   for (const auto &t : impl_->tensors) {
     if (t.name == name) {
       info = &t;
+      gtype = ggml_type_from_name(t.dtype);
       break;
     }
   }
@@ -395,19 +500,74 @@ bool GGUFLoader::load_tensor(const std::string &name,
     return false;
   }
 
-  // Allocate host buffer
-  std::vector<char> host_data(info->size_bytes);
-
-  // Read from file
+  // Read raw quantized data from file
+  std::vector<uint8_t> raw_data(info->size_bytes);
   impl_->file.seekg(info->offset);
-  impl_->file.read(host_data.data(), info->size_bytes);
+  impl_->file.read(reinterpret_cast<char *>(raw_data.data()), info->size_bytes);
 
-  // Copy to GPU
-  if (!buffer.allocate(info->size_bytes,
-                       gcore::rt::hip::BufferUsage::DeviceOnly, err)) {
+  // Calculate number of elements
+  size_t n_elements = 1;
+  for (auto d : info->shape)
+    n_elements *= d;
+
+  // Dequantize if needed
+  std::vector<float> fp32_data;
+  const void *upload_data = nullptr;
+  size_t upload_size = 0;
+
+  if (gtype == GGMLType::F32) {
+    // Already FP32, copy directly
+    upload_data = raw_data.data();
+    upload_size = info->size_bytes;
+  } else if (gtype == GGMLType::F16) {
+    // Convert FP16 to FP32
+    fp32_data.resize(n_elements);
+    const uint16_t *src = reinterpret_cast<const uint16_t *>(raw_data.data());
+    for (size_t i = 0; i < n_elements; ++i) {
+      fp32_data[i] = fp16_to_fp32(src[i]);
+    }
+    upload_data = fp32_data.data();
+    upload_size = n_elements * sizeof(float);
+  } else if (gtype == GGMLType::Q4_K) {
+    // Dequantize Q4_K to FP32
+    fp32_data.resize(n_elements);
+    size_t block_size = ggml_block_size(gtype);
+    size_t type_size = ggml_type_size(gtype);
+    size_t n_blocks = n_elements / block_size;
+
+    for (size_t b = 0; b < n_blocks; ++b) {
+      dequantize_q4_k_block(raw_data.data() + b * type_size,
+                            fp32_data.data() + b * block_size, block_size);
+    }
+    upload_data = fp32_data.data();
+    upload_size = n_elements * sizeof(float);
+  } else if (gtype == GGMLType::Q6_K) {
+    // Dequantize Q6_K to FP32
+    fp32_data.resize(n_elements);
+    size_t block_size = ggml_block_size(gtype);
+    size_t type_size = ggml_type_size(gtype);
+    size_t n_blocks = n_elements / block_size;
+
+    for (size_t b = 0; b < n_blocks; ++b) {
+      dequantize_q6_k_block(raw_data.data() + b * type_size,
+                            fp32_data.data() + b * block_size, block_size);
+    }
+    upload_data = fp32_data.data();
+    upload_size = n_elements * sizeof(float);
+  } else {
+    *err = "Unsupported quantization type for tensor: " + name + " (" +
+           info->dtype + ")";
     return false;
   }
-  if (!buffer.copy_to_device(host_data.data(), info->size_bytes, err)) {
+
+  // Allocate GPU buffer
+  if (!buffer.allocate(upload_size, gcore::rt::hip::BufferUsage::DeviceOnly,
+                       err)) {
+    return false;
+  }
+
+  // Copy dequantized data to GPU
+  if (!buffer.copy_to_device(upload_data, upload_size, err)) {
     return false;
   }
 
