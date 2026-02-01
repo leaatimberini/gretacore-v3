@@ -31,6 +31,34 @@ enum class GGMLType : uint32_t {
   COUNT = 19,
 };
 
+// Block sizes for quantized formats
+static constexpr size_t QK_K = 256; // Super-block size for K-quants
+static constexpr size_t QK4_0 = 32; // Block size for Q4_0
+
+// Size of one block for each quantized type
+static size_t ggml_block_size(GGMLType type) {
+  switch (type) {
+  case GGMLType::F32:
+    return 1;
+  case GGMLType::F16:
+    return 1;
+  case GGMLType::Q4_0:
+    return QK4_0;
+  case GGMLType::Q4_1:
+    return QK4_0;
+  case GGMLType::Q8_0:
+    return 32;
+  case GGMLType::Q4_K:
+    return QK_K;
+  case GGMLType::Q5_K:
+    return QK_K;
+  case GGMLType::Q6_K:
+    return QK_K;
+  default:
+    return 32;
+  }
+}
+
 static size_t ggml_type_size(GGMLType type) {
   switch (type) {
   case GGMLType::F32:
@@ -38,10 +66,17 @@ static size_t ggml_type_size(GGMLType type) {
   case GGMLType::F16:
     return 2;
   case GGMLType::Q4_0:
+    return 18; // 2 bytes scale + 16 bytes data for 32 elements
   case GGMLType::Q4_1:
-    return 18; // Block size for Q4
+    return 20; // 2 bytes scale + 2 bytes min + 16 bytes data
   case GGMLType::Q8_0:
-    return 34; // Block size for Q8
+    return 34; // 2 bytes scale + 32 bytes data
+  case GGMLType::Q4_K:
+    return 144; // K-quant block: 256 elements
+  case GGMLType::Q5_K:
+    return 176;
+  case GGMLType::Q6_K:
+    return 210;
   default:
     return 0;
   }
@@ -55,11 +90,35 @@ static std::string ggml_type_name(GGMLType type) {
     return "F16";
   case GGMLType::Q4_0:
     return "Q4_0";
+  case GGMLType::Q4_1:
+    return "Q4_1";
   case GGMLType::Q8_0:
     return "Q8_0";
+  case GGMLType::Q4_K:
+    return "Q4_K";
+  case GGMLType::Q5_K:
+    return "Q5_K";
+  case GGMLType::Q6_K:
+    return "Q6_K";
   default:
     return "UNKNOWN";
   }
+}
+
+static uint32_t ggml_type_from_name(const std::string &name) {
+  if (name == "F32")
+    return static_cast<uint32_t>(GGMLType::F32);
+  if (name == "F16")
+    return static_cast<uint32_t>(GGMLType::F16);
+  if (name == "Q4_0")
+    return static_cast<uint32_t>(GGMLType::Q4_0);
+  if (name == "Q4_K")
+    return static_cast<uint32_t>(GGMLType::Q4_K);
+  if (name == "Q5_K")
+    return static_cast<uint32_t>(GGMLType::Q5_K);
+  if (name == "Q6_K")
+    return static_cast<uint32_t>(GGMLType::Q6_K);
+  return static_cast<uint32_t>(GGMLType::F32);
 }
 
 struct GGUFLoader::Impl {
@@ -225,16 +284,20 @@ struct GGUFLoader::Impl {
     for (auto d : info.shape) {
       n_elements *= d;
     }
-    size_t type_size = ggml_type_size(static_cast<GGMLType>(type));
-    if (type_size == 0) {
-      // For block quantized types, calculate differently
-      info.size_bytes = n_elements * 2; // Approximate
-    } else if (type == static_cast<uint32_t>(GGMLType::F32) ||
-               type == static_cast<uint32_t>(GGMLType::F16)) {
+    GGMLType gtype = static_cast<GGMLType>(type);
+    size_t type_size = ggml_type_size(gtype);
+    size_t block_size = ggml_block_size(gtype);
+
+    if (gtype == GGMLType::F32 || gtype == GGMLType::F16) {
+      // Non-quantized: element-wise size
       info.size_bytes = n_elements * type_size;
+    } else if (block_size > 0 && type_size > 0) {
+      // Quantized: blocks of elements
+      size_t n_blocks = (n_elements + block_size - 1) / block_size;
+      info.size_bytes = n_blocks * type_size;
     } else {
-      // Quantized: blocks of 32 elements
-      info.size_bytes = (n_elements / 32) * type_size;
+      // Fallback: approximate
+      info.size_bytes = n_elements * 2;
     }
 
     return true;
