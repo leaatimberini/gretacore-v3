@@ -10,11 +10,26 @@
 namespace gcore::inference {
 
 BlockScheduler::BlockScheduler() = default;
-BlockScheduler::~BlockScheduler() = default;
+
+BlockScheduler::~BlockScheduler() {
+  if (stream_ != nullptr) {
+    hipStreamDestroy(stream_);
+    stream_ = nullptr;
+  }
+}
 
 bool BlockScheduler::init(const ModelConfig &config, std::string *err) {
   config_ = config;
   blocks_.resize(config_.num_layers);
+
+  // Create HIP stream for async execution
+  hipError_t hip_err = hipStreamCreate(&stream_);
+  if (hip_err != hipSuccess) {
+    *err = "Failed to create HIP stream: " +
+           std::string(hipGetErrorString(hip_err));
+    return false;
+  }
+
   initialized_ = true;
   return true;
 }
@@ -138,57 +153,41 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     auto &b = blocks_[i];
     std::string prefix = "blk." + std::to_string(i) + ".";
 
-    // Norms (FP32, small - load these first as test)
-    std::string attn_norm_name = prefix + "attn_norm.weight";
-    std::string ffn_norm_name = prefix + "ffn_norm.weight";
-
-    if (tensor_map.count(attn_norm_name)) {
-      if (loader.load_tensor(attn_norm_name, b.attn_norm, err)) {
-        loaded++;
-        if (verbose && i == 0) {
-          std::cout << "  Layer 0: Loaded " << attn_norm_name << " to GPU\n";
+    // Lambda to load a tensor with error handling
+    auto load = [&](const std::string &name,
+                    gcore::rt::hip::Buffer &buf) -> bool {
+      if (tensor_map.count(name)) {
+        if (loader.load_tensor(name, buf, err)) {
+          loaded++;
+          return true;
+        } else {
+          std::cerr << "  Warning: Failed to load " << name << ": " << *err
+                    << "\n";
+          load_errors++;
         }
-      } else {
-        std::cerr << "  Warning: Failed to load " << attn_norm_name << ": "
-                  << *err << "\n";
-        load_errors++;
       }
+      return false;
+    };
+
+    // Norms (FP32)
+    load(prefix + "attn_norm.weight", b.attn_norm);
+    load(prefix + "ffn_norm.weight", b.ffn_norm);
+
+    // Attention weights (Q4_K -> FP32)
+    load(prefix + "attn_q.weight", b.wq);
+    load(prefix + "attn_k.weight", b.wk);
+    load(prefix + "attn_v.weight", b.wv);
+    load(prefix + "attn_output.weight", b.wo);
+
+    // MLP weights (Q4_K/Q6_K -> FP32)
+    load(prefix + "ffn_gate.weight", b.w1);
+    load(prefix + "ffn_down.weight", b.w2);
+    load(prefix + "ffn_up.weight", b.w3);
+
+    if (verbose && i == 0) {
+      std::cout << "  Layer 0: Loaded " << (loaded - load_errors)
+                << " tensors to GPU\n";
     }
-
-    if (tensor_map.count(ffn_norm_name)) {
-      if (loader.load_tensor(ffn_norm_name, b.ffn_norm, err)) {
-        loaded++;
-      } else {
-        load_errors++;
-      }
-    }
-
-    // Attention weights (Q4_K - skip actual load for now, just count)
-    std::string wq_name = prefix + "attn_q.weight";
-    std::string wk_name = prefix + "attn_k.weight";
-    std::string wv_name = prefix + "attn_v.weight";
-    std::string wo_name = prefix + "attn_output.weight";
-
-    if (tensor_map.count(wq_name))
-      loaded++;
-    if (tensor_map.count(wk_name))
-      loaded++;
-    if (tensor_map.count(wv_name))
-      loaded++;
-    if (tensor_map.count(wo_name))
-      loaded++;
-
-    // MLP weights (Q4_K/Q6_K - skip actual load for now, just count)
-    std::string w1_name = prefix + "ffn_gate.weight";
-    std::string w2_name = prefix + "ffn_down.weight";
-    std::string w3_name = prefix + "ffn_up.weight";
-
-    if (tensor_map.count(w1_name))
-      loaded++;
-    if (tensor_map.count(w2_name))
-      loaded++;
-    if (tensor_map.count(w3_name))
-      loaded++;
   }
 
   // Load embedding and output weights
