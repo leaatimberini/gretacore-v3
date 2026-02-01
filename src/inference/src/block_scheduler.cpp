@@ -84,6 +84,9 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
     return false;
   }
 
+  // Update config with the actual allocated sequence length
+  config_.max_seq_len = max_seq_len;
+
   using Usage = gcore::rt::hip::BufferUsage;
   const size_t D = config_.dim;
   const size_t H = config_.hidden_dim;
@@ -154,7 +157,6 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
   loader.load_tensor("token_embd.weight", token_embd_, err);
   loader.load_tensor("output_norm.weight", output_norm_, err);
   loader.load_tensor_fp16("output.weight", output_weight_, err);
-  std::cout << "Mapped tensors to buffers\n";
   return true;
 }
 
@@ -163,8 +165,6 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     cmd;                                                                       \
     hipError_t err_code = hipStreamSynchronize(stream_);                       \
     if (err_code != hipSuccess) {                                              \
-      std::cout << "[HIP KERNEL ERROR] " << name << " failed with "            \
-                << hipGetErrorString(err_code) << std::endl;                   \
       if (err)                                                                 \
         *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
       return false;                                                            \
@@ -202,18 +202,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const __half *wk = static_cast<const __half *>(b.wk.data());
   const __half *wv = static_cast<const __half *>(b.wv.data());
 
-  float *cache_k_base = static_cast<float *>(activations_.kv_cache_k.data());
-  float *cache_v_base = static_cast<float *>(activations_.kv_cache_v.data());
   size_t offset =
       (size_t)layer_idx * (size_t)config_.max_seq_len * (size_t)H * (size_t)Dh;
-  float *cache_k = cache_k_base + offset;
-  float *cache_v = cache_v_base + offset;
-
-  if (layer_idx % 8 == 0) {
-    std::cout << "  [LAYER " << layer_idx << "] cache_k=" << (void *)cache_k
-              << " base=" << (void *)cache_k_base << " off=" << offset
-              << std::endl;
-  }
+  float *cache_k =
+      static_cast<float *>(activations_.kv_cache_k.data()) + offset;
+  float *cache_v =
+      static_cast<float *>(activations_.kv_cache_v.data()) + offset;
 
   CHECK_HIP_KERNEL(
       launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps),
@@ -293,9 +287,6 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t V = static_cast<uint32_t>(config_.vocab_size);
 
-  std::cout << "[BLOCK_SCHEDULER] Forward Start: pos=" << seq_start
-            << " len=" << seq_len << std::endl;
-
   if (!activations_.tokens.copy_to_device(tokens, S * sizeof(int32_t), err))
     return false;
 
@@ -327,7 +318,6 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   hipError_t err_code = hipStreamSynchronize(stream_);
   if (err_code != hipSuccess)
     return false;
-  std::cout << "[BLOCK_SCHEDULER] Forward Done." << std::endl;
   return true;
 }
 
