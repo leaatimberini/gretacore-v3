@@ -317,6 +317,9 @@ struct GGUFLoader::Impl {
   }
 
   bool parse_kv_pairs(uint64_t count, std::string *err) {
+    // Restore defaults first
+    config = ModelConfig::llama2_7b();
+
     for (uint64_t i = 0; i < count; ++i) {
       if (!parse_kv_pair(err))
         return false;
@@ -327,8 +330,8 @@ struct GGUFLoader::Impl {
   bool parse_kv_pair(std::string *err) {
     uint64_t key_len;
     file.read(reinterpret_cast<char *>(&key_len), 8);
-    if (key_len > 1024) {
-      *err = "Key length too large";
+    if (!file || key_len > 1024) {
+      *err = "Invalid or too long GGUF key length";
       return false;
     }
     std::string key(key_len, '\0');
@@ -336,15 +339,16 @@ struct GGUFLoader::Impl {
 
     uint32_t value_type;
     file.read(reinterpret_cast<char *>(&value_type), 4);
+    if (!file)
+      return false;
 
-    if (key == "tokenizer.ggml.tokens") {
-      // It's an array of strings
+    if (key == "tokenizer.ggml.tokens" && value_type == 9) {
       uint32_t arr_type;
       uint64_t arr_len;
       file.read(reinterpret_cast<char *>(&arr_type), 4);
       file.read(reinterpret_cast<char *>(&arr_len), 8);
-      if (arr_type != 8) { // String type
-        *err = "tokenizer.ggml.tokens is not a string array";
+      if (arr_type != 8 || arr_len > 1000000) {
+        *err = "Invalid tokenizer tokens array";
         return false;
       }
       config.vocabulary.clear();
@@ -352,23 +356,16 @@ struct GGUFLoader::Impl {
       for (uint64_t i = 0; i < arr_len; ++i) {
         uint64_t slen;
         file.read(reinterpret_cast<char *>(&slen), 8);
+        if (slen > 1024) { // Llama-2 tokens are short
+          file.seekg(slen, std::ios::cur);
+          config.vocabulary.push_back("<too_long>");
+          continue;
+        }
         std::string s(slen, '\0');
         file.read(&s[0], slen);
         config.vocabulary.push_back(s);
       }
       config.vocab_size = static_cast<uint32_t>(arr_len);
-    } else if (key == "llama.rope.freq_base") {
-      if (value_type == 6) { // FLOAT32
-        file.read(reinterpret_cast<char *>(&config.rope_base), 4);
-      } else {
-        skip_value(value_type, err);
-      }
-    } else if (key == "llama.attention.layer_norm_rms_epsilon") {
-      if (value_type == 6) { // FLOAT32
-        file.read(reinterpret_cast<char *>(&config.rms_eps), 4);
-      } else {
-        skip_value(value_type, err);
-      }
     } else {
       if (!skip_value(value_type, err))
         return false;
@@ -395,6 +392,8 @@ struct GGUFLoader::Impl {
     case 8: { // STRING
       uint64_t len;
       file.read(reinterpret_cast<char *>(&len), 8);
+      if (len > 1000000)
+        return false;
       file.seekg(len, std::ios::cur);
       break;
     }
@@ -403,14 +402,18 @@ struct GGUFLoader::Impl {
       uint64_t arr_len;
       file.read(reinterpret_cast<char *>(&arr_type), 4);
       file.read(reinterpret_cast<char *>(&arr_len), 8);
-      size_t elem_size = 0;
+      if (arr_len > 1000000)
+        return false;
       if (arr_type == 8) { // String array
         for (uint64_t i = 0; i < arr_len; ++i) {
           uint64_t slen;
           file.read(reinterpret_cast<char *>(&slen), 8);
+          if (slen > 1000000)
+            return false;
           file.seekg(slen, std::ios::cur);
         }
       } else {
+        size_t elem_size = 0;
         if (arr_type <= 1 || arr_type == 7)
           elem_size = 1;
         else if (arr_type <= 3)
