@@ -1,0 +1,118 @@
+--- MI300X VULKAN DIAGNOSTIC ---
+sáb 31 ene 2026 12:39:56 -03
+
+1. System Info
+Linux localhost 6.14.0-1020-oem #20-Ubuntu SMP PREEMPT_DYNAMIC Mon Jan 19 08:17:52 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+Distributor ID:	Ubuntu
+Description:	Ubuntu 24.04.3 LTS
+Release:	24.04
+Codename:	noble
+
+2. Vulkan Drivers Found
+asahi_icd.json
+gfxstream_vk_icd.json
+intel_hasvk_icd.json
+intel_icd.json
+lvp_icd.json
+nouveau_icd.json
+radeon_icd.json
+virtio_icd.json
+
+3. Vulkan Device List
+==========
+VULKANINFO
+==========
+
+Vulkan Instance Version: 1.3.275
+
+
+Instance Extensions: count = 24
+-------------------------------
+VK_EXT_acquire_drm_display             : extension revision 1
+VK_EXT_acquire_xlib_display            : extension revision 1
+VK_EXT_debug_report                    : extension revision 10
+VK_EXT_debug_utils                     : extension revision 2
+VK_EXT_direct_mode_display             : extension revision 1
+VK_EXT_display_surface_counter         : extension revision 1
+VK_EXT_headless_surface                : extension revision 1
+VK_EXT_surface_maintenance1            : extension revision 1
+VK_EXT_swapchain_colorspace            : extension revision 5
+VK_KHR_device_group_creation           : extension revision 1
+VK_KHR_display                         : extension revision 23
+VK_KHR_external_fence_capabilities     : extension revision 1
+VK_KHR_external_memory_capabilities    : extension revision 1
+VK_KHR_external_semaphore_capabilities : extension revision 1
+VK_KHR_get_display_properties2         : extension revision 1
+VK_KHR_get_physical_device_properties2 : extension revision 2
+VK_KHR_get_surface_capabilities2       : extension revision 1
+VK_KHR_portability_enumeration         : extension revision 1
+VK_KHR_surface                         : extension revision 25
+VK_KHR_surface_protected_capabilities  : extension revision 1
+VK_KHR_wayland_surface                 : extension revision 6
+VK_KHR_xcb_surface                     : extension revision 6
+VK_KHR_xlib_surface                    : extension revision 6
+VK_LUNARG_direct_driver_loading        : extension revision 1
+
+Instance Layers: count = 3
+--------------------------
+VK_LAYER_INTEL_nullhw       INTEL NULL HW                1.1.73   version 1
+VK_LAYER_MESA_device_select Linux device selection layer 1.4.303  version 1
+VK_LAYER_MESA_overlay       Mesa Overlay layer           1.4.303  version 1
+
+Devices:
+========
+GPU0:
+	apiVersion         = 1.4.318
+	driverVersion      = 25.2.8
+	vendorID           = 0x1002
+	deviceID           = 0x15bf
+	deviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+	deviceName         = AMD Radeon Graphics (RADV PHOENIX)
+	driverID           = DRIVER_ID_MESA_RADV
+	driverName         = radv
+	driverInfo         = Mesa 25.2.8-0ubuntu0.24.04.1
+	conformanceVersion = 1.4.0.0
+	deviceUUID         = 00000000-0f00-0000-0000-000000000000
+	driverUUID         = 414d442d-4d45-5341-2d44-525600000000
+GPU1:
+	apiVersion         = 1.4.318
+	driverVersion      = 25.2.8
+	vendorID           = 0x10005
+	deviceID           = 0x0000
+	deviceType         = PHYSICAL_DEVICE_TYPE_CPU
+	deviceName         = llvmpipe (LLVM 20.1.2, 256 bits)
+	driverID           = DRIVER_ID_MESA_LLVMPIPE
+	driverName         = llvmpipe
+	driverInfo         = Mesa 25.2.8-0ubuntu0.24.04.1 (LLVM 20.1.2)
+	conformanceVersion = 1.3.1.1
+	deviceUUID         = 6d657361-3235-2e32-2e38-2d3075627500
+	driverUUID         = 6c6c766d-7069-7065-5555-494400000000
+
+4. ROCm Version
+
+5. Checking for Known MI300X / RADV Issues
+
+6. Kernel Dispatch Test (Minimal)
+GRETA CORE Runtime Bench: vk_smoke_bench
+Selected device:
+  vendor_id=0x1002
+  device_id=0x15bf
+  device_type=1
+  name=AMD Radeon Graphics (RADV PHOENIX)
+  driver_name=radv
+Capabilities:
+  subgroup_size_control_enabled=true
+  subgroup_size_range=[32, 64]
+  fp16_supported=true
+  fp16_enabled=true
+  robust_buffer_access_enabled=true
+Safety:
+  gpu_safe_mode=false
+  gpu_blacklisted=false
+RESULT vk_smoke_bench:
+  init_ms=20.882
+  empty_submit_wait_ms=0.594
+  empty_submit_total_ms=0.771
+STATUS=OK
+
+--- End of Diagnostic ---
