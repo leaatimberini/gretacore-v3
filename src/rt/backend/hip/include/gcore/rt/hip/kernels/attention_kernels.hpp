@@ -48,4 +48,47 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
                       uint32_t max_seq_len, uint32_t num_heads,
                       uint32_t head_dim);
 
+/**
+ * @brief FlashAttention v2 for decode mode (single query against KV cache).
+ *
+ * Computes attention with O(N) memory using online softmax.
+ *
+ * @param stream HIP stream.
+ * @param Q Query tensor [num_heads, head_dim].
+ * @param K Key cache [num_heads, seq_len, head_dim].
+ * @param V Value cache [num_heads, seq_len, head_dim].
+ * @param O Output tensor [num_heads, head_dim].
+ * @param num_heads Number of attention heads.
+ * @param seq_len Current sequence length in cache.
+ * @param head_dim Dimension of each head.
+ * @param scale Attention scale factor (1/sqrt(head_dim)).
+ */
+void launch_flash_attention_decode(hipStream_t stream, const float *Q,
+                                   const float *K, const float *V, float *O,
+                                   uint32_t num_heads, uint32_t seq_len,
+                                   uint32_t head_dim, float scale);
+
+/**
+ * @brief FlashAttention v2 for prefill mode (multiple queries).
+ *
+ * Computes attention with O(N) memory using online softmax.
+ * Supports causal masking for autoregressive models.
+ *
+ * @param stream HIP stream.
+ * @param Q Query tensor [seq_len, num_heads, head_dim].
+ * @param K Key tensor [seq_len, num_heads, head_dim].
+ * @param V Value tensor [seq_len, num_heads, head_dim].
+ * @param O Output tensor [seq_len, num_heads, head_dim].
+ * @param seq_len Sequence length.
+ * @param num_heads Number of attention heads.
+ * @param head_dim Dimension of each head.
+ * @param scale Attention scale factor (1/sqrt(head_dim)).
+ * @param causal Whether to apply causal masking.
+ */
+void launch_flash_attention_prefill(hipStream_t stream, const float *Q,
+                                    const float *K, const float *V, float *O,
+                                    uint32_t seq_len, uint32_t num_heads,
+                                    uint32_t head_dim, float scale,
+                                    bool causal);
+
 } // namespace gcore::rt::hip::kernels
