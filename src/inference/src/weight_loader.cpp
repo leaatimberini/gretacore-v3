@@ -687,6 +687,25 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
     return false;
   }
 
+  // Transpose if it's a 2D weight matrix (Linear Layers)
+  // GGUF layout is (Inner, Outer) -> data is Outer * Inner
+  // Our kernels expect (Outer, Inner) relative to shared memory tiles?
+  // Wait, let's be precise:
+  // kernels expect b[k * N + n].
+  // existing memory is w[n * K + k].
+  // So yes, we need to map w[n * K + k] -> b[k * N + n].
+  if (info->shape.size() == 2) {
+    size_t K = info->shape[0];
+    size_t N = info->shape[1];
+    std::vector<uint16_t> transposed(n_elements);
+    for (size_t n = 0; n < N; ++n) {
+      for (size_t k = 0; k < K; ++k) {
+        transposed[k * N + n] = fp16_data[n * K + k];
+      }
+    }
+    fp16_data = std::move(transposed);
+  }
+
   // Allocate GPU buffer (FP16 size = n_elements * 2 bytes)
   size_t upload_size = n_elements * sizeof(uint16_t);
   if (!buffer.allocate(upload_size, gcore::rt::hip::BufferUsage::DeviceOnly,
