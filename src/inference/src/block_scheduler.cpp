@@ -169,18 +169,30 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     load_fp16(prefix + "ffn_up.weight", b.w3);
   }
 
+  load("token_embd.weight", token_embd_);
   load("output_norm.weight", output_norm_);
   load_fp16("output.weight", output_weight_);
   std::cout << "Mapped " << (loaded - errors) << " weight tensors to buffers\n";
   return true;
 }
 
-#define CHECK_HIP(cmd, name)                                                   \
+#define CHECK_HIP_CALL(cmd, name)                                              \
+  do {                                                                         \
+    hipError_t err_code = cmd;                                                 \
+    if (err_code != hipSuccess) {                                              \
+      if (err)                                                                 \
+        *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
+      return false;                                                            \
+    }                                                                          \
+  } while (0)
+
+#define CHECK_HIP_KERNEL(cmd, name)                                            \
   do {                                                                         \
     cmd;                                                                       \
-    hipError_t err_code = hipGetLastError();                                   \
+    hipError_t err_code = hipStreamSynchronize(stream_);                       \
     if (err_code != hipSuccess) {                                              \
-      *err = std::string(name) + " failed: " + hipGetErrorString(err_code);    \
+      if (err)                                                                 \
+        *err = std::string(name) + " failed: " + hipGetErrorString(err_code);  \
       return false;                                                            \
     }                                                                          \
   } while (0)
@@ -225,66 +237,74 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   float *cache_v = static_cast<float *>(activations_.kv_cache_v.data()) +
                    layer_idx * config_.max_seq_len * H * Dh;
 
-  CHECK_HIP(launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps),
-            "RMSNorm (Attn)");
-  CHECK_HIP(
+  CHECK_HIP_KERNEL(
+      launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D, eps),
+      "RMSNorm (Attn)");
+  CHECK_HIP_KERNEL(
       launch_gemm_mixed_f16f32(stream_, norm_out, wq, q, S, D, D, D, D, D),
       "GEMM Q");
-  CHECK_HIP(
+  CHECK_HIP_KERNEL(
       launch_gemm_mixed_f16f32(stream_, norm_out, wk, k, S, D, D, D, D, D),
       "GEMM K");
-  CHECK_HIP(
+  CHECK_HIP_KERNEL(
       launch_gemm_mixed_f16f32(stream_, norm_out, wv, v, S, D, D, D, D, D),
       "GEMM V");
 
-  CHECK_HIP(launch_rope(stream_, q, S, H, Dh, rope_base), "RoPE Q");
-  CHECK_HIP(launch_rope(stream_, k, S, H, Dh, rope_base), "RoPE K");
+  CHECK_HIP_KERNEL(launch_rope(stream_, q, S, H, Dh, rope_base), "RoPE Q");
+  CHECK_HIP_KERNEL(launch_rope(stream_, k, S, H, Dh, rope_base), "RoPE K");
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   for (uint32_t s = 0; s < S; ++s) {
-    CHECK_HIP(launch_kv_update(stream_, cache_k, cache_v, k + s * D, v + s * D,
-                               pos + s, config_.max_seq_len, H, Dh),
-              "KV Update");
+    CHECK_HIP_KERNEL(launch_kv_update(stream_, cache_k, cache_v, k + s * D,
+                                      v + s * D, pos + s, config_.max_seq_len,
+                                      H, Dh),
+                     "KV Update");
   }
 
   float scale = 1.0f / sqrtf(static_cast<float>(Dh));
   if (S == 1) {
-    uint32_t current_len = pos + 1;
-    CHECK_HIP(launch_flash_attention_decode(stream_, q, cache_k, cache_v,
-                                            attn_out, H, current_len,
-                                            config_.max_seq_len, Dh, scale),
-              "FlashAttn Decode");
+    CHECK_HIP_KERNEL(
+        launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
+                                      pos + 1, config_.max_seq_len, Dh, scale),
+        "FlashAttn Decode");
   } else {
-    CHECK_HIP(launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H,
-                                             Dh, scale, true),
-              "FlashAttn Prefill");
+    CHECK_HIP_KERNEL(launch_flash_attention_prefill(stream_, q, k, v, attn_out,
+                                                    S, H, Dh, scale, true),
+                     "FlashAttn Prefill");
   }
 
-  CHECK_HIP(launch_gemm_mixed_f16f32(stream_, attn_out, wo, mlp_out, S, D, D, D,
-                                     D, D),
-            "GEMM O");
-  CHECK_HIP(launch_add(stream_, x, mlp_out, x, S * D), "Residual (Attn)");
+  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, attn_out, wo, mlp_out, S,
+                                            D, D, D, D, D),
+                   "GEMM O");
+  CHECK_HIP_KERNEL(launch_add(stream_, x, mlp_out, x, S * D),
+                   "Residual (Attn)");
 
-  CHECK_HIP(launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps),
-            "RMSNorm (FFN)");
-  CHECK_HIP(launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S,
-                                     hidden_dim, D, D, hidden_dim, hidden_dim),
-            "GEMM W1");
-  CHECK_HIP(launch_gemm_mixed_f16f32(stream_, norm_out, w3, mlp_up, S,
-                                     hidden_dim, D, D, hidden_dim, hidden_dim),
-            "GEMM W3");
+  CHECK_HIP_KERNEL(
+      launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D, eps),
+      "RMSNorm (FFN)");
+  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S,
+                                            hidden_dim, D, D, hidden_dim,
+                                            hidden_dim),
+                   "GEMM W1");
+  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w3, mlp_up, S,
+                                            hidden_dim, D, D, hidden_dim,
+                                            hidden_dim),
+                   "GEMM W3");
 
-  CHECK_HIP(launch_silu(stream_, mlp_gate, mlp_gate, S * hidden_dim), "SiLU");
-  CHECK_HIP(launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim),
-            "Mul");
+  CHECK_HIP_KERNEL(launch_silu(stream_, mlp_gate, mlp_gate, S * hidden_dim),
+                   "SiLU");
+  CHECK_HIP_KERNEL(
+      launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim), "Mul");
 
-  CHECK_HIP(launch_gemm_mixed_f16f32(stream_, mlp_gate, w2, mlp_out, S, D,
-                                     hidden_dim, hidden_dim, D, D),
-            "GEMM W2");
-  CHECK_HIP(launch_add(stream_, x, mlp_out, x, S * D), "Residual (FFN)");
+  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, mlp_gate, w2, mlp_out, S,
+                                            D, hidden_dim, hidden_dim, D, D),
+                   "GEMM W2");
+  CHECK_HIP_KERNEL(launch_add(stream_, x, mlp_out, x, S * D), "Residual (FFN)");
 
   return true;
 }
+
+#include <hip/hip_runtime.h>
 
 bool BlockScheduler::forward(size_t seq_start, size_t seq_len,
                              std::string *err) {
@@ -304,15 +324,14 @@ bool BlockScheduler::forward(size_t seq_start, size_t seq_len,
   const float *onorm_w = static_cast<const float *>(output_norm_.data());
   const __half *ow_w = static_cast<const __half *>(output_weight_.data());
 
-  CHECK_HIP(launch_rmsnorm_naive(stream_, x, onorm_w, norm_out, S, D,
-                                 config_.rms_eps),
-            "Final RMSNorm");
-  CHECK_HIP(launch_gemm_mixed_f16f32(stream_, norm_out, ow_w, logits, S, V, D,
-                                     D, V, V),
-            "Logits GEMM");
+  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, onorm_w, norm_out, S, D,
+                                        config_.rms_eps),
+                   "Final RMSNorm");
+  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, ow_w, logits, S,
+                                            V, D, D, V, V),
+                   "Logits GEMM");
 
-  // Optional: Sync for precise error reporting during debug
-  hipStreamSynchronize(stream_);
+  CHECK_HIP_CALL(hipStreamSynchronize(stream_), "Final Sync");
   return true;
 }
 
