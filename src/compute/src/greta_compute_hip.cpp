@@ -48,9 +48,15 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
   if (profile_blocks && std::string(profile_blocks) == "1") {
     printf(
         "[GRETA_L1_AUDIT] GEMM (M=%u, N=%u, K=%u) | Threshold=%u | Route=%s | "
-        "Reason=%s | Types(A=%d, B=%d, Acc=%d)\n",
+        "Reason=M %s threshold | Types(A=%d, B=%d, Acc=%d)\n",
         M, N, K, GEMM_MFMA_THRESHOLD, use_mfma ? "MFMA" : "VALU",
-        reason.c_str(), (int)type_A, (int)type_B, (int)accum_type);
+        use_mfma ? ">" : "<=", (int)type_A, (int)type_B, (int)accum_type);
+
+    // Assert de consistencia (solo en modo perfilado)
+    if (use_mfma && M <= GEMM_MFMA_THRESHOLD && !force_gemm) {
+      fprintf(stderr,
+              "[GRETA_ERROR] Inconsistency: Route=MFMA but M <= threshold\n");
+    }
   }
 
   // 2. Despacho de Kernel

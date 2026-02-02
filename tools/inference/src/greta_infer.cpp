@@ -13,11 +13,13 @@ void print_usage() {
       << "Options:\n"
       << "  --model <path>      Path to model weights (GGUF format)\n"
       << "  --prompt <text>     Input prompt\n"
+      << "  --prompt-file <path> Read prompt from file\n"
       << "  --batch-size <n>    Batch size for inference (default: 1)\n"
       << "  --max-tokens <n>    Maximum tokens to generate (default: 32)\n"
       << "  --temperature <t>   Sampling temperature (default: 1.0)\n"
       << "  --top-k <k>         Top-K sampling (default: 50)\n"
       << "  --greedy            Use greedy decoding\n"
+      << "  --demo-tokenizer    Force fallback ASCII tokenizer\n"
       << "  --help              Show this help\n";
 }
 
@@ -38,12 +40,21 @@ int main(int argc, char *argv[]) {
   params.top_k = 50;
   params.greedy = false;
 
+  bool force_demo_tokenizer = false;
+
   // Parse arguments
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
       model_path = argv[++i];
     } else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc) {
       prompt = argv[++i];
+    } else if (strcmp(argv[i], "--prompt-file") == 0 && i + 1 < argc) {
+      std::ifstream f(argv[++i]);
+      if (f.is_open()) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        prompt = ss.str();
+      }
     } else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc) {
       batch_size = std::atoi(argv[++i]);
     } else if (strcmp(argv[i], "--max-tokens") == 0 && i + 1 < argc) {
@@ -54,6 +65,8 @@ int main(int argc, char *argv[]) {
       params.top_k = std::atoi(argv[++i]);
     } else if (strcmp(argv[i], "--greedy") == 0) {
       params.greedy = true;
+    } else if (strcmp(argv[i], "--demo-tokenizer") == 0) {
+      force_demo_tokenizer = true;
     } else if (strcmp(argv[i], "--help") == 0) {
       print_usage();
       return 0;
@@ -142,9 +155,23 @@ int main(int argc, char *argv[]) {
 
   // Initialize tokenizer
   gcore::inference::Tokenizer tokenizer;
-  if (!tokenizer.load("tokenizer.json", &err)) {
-    std::cout << "Using fallback tokenizer (demo mode)\n";
+  if (force_demo_tokenizer) {
+    std::cout << "[TOKENIZER] Forced ASCII fallback (--demo-tokenizer)\n";
+    tokenizer.use_ascii_fallback();
+  } else {
+    // Try to find .model file near the GGUF model
+    std::string tokenizer_path = "tokenizer.model";
+    if (!model_path.empty()) {
+      size_t last_slash = model_path.find_last_of("/\\");
+      if (last_slash != std::string::npos) {
+        tokenizer_path = model_path.substr(0, last_slash + 1) + "tokenizer.model";
+      }
+    }
+    if (!tokenizer.load(tokenizer_path, &err)) {
+      std::cout << "[TOKENIZER] Info: Loading failed (" << err << "). Falling back to ASCII.\n";
+    }
   }
+  std::cout << "[TOKENIZER] Mode: " << (tokenizer.is_using_sentencepiece() ? "SentencePiece" : "ASCII Fallback") << "\n";
 
   // Initialize generator
   gcore::inference::Generator generator;
