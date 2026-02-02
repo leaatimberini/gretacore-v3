@@ -31,9 +31,25 @@ struct GenerationStats {
   double time_to_first_token_ms = 0.0;
 };
 
+/// Stats per generation step (for alignment/debugging).
+struct AlignmentStep {
+  uint32_t step;
+  int32_t token_id;
+  float logit;
+  std::vector<int32_t> topk_ids;
+  std::vector<float> topk_logits;
+  float logit_min;
+  float logit_max;
+  float logit_mean;
+  uint32_t nan_count;
+  uint32_t inf_count;
+};
+
 /// Callback for streaming tokens during generation.
 using TokenCallback =
     std::function<void(int32_t token_id, const std::string &text)>;
+
+using AlignmentCallback = std::function<void(const AlignmentStep &)>;
 
 /// Text Generator: Autoregressive inference loop.
 class Generator {
@@ -48,13 +64,15 @@ public:
   /// Generate text from a prompt.
   std::string generate(const std::string &prompt, const SamplingParams &params,
                        GenerationStats *stats = nullptr,
-                       TokenCallback callback = nullptr);
+                       TokenCallback callback = nullptr,
+                       AlignmentCallback align_callback = nullptr);
 
   /// Generate tokens from an already-encoded prompt.
   std::vector<int32_t>
   generate_tokens(const std::vector<int32_t> &prompt_tokens,
                   const SamplingParams &params,
-                  GenerationStats *stats = nullptr, std::string *err = nullptr);
+                  GenerationStats *stats = nullptr, std::string *err = nullptr,
+                  AlignmentCallback align_callback = nullptr);
 
   /// Sample next token from logits.
   int32_t sample(const float *logits, size_t vocab_size,

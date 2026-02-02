@@ -34,8 +34,10 @@ enum class GretaDataType {
 
 struct GretaQuantInfo {
   const void *scales = nullptr;
+  const void *head_scales = nullptr;
   float zero_point = 0.0f;
   uint32_t group_size = 0; // 0 means per-tensor
+  uint32_t num_heads = 0;
 };
 
 class GretaStream;

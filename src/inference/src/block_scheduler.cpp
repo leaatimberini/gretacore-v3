@@ -98,6 +98,17 @@ bool BlockScheduler::allocate_weights(std::string *err) {
                       gcore::rt::GretaDataType::FP32, err);
       b.s_w3.allocate(nbh * 4, Usage::DeviceOnly,
                       gcore::rt::GretaDataType::FP32, err);
+
+      // Per-head scales for Attention (QKV)
+      uint32_t num_heads = config_.num_heads;
+      b.sh_wq.allocate(num_heads * 4, Usage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err);
+      b.sh_wk.allocate(num_heads * 4, Usage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err);
+      b.sh_wv.allocate(num_heads * 4, Usage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err);
+      b.sh_wo.allocate(num_heads * 4, Usage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err);
     } else {
       b.wq.allocate(D * D * 2, Usage::DeviceOnly,
                     gcore::rt::GretaDataType::FP16, err);
@@ -211,22 +222,27 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
       return false;
 
     if (int4_mode) {
-      if (!loader.load_tensor_int4(prefix + "attn_q.weight", b.wq, b.s_wq, err))
+      if (!loader.load_tensor_int4(prefix + "attn_q.weight", b.wq, b.s_wq,
+                                   b.sh_wq, err))
         return false;
-      if (!loader.load_tensor_int4(prefix + "attn_k.weight", b.wk, b.s_wk, err))
+      if (!loader.load_tensor_int4(prefix + "attn_k.weight", b.wk, b.s_wk,
+                                   b.sh_wk, err))
         return false;
-      if (!loader.load_tensor_int4(prefix + "attn_v.weight", b.wv, b.s_wv, err))
+      if (!loader.load_tensor_int4(prefix + "attn_v.weight", b.wv, b.s_wv,
+                                   b.sh_wv, err))
         return false;
       if (!loader.load_tensor_int4(prefix + "attn_output.weight", b.wo, b.s_wo,
-                                   err))
+                                   b.sh_wo, err))
         return false;
       if (!loader.load_tensor_int4(prefix + "ffn_gate.weight", b.w1, b.s_w1,
-                                   err))
+                                   b.sh_wo,
+                                   err)) // sh_wo reused for FFN (dummy)
         return false;
       if (!loader.load_tensor_int4(prefix + "ffn_down.weight", b.w2, b.s_w2,
-                                   err))
+                                   b.sh_wo, err))
         return false;
-      if (!loader.load_tensor_int4(prefix + "ffn_up.weight", b.w3, b.s_w3, err))
+      if (!loader.load_tensor_int4(prefix + "ffn_up.weight", b.w3, b.s_w3,
+                                   b.sh_wo, err))
         return false;
     } else if (int8_mode) {
       if (!loader.load_tensor_int8(prefix + "attn_q.weight", b.wq, b.s_wq, err))

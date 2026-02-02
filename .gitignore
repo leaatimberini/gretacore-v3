@@ -1,14 +1,24 @@
-.venv/
+# Models
+models/
+
+# Build artifacts
 build/
-tools/bench/runtime/build/
-__pycache__/
-*.pyc
-.DS_Store
-*.o
-*.a
-CMakeCache.txt
 CMakeFiles/
+CMakeCache.txt
 Makefile
 cmake_install.cmake
-greta_infer
-test_l0
+*.o
+*.a
+*.so
+*.so.*
+*.d
+
+# Binaries
+tools/inference/greta_infer
+tools/inference/test_l0
+tools/quantize/greta_quantize_gguf
+
+# Temp files
+*.tmp
+*.log
+alignment_results.json

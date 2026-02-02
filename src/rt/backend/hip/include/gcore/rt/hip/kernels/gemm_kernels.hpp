@@ -51,11 +51,10 @@ void launch_gemm_mfma_int8_wt_fp32_acc32(hipStream_t stream, const float *a,
                                          uint32_t group_size);
 
 // INT4 Weight-Only GEMM
-void launch_gemm_mfma_int4_wt_fp32_acc32(hipStream_t stream, const void *a,
-                                         const int8_t *b, float *c,
-                                         const float *scales, uint32_t M,
-                                         uint32_t N, uint32_t K, uint32_t lda,
-                                         uint32_t ldb, uint32_t ldc,
-                                         uint32_t group_size, bool is_fp16_a);
+void launch_gemm_mfma_int4_wt_fp32_acc32(
+    hipStream_t stream, const void *a, const int8_t *b, float *c,
+    const float *scales, const float *head_scales, uint32_t M, uint32_t N,
+    uint32_t K, uint32_t lda, uint32_t ldb, uint32_t ldc, uint32_t group_size,
+    uint32_t head_dim, bool is_fp16_a);
 
 } // namespace gcore::rt::hip::kernels

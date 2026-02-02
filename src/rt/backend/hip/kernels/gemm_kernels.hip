@@ -765,8 +765,9 @@ __global__ void gemv_int4_wt_kernel(const T_A *__restrict__ x,
                                     const int8_t *__restrict__ w,
                                     float *__restrict__ y,
                                     const float *__restrict__ scales,
+                                    const float *__restrict__ head_scales,
                                     uint32_t M, uint32_t N, uint32_t K,
-                                    uint32_t group_size) {
+                                    uint32_t group_size, uint32_t head_dim) {
   uint32_t row_x = blockIdx.y;
   uint32_t row_w = blockIdx.x;
   if (row_x >= M || row_w >= N)
@@ -806,17 +807,23 @@ __global__ void gemv_int4_wt_kernel(const T_A *__restrict__ x,
     __syncthreads();
   }
 
-  if (tid == 0)
-    y[row_x * N + row_w] = s_acc[0];
+  if (tid == 0) {
+    float h_scale = 1.0f;
+    if (head_scales && head_dim > 0) {
+      h_scale = head_scales[row_w / head_dim];
+    }
+    y[row_x * N + row_w] = s_acc[0] * h_scale;
+  }
 }
 
 // MFMA INT4 Weight-Only GEMM
 template <typename T_A>
 __global__ void __launch_bounds__(64) gemm_mfma_int4_wt_kernel(
     const T_A *__restrict__ a, const int8_t *__restrict__ b,
-    float *__restrict__ c, const float *__restrict__ scales, uint32_t M,
-    uint32_t N, uint32_t K, uint32_t lda, uint32_t ldb, uint32_t ldc,
-    uint32_t group_size) {
+    float *__restrict__ c, const float *__restrict__ scales,
+    const float *__restrict__ head_scales, uint32_t M, uint32_t N, uint32_t K,
+    uint32_t lda, uint32_t ldb, uint32_t ldc, uint32_t group_size,
+    uint32_t head_dim) {
   uint32_t wave_col_base = blockIdx.x * 16;
   uint32_t wave_row_base = blockIdx.y * 16;
   uint32_t lane = threadIdx.x;
@@ -890,36 +897,46 @@ __global__ void __launch_bounds__(64) gemm_mfma_int4_wt_kernel(
     uint32_t c_col_loc = (lane / 16) * 4 + i;
     uint32_t gr = wave_row_base + c_row_loc;
     uint32_t gc = wave_col_base + c_col_loc;
-    if (gr < M && gc < N)
-      c[gr * ldc + gc] = acc[i];
+    if (gr < M && gc < N) {
+      float h_scale = 1.0f;
+      if (head_scales && head_dim > 0) {
+        h_scale = head_scales[gc / head_dim];
+      }
+      c[gr * ldc + gc] = acc[i] * h_scale;
+    }
   }
 }
 
 void launch_gemm_mfma_int4_wt_fp32_acc32(
     hipStream_t stream, const void *a, const int8_t *b, float *c,
-    const float *scales, uint32_t M, uint32_t N, uint32_t K, uint32_t lda,
-    uint32_t ldb, uint32_t ldc, uint32_t group_size, bool is_fp16_a) {
+    const float *scales, const float *head_scales, uint32_t M, uint32_t N,
+    uint32_t K, uint32_t lda, uint32_t ldb, uint32_t ldc, uint32_t group_size,
+    uint32_t head_dim, bool is_fp16_a) {
   if (M == 0 || N == 0 || K == 0)
     return;
   if (M <= 32) {
     dim3 block(256);
     dim3 grid(N, M);
     if (is_fp16_a) {
-        gemv_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
-            static_cast<const __half *>(a), b, c, scales, M, N, K, group_size);
+      gemv_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
+          static_cast<const __half *>(a), b, c, scales, head_scales, M, N, K,
+          group_size, head_dim);
     } else {
-        gemv_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
-            static_cast<const float *>(a), b, c, scales, M, N, K, group_size);
+      gemv_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
+          static_cast<const float *>(a), b, c, scales, head_scales, M, N, K,
+          group_size, head_dim);
     }
   } else {
     dim3 block(64);
     dim3 grid((N + 15) / 16, (M + 15) / 16);
     if (is_fp16_a) {
-        gemm_mfma_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
-            static_cast<const __half *>(a), b, c, scales, M, N, K, lda, ldb, ldc, group_size);
+      gemm_mfma_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
+          static_cast<const __half *>(a), b, c, scales, head_scales, M, N, K,
+          lda, ldb, ldc, group_size, head_dim);
     } else {
-        gemm_mfma_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
-            static_cast<const float *>(a), b, c, scales, M, N, K, lda, ldb, ldc, group_size);
+      gemm_mfma_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
+          static_cast<const float *>(a), b, c, scales, head_scales, M, N, K, lda,
+          ldb, ldc, group_size, head_dim);
     }
   }
 }

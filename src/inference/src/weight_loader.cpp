@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <omp.h>
 
 namespace gcore::inference {
 
@@ -520,6 +521,12 @@ bool GGUFLoader::load_tensor_int8(const std::string &name,
   std::cout << "[GRETA_LOAD] Loading tensor: " << name
             << " (Type: " << it->dtype << ", Size: " << it->size_bytes
             << " bytes)" << std::endl;
+  static bool omp_logged = false;
+  if (!omp_logged) {
+    std::cout << "[GRETA_LOAD] OpenMP Max Threads: " << omp_get_max_threads()
+              << std::endl;
+    omp_logged = true;
+  }
   std::vector<uint8_t> raw(it->size_bytes);
   impl_->file.seekg(it->offset);
   impl_->file.read((char *)raw.data(), it->size_bytes);
@@ -569,6 +576,7 @@ bool GGUFLoader::load_tensor_int8(const std::string &name,
     scale_data.resize(nb);
     std::cout << "[GRETA_LOAD] Quantizing " << n_elem << " elements to INT8..."
               << std::endl;
+#pragma omp parallel for
     for (size_t b = 0; b < nb; ++b) {
       if (b % 100000 == 0 && b > 0)
         std::cout << "  - Block " << b << "/" << nb << std::endl;
@@ -609,6 +617,7 @@ bool GGUFLoader::load_tensor_int8(const std::string &name,
 bool GGUFLoader::load_tensor_int4(const std::string &name,
                                   gcore::rt::hip::Buffer &buffer,
                                   gcore::rt::hip::Buffer &scales,
+                                  gcore::rt::hip::Buffer &head_scales,
                                   std::string *err) {
   const TensorInfo *it = nullptr;
   for (const auto &t : impl_->tensors)
@@ -662,6 +671,7 @@ bool GGUFLoader::load_tensor_int4(const std::string &name,
   std::cout << "[GRETA_LOAD] Quantizing " << n_elem << " elements to INT4..."
             << std::endl;
 
+#pragma omp parallel for
   for (size_t g = 0; g < n_groups; ++g) {
     if (g % 200000 == 0 && g > 0)
       std::cout << "  - Group " << g << "/" << n_groups << std::endl;
@@ -705,9 +715,36 @@ bool GGUFLoader::load_tensor_int4(const std::string &name,
   if (!scales.copy_to_device(scale_data.data(), scale_data.size() * 4, err))
     return false;
 
+  // 4. Per-head Scaling (Phase 5.3)
+  uint32_t num_heads = impl_->config.num_heads;
+  std::vector<float> h_scales(num_heads, 1.0f);
+  bool is_qkv = (name.find("attn_q") != std::string::npos ||
+                 name.find("attn_k") != std::string::npos ||
+                 name.find("attn_v") != std::string::npos);
+
+  if (is_qkv && num_heads > 0) {
+    size_t D = impl_->config.dim;
+    size_t Dh = D / num_heads;
+#pragma omp parallel for
+    for (uint32_t h = 0; h < num_heads; ++h) {
+      float h_max = 0.0f;
+      for (size_t i = 0; i < Dh * D; ++i) {
+        h_max = std::max(h_max, std::abs(fp32[h * Dh * D + i]));
+      }
+      h_scales[h] = h_max > 1e-9f ? h_max : 1.0f;
+    }
+    if (!head_scales.allocate(num_heads * 4, rt::hip::BufferUsage::DeviceOnly,
+                              rt::GretaDataType::FP32, err))
+      return false;
+    if (!head_scales.copy_to_device(h_scales.data(), num_heads * 4, err))
+      return false;
+  }
+
   gcore::rt::GretaQuantInfo qinfo;
   qinfo.group_size = 32;
   qinfo.scales = scales.data();
+  qinfo.head_scales = is_qkv ? head_scales.data() : nullptr;
+  qinfo.num_heads = is_qkv ? num_heads : 0;
   buffer.set_quant_info(qinfo);
 
   return true;
@@ -738,6 +775,7 @@ bool SafeTensorsLoader::load_tensor_int8(const std::string &name,
 bool SafeTensorsLoader::load_tensor_int4(const std::string &name,
                                          gcore::rt::hip::Buffer &buffer,
                                          gcore::rt::hip::Buffer &scales,
+                                         gcore::rt::hip::Buffer &head_scales,
                                          std::string *err) {
   return false;
 }

@@ -43,6 +43,7 @@ int main(int argc, char *argv[]) {
   params.greedy = false;
 
   bool force_demo_tokenizer = false;
+  bool enable_alignment = false;
 
   // Parse arguments
   for (int i = 1; i < argc; ++i) {
@@ -69,6 +70,8 @@ int main(int argc, char *argv[]) {
       params.greedy = true;
     } else if (strcmp(argv[i], "--demo-tokenizer") == 0) {
       force_demo_tokenizer = true;
+    } else if (strcmp(argv[i], "--alignment") == 0) {
+      enable_alignment = true;
     } else if (strcmp(argv[i], "--help") == 0) {
       print_usage();
       return 0;
@@ -192,11 +195,28 @@ int main(int argc, char *argv[]) {
   std::cout << "═══════════════════════════════════════════════════════════\n";
   std::cout << "Generating...\n\n";
 
+  gcore::inference::AlignmentCallback align_cb = nullptr;
+  if (enable_alignment) {
+    align_cb = [](const gcore::inference::AlignmentStep &step) {
+      std::cout << "[ALIGNMENT_STEP] {\"step\":" << step.step
+                << ",\"token_id\":" << step.token_id
+                << ",\"logit\":" << step.logit
+                << ",\"stats\":{\"min\":" << step.logit_min
+                << ",\"max\":" << step.logit_max
+                << ",\"avg\":" << step.logit_mean
+                << ",\"nan\":" << step.nan_count
+                << ",\"inf\":" << step.inf_count << "},\"topk_ids\":[";
+      for (size_t i = 0; i < step.topk_ids.size(); ++i) {
+        std::cout << step.topk_ids[i] << (i == 9 ? "" : ",");
+      }
+      std::cout << "]}" << std::endl;
+    };
+  }
+
   gcore::inference::GenerationStats stats;
   std::string output = generator.generate(
-      prompt, params, &stats, [](int32_t id, const std::string &text) {
-        // Streaming callback (would print each token)
-      });
+      prompt, params, &stats, [](int32_t id, const std::string &text) {},
+      align_cb);
 
   std::cout << "Prompt: " << prompt << "\n";
   std::cout << "Generated: " << output << "\n\n";

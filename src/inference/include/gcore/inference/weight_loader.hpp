@@ -51,6 +51,7 @@ public:
   virtual bool load_tensor_int4(const std::string &name,
                                 gcore::rt::hip::Buffer &buffer,
                                 gcore::rt::hip::Buffer &scales,
+                                gcore::rt::hip::Buffer &head_scales,
                                 std::string *err) = 0;
 
   /// Get model configuration (if embedded in file).
@@ -74,6 +75,7 @@ public:
                         std::string *err) override;
   bool load_tensor_int4(const std::string &name, gcore::rt::hip::Buffer &buffer,
                         gcore::rt::hip::Buffer &scales,
+                        gcore::rt::hip::Buffer &head_scales,
                         std::string *err) override;
   ModelConfig get_config() const override;
 
@@ -99,6 +101,7 @@ public:
                         std::string *err) override;
   bool load_tensor_int4(const std::string &name, gcore::rt::hip::Buffer &buffer,
                         gcore::rt::hip::Buffer &scales,
+                        gcore::rt::hip::Buffer &head_scales,
                         std::string *err) override;
   ModelConfig get_config() const override;
 

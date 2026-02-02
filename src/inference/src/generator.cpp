@@ -107,7 +107,7 @@ int32_t Generator::sample(const float *logits, size_t vocab_size,
 std::vector<int32_t>
 Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
                            const SamplingParams &params, GenerationStats *stats,
-                           std::string *err) {
+                           std::string *err, AlignmentCallback align_callback) {
   if (!initialized_) {
     if (err)
       *err = "Generator not initialized";
@@ -139,6 +139,41 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
   output.push_back(next_token);
 
+  if (align_callback) {
+    AlignmentStep step;
+    step.step = 0;
+    step.token_id = next_token;
+    step.logit = logits_host[next_token];
+    step.logit_min = logits_host[0];
+    step.logit_max = logits_host[0];
+    double sum = 0;
+    step.nan_count = 0;
+    step.inf_count = 0;
+    std::vector<std::pair<float, int>> top;
+    for (size_t i = 0; i < config_.vocab_size; ++i) {
+      float v = logits_host[i];
+      if (std::isnan(v))
+        step.nan_count++;
+      else if (std::isinf(v))
+        step.inf_count++;
+      else {
+        if (v < step.logit_min)
+          step.logit_min = v;
+        if (v > step.logit_max)
+          step.logit_max = v;
+        sum += v;
+      }
+      top.push_back({v, (int)i});
+    }
+    step.logit_mean = (float)(sum / config_.vocab_size);
+    std::sort(top.rbegin(), top.rend());
+    for (int i = 0; i < 10 && i < (int)config_.vocab_size; ++i) {
+      step.topk_ids.push_back(top[i].second);
+      step.topk_logits.push_back(top[i].first);
+    }
+    align_callback(step);
+  }
+
   first_token_time = std::chrono::high_resolution_clock::now();
   first_token = false;
 
@@ -154,17 +189,49 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       break;
     }
 
-    if (params.greedy) {
+    if (params.greedy && !align_callback) {
       next_token = scheduler_->sample_greedy_gpu(err);
     } else {
-      // After forward for S=1, we can just read from the beginning of the
-      // logits buffer because scheduler currently doesn't preserve full logit
-      // history in the output pointer.
       if (!scheduler_->get_logits().copy_to_host(
               logits_host.data(), config_.vocab_size * sizeof(float), err)) {
         break;
       }
       next_token = sample(logits_host.data(), config_.vocab_size, params);
+
+      if (align_callback) {
+        AlignmentStep step;
+        step.step = i;
+        step.token_id = next_token;
+        step.logit = logits_host[next_token];
+        step.logit_min = logits_host[0];
+        step.logit_max = logits_host[0];
+        double sum = 0;
+        step.nan_count = 0;
+        step.inf_count = 0;
+        std::vector<std::pair<float, int>> top;
+        for (size_t j = 0; j < config_.vocab_size; ++j) {
+          float v = logits_host[j];
+          if (std::isnan(v))
+            step.nan_count++;
+          else if (std::isinf(v))
+            step.inf_count++;
+          else {
+            if (v < step.logit_min)
+              step.logit_min = v;
+            if (v > step.logit_max)
+              step.logit_max = v;
+            sum += v;
+          }
+          top.push_back({v, (int)j});
+        }
+        step.logit_mean = (float)(sum / config_.vocab_size);
+        std::sort(top.rbegin(), top.rend());
+        for (int k = 0; k < 10 && k < (int)config_.vocab_size; ++k) {
+          step.topk_ids.push_back(top[k].second);
+          step.topk_logits.push_back(top[k].first);
+        }
+        align_callback(step);
+      }
     }
     output.push_back(next_token);
   }
@@ -187,12 +254,13 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
 
 std::string Generator::generate(const std::string &prompt,
                                 const SamplingParams &params,
-                                GenerationStats *stats,
-                                TokenCallback callback) {
+                                GenerationStats *stats, TokenCallback callback,
+                                AlignmentCallback align_callback) {
   auto prompt_tokens = tokenizer_->encode(prompt);
 
   std::string err;
-  auto output_tokens = generate_tokens(prompt_tokens, params, stats, &err);
+  auto output_tokens =
+      generate_tokens(prompt_tokens, params, stats, &err, align_callback);
   if (!err.empty()) {
     std::cerr << "Generation error: " << err << "\n";
   }

@@ -25,6 +25,9 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
   // 1. Auditoría y Control de Entorno
   const char *force_gemm = std::getenv("GRETA_GEMM_FORCE");
   const char *profile_blocks = std::getenv("GRETA_PROFILE_BLOCKS");
+  const char *env_perhead = std::getenv("GRETA_PERHEAD_QKV");
+  bool perhead_enabled =
+      (env_perhead == nullptr || std::string(env_perhead) == "1");
 
   // 1. Auditoría y Control de Entorno
   const uint32_t GEMM_MFMA_THRESHOLD = 32;
@@ -48,9 +51,11 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
   if (profile_blocks && std::string(profile_blocks) == "1") {
     printf(
         "[GRETA_L1_AUDIT] GEMM (M=%u, N=%u, K=%u) | Threshold=%u | Route=%s | "
-        "Reason=M %s threshold | Types(A=%d, B=%d, Acc=%d)\n",
+        "Reason=M %s threshold | Types(A=%d, B=%d, Acc=%d) | Heads=%u | "
+        "PH=%s\n",
         M, N, K, GEMM_MFMA_THRESHOLD, use_mfma ? "MFMA" : "VALU",
-        use_mfma ? ">" : "<=", (int)type_A, (int)type_B, (int)accum_type);
+        use_mfma ? ">" : "<=", (int)type_A, (int)type_B, (int)accum_type,
+        B->quant_info().num_heads, perhead_enabled ? "ON" : "OFF");
 
     // Assert de consistencia (solo en modo perfilado)
     if (use_mfma && M <= GEMM_MFMA_THRESHOLD && !force_gemm) {
@@ -69,11 +74,16 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
         qinfo.group_size);
   } else if (type_B == GretaDataType::INT4) {
     auto qinfo = B->quant_info();
+    uint32_t num_heads = qinfo.num_heads;
+    uint32_t head_dim = (num_heads > 0) ? (N / num_heads) : 0;
     launch_gemm_mfma_int4_wt_fp32_acc32(
         s->handle(), A->data(), static_cast<const int8_t *>(B->data()),
         static_cast<float *>(C->data()),
-        static_cast<const float *>(qinfo.scales), M, N, K, lda, ldb, ldc,
-        qinfo.group_size, A->data_type() == GretaDataType::FP16);
+        static_cast<const float *>(qinfo.scales),
+        perhead_enabled ? static_cast<const float *>(qinfo.head_scales)
+                        : nullptr,
+        M, N, K, lda, ldb, ldc, qinfo.group_size, head_dim,
+        A->data_type() == GretaDataType::FP16);
   } else if (!use_mfma) {
     launch_gemm_mixed_f16f32(s->handle(), static_cast<const float *>(A->data()),
                              static_cast<const __half *>(B->data()),

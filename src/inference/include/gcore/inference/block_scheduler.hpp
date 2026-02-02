@@ -36,6 +36,9 @@ struct BlockBuffers {
   // Scales for quantization
   gcore::rt::hip::Buffer s_wq, s_wk, s_wv, s_wo;
   gcore::rt::hip::Buffer s_w1, s_w2, s_w3;
+
+  // Per-head scales
+  gcore::rt::hip::Buffer sh_wq, sh_wk, sh_wv, sh_wo;
 };
 
 /// Intermediate activation buffers (reused across layers).
