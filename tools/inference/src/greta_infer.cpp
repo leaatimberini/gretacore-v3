@@ -5,7 +5,9 @@
 #include "gcore/inference/weight_loader.hpp"
 
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 void print_usage() {
   std::cout
@@ -164,14 +166,19 @@ int main(int argc, char *argv[]) {
     if (!model_path.empty()) {
       size_t last_slash = model_path.find_last_of("/\\");
       if (last_slash != std::string::npos) {
-        tokenizer_path = model_path.substr(0, last_slash + 1) + "tokenizer.model";
+        tokenizer_path =
+            model_path.substr(0, last_slash + 1) + "tokenizer.model";
       }
     }
     if (!tokenizer.load(tokenizer_path, &err)) {
-      std::cout << "[TOKENIZER] Info: Loading failed (" << err << "). Falling back to ASCII.\n";
+      std::cout << "[TOKENIZER] Info: Loading failed (" << err
+                << "). Falling back to ASCII.\n";
     }
   }
-  std::cout << "[TOKENIZER] Mode: " << (tokenizer.is_using_sentencepiece() ? "SentencePiece" : "ASCII Fallback") << "\n";
+  std::cout << "[TOKENIZER] Mode: "
+            << (tokenizer.is_using_sentencepiece() ? "SentencePiece"
+                                                   : "ASCII Fallback")
+            << "\n";
 
   // Initialize generator
   gcore::inference::Generator generator;
