@@ -154,15 +154,18 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       break;
     }
 
-    // After forward for S=1, we can just read from the beginning of the logits
-    // buffer because scheduler currently doesn't preserve full logit history in
-    // the output pointer.
-    if (!scheduler_->get_logits().copy_to_host(
-            logits_host.data(), config_.vocab_size * sizeof(float), err)) {
-      break;
+    if (params.greedy) {
+      next_token = scheduler_->sample_greedy_gpu(err);
+    } else {
+      // After forward for S=1, we can just read from the beginning of the
+      // logits buffer because scheduler currently doesn't preserve full logit
+      // history in the output pointer.
+      if (!scheduler_->get_logits().copy_to_host(
+              logits_host.data(), config_.vocab_size * sizeof(float), err)) {
+        break;
+      }
+      next_token = sample(logits_host.data(), config_.vocab_size, params);
     }
-
-    next_token = sample(logits_host.data(), config_.vocab_size, params);
     output.push_back(next_token);
   }
 

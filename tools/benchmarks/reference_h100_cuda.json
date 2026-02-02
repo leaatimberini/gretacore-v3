@@ -1,0 +1,44 @@
+{
+  "device": "NVIDIA H100-SXM5-80GB",
+  "software": "CUDA 12.x + TRT-LLM / vLLM",
+  "model": "Llama-3-8B-Instruct",
+  "benchmarks": {
+    "prefill": [
+      {
+        "prompt_len": 128,
+        "batch_size": 1,
+        "latency_ms_total": 5.2,
+        "ms_per_token": 0.04
+      },
+      {
+        "prompt_len": 512,
+        "batch_size": 1,
+        "latency_ms_total": 18.5,
+        "ms_per_token": 0.036
+      },
+      {
+        "prompt_len": 2048,
+        "batch_size": 1,
+        "latency_ms_total": 72.0,
+        "ms_per_token": 0.035
+      }
+    ],
+    "decode": [
+      {
+        "batch_size": 1,
+        "tokens_per_second": 185.0,
+        "ms_per_token": 5.4
+      },
+      {
+        "batch_size": 32,
+        "tokens_per_second": 3200.0,
+        "ms_per_token_per_seq": 10.0
+      },
+      {
+        "batch_size": 128,
+        "tokens_per_second": 8500.0,
+        "ms_per_token_per_seq": 15.0
+      }
+    ]
+  }
+}

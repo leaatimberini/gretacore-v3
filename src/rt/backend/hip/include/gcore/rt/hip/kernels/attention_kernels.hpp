@@ -19,6 +19,10 @@ void launch_rope(hipStream_t stream, float *x, uint32_t seq_len,
                  uint32_t num_heads, uint32_t head_dim, float base,
                  uint32_t pos_offset);
 
+void launch_rope(hipStream_t stream, float *x, uint32_t seq_len,
+                 uint32_t num_heads, uint32_t head_dim, float base,
+                 const uint32_t *d_pos);
+
 /**
  * @brief Apply Causal Masking (inplace).
  * Sets values where col > row to a large negative number.
@@ -49,6 +53,11 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
                       uint32_t max_seq_len, uint32_t num_heads,
                       uint32_t head_dim);
 
+void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
+                      const float *new_k, const float *new_v,
+                      const uint32_t *d_pos, uint32_t max_seq_len,
+                      uint32_t num_heads, uint32_t head_dim);
+
 /**
  * @brief FlashAttention v2 for decode mode (single query against KV cache).
  *
@@ -67,6 +76,12 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
 void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
                                    uint32_t num_heads, uint32_t seq_len,
+                                   uint32_t max_seq_len, uint32_t head_dim,
+                                   float scale);
+
+void launch_flash_attention_decode(hipStream_t stream, const float *Q,
+                                   const float *K, const float *V, float *O,
+                                   uint32_t num_heads, const uint32_t *d_pos,
                                    uint32_t max_seq_len, uint32_t head_dim,
                                    float scale);
 

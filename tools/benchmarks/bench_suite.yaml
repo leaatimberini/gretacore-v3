@@ -1,0 +1,39 @@
+# ES — Suite de Benchmarks GRETA CORE v0.1
+# EN — GRETA CORE Benchmark Suite v0.1
+
+scenarios:
+  - name: "Llama-3-8B Prefill Short"
+    type: prefill
+    prompt_len: 128
+    batch_size: 1
+    target: "ms/token"
+    
+  - name: "Llama-3-8B Prefill Medium"
+    type: prefill
+    prompt_len: 512
+    batch_size: 1
+    target: "ms/token"
+
+  - name: "Llama-3-8B Prefill Long"
+    type: prefill
+    prompt_len: 2048
+    batch_size: 1
+    target: "ms/token"
+
+  - name: "Llama-3-8B Decode Batch 1"
+    type: decode
+    batch_size: 1
+    max_new_tokens: 100
+    target: "tok/s"
+
+  - name: "Llama-3-8B Decode Batch 32"
+    type: decode
+    batch_size: 32
+    max_new_tokens: 100
+    target: "tok/s"
+
+  - name: "Llama-3-8B Decode Batch 128"
+    type: decode
+    batch_size: 128
+    max_new_tokens: 100
+    target: "tok/s"

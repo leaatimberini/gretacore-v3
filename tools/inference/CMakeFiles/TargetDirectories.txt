@@ -1,0 +1,4 @@
+/media/leandro/D08A27808A2762683/gretacore/gretacore/tools/inference/CMakeFiles/greta_infer.dir
+/media/leandro/D08A27808A2762683/gretacore/gretacore/tools/inference/CMakeFiles/test_l0.dir
+/media/leandro/D08A27808A2762683/gretacore/gretacore/tools/inference/CMakeFiles/edit_cache.dir
+/media/leandro/D08A27808A2762683/gretacore/gretacore/tools/inference/CMakeFiles/rebuild_cache.dir

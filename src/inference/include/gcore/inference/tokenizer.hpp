@@ -1,25 +1,27 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace gcore::inference {
 
-/// Simple BPE Tokenizer for Llama-style models.
-/// Supports loading vocabulary from tokenizer.model (SentencePiece) or
-/// vocab.json.
+/// Tokenizer wrapper that can use SentencePiece or fallback to ASCII.
 class Tokenizer {
 public:
   Tokenizer();
   ~Tokenizer();
 
-  /// Load vocabulary from a file.
-  /// Supports: tokenizer.model (SentencePiece), tokenizer.json (HF), vocab.txt
+  /// Load a SentencePiece model (.model or .spm).
+  /// If loading fails, falls back to ASCII tokenizer.
   bool load(const std::string &path, std::string *err);
 
+  /// Force ASCII fallback mode (for --demo-tokenizer)
+  void use_ascii_fallback();
+
   /// Set the vocabulary directly (e.g., from GGUF)
-  void set_vocabulary(const std::vector<std::string> &vocab) { vocab_ = vocab; }
+  void set_vocabulary(const std::vector<std::string> &vocab);
 
   /// Encode text to token IDs.
   std::vector<int32_t> encode(const std::string &text) const;
@@ -31,35 +33,18 @@ public:
   std::string decode_token(int32_t token_id) const;
 
   /// Get vocabulary size.
-  size_t vocab_size() const { return vocab_.size(); }
+  size_t vocab_size() const;
 
   /// Special token IDs
-  int32_t bos_id() const { return bos_id_; }
-  int32_t eos_id() const { return eos_id_; }
-  int32_t pad_id() const { return pad_id_; }
-  int32_t unk_id() const { return unk_id_; }
+  int32_t bos_id() const;
+  int32_t eos_id() const;
+
+  /// Check if using real tokenizer vs fallback
+  bool is_using_sentencepiece() const;
 
 private:
-  // Vocabulary: token_id -> token_string
-  std::vector<std::string> vocab_;
-
-  // Reverse mapping: token_string -> token_id
-  // Using simple linear search for now (small vocab)
-
-  // Merge rules for BPE (pair -> merged_token)
-  std::vector<std::pair<std::string, std::string>> merges_;
-
-  // Special tokens
-  int32_t bos_id_ = 1; // <s>
-  int32_t eos_id_ = 2; // </s>
-  int32_t pad_id_ = 0; // <pad>
-  int32_t unk_id_ = 0; // <unk>
-
-  // Internal helper: find token ID by string
-  int32_t find_token(const std::string &token) const;
-
-  // Internal helper: apply BPE merges
-  std::vector<std::string> bpe_encode(const std::string &word) const;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace gcore::inference

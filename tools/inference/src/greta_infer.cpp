@@ -13,7 +13,8 @@ void print_usage() {
       << "Options:\n"
       << "  --model <path>      Path to model weights (GGUF format)\n"
       << "  --prompt <text>     Input prompt\n"
-      << "  --max-tokens <n>    Maximum tokens to generate (default: 128)\n"
+      << "  --batch-size <n>    Batch size for inference (default: 1)\n"
+      << "  --max-tokens <n>    Maximum tokens to generate (default: 32)\n"
       << "  --temperature <t>   Sampling temperature (default: 1.0)\n"
       << "  --top-k <k>         Top-K sampling (default: 50)\n"
       << "  --greedy            Use greedy decoding\n"
@@ -30,6 +31,7 @@ int main(int argc, char *argv[]) {
   // Default parameters
   std::string model_path;
   std::string prompt = "Hello, I am a language model";
+  int batch_size = 1;
   gcore::inference::SamplingParams params;
   params.max_tokens = 32;
   params.temperature = 1.0f;
@@ -42,6 +44,8 @@ int main(int argc, char *argv[]) {
       model_path = argv[++i];
     } else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc) {
       prompt = argv[++i];
+    } else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc) {
+      batch_size = std::atoi(argv[++i]);
     } else if (strcmp(argv[i], "--max-tokens") == 0 && i + 1 < argc) {
       params.max_tokens = std::atoi(argv[++i]);
     } else if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
@@ -63,9 +67,33 @@ int main(int argc, char *argv[]) {
   std::cout << "  Max tokens: " << params.max_tokens << "\n";
   std::cout << "  Temperature: " << params.temperature << "\n";
   std::cout << "  Top-K: " << params.top_k << "\n";
-  std::cout << "  Greedy: " << (params.greedy ? "yes" : "no") << "\n\n";
+  std::cout << "  Greedy: " << (params.greedy ? "yes" : "no") << "\n";
+
+  const char *verbose_info = std::getenv("GRETA_VERBOSE_INFO");
+  if (verbose_info && std::string(verbose_info) == "1") {
+    int hip_ver = 0;
+    (void)hipRuntimeGetVersion(&hip_ver);
+    hipDeviceProp_t prop;
+    (void)hipGetDeviceProperties(&prop, 0);
+
+    const char *graph_env = std::getenv("GRETA_HIP_GRAPH");
+    const char *prof_env = std::getenv("GRETA_PROFILE_BLOCKS");
+
+    std::cout << "\nSystem Info (VERBOSE):\n";
+    std::cout << "  GPU: " << prop.name << "\n";
+    std::cout << "  HIP Runtime Version: " << hip_ver << "\n";
+    std::cout << "  GRETA_HIP_GRAPH: " << (graph_env ? graph_env : "0") << "\n";
+    std::cout << "  GRETA_PROFILE_BLOCKS: " << (prof_env ? prof_env : "0")
+              << "\n";
+  }
+  std::cout << "\n";
 
   std::string err;
+  if (gcore::rt::GretaContext::instance().initialize() !=
+      gcore::rt::GretaResult::SUCCESS) {
+    std::cerr << "Failed to initialize GRETA context\n";
+    return 1;
+  }
 
   // Initialize model config
   auto config = gcore::inference::ModelConfig::llama2_7b();
@@ -73,13 +101,14 @@ int main(int argc, char *argv[]) {
             << "B params)\n";
 
   // Initialize scheduler
+  std::cout << "[GRETA_MAIN] Initializing scheduler..." << std::endl;
   gcore::inference::BlockScheduler scheduler;
   if (!scheduler.init(config, &err)) {
     std::cerr << "Scheduler init failed: " << err << "\n";
     return 1;
   }
-  std::cout << "Initialized scheduler for " << scheduler.num_layers()
-            << " layers\n";
+  std::cout << "[GRETA_MAIN] Initialized scheduler for "
+            << scheduler.num_layers() << " layers\n";
 
   // Allocate buffers
   std::cout << "Allocating buffers...\n";
@@ -87,7 +116,8 @@ int main(int argc, char *argv[]) {
     std::cerr << "Weight allocation failed: " << err << "\n";
     return 1;
   }
-  if (!scheduler.allocate_activations(1, 512, &err)) {
+  if (!scheduler.allocate_activations(
+          batch_size, 2048, &err)) { // Support up to 2k context for bench
     std::cerr << "Activation allocation failed: " << err << "\n";
     return 1;
   }

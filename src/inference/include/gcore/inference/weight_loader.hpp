@@ -41,6 +41,18 @@ public:
                                 gcore::rt::hip::Buffer &buffer,
                                 std::string *err) = 0;
 
+  /// Load a tensor as INT8 with scales.
+  virtual bool load_tensor_int8(const std::string &name,
+                                gcore::rt::hip::Buffer &buffer,
+                                gcore::rt::hip::Buffer &scales,
+                                std::string *err) = 0;
+
+  /// Load a tensor as INT4 with scales (packed 2 values per byte).
+  virtual bool load_tensor_int4(const std::string &name,
+                                gcore::rt::hip::Buffer &buffer,
+                                gcore::rt::hip::Buffer &scales,
+                                std::string *err) = 0;
+
   /// Get model configuration (if embedded in file).
   virtual ModelConfig get_config() const = 0;
 };
@@ -56,6 +68,12 @@ public:
   bool load_tensor(const std::string &name, gcore::rt::hip::Buffer &buffer,
                    std::string *err) override;
   bool load_tensor_fp16(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        std::string *err) override;
+  bool load_tensor_int8(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        gcore::rt::hip::Buffer &scales,
+                        std::string *err) override;
+  bool load_tensor_int4(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        gcore::rt::hip::Buffer &scales,
                         std::string *err) override;
   ModelConfig get_config() const override;
 
@@ -75,6 +93,12 @@ public:
   bool load_tensor(const std::string &name, gcore::rt::hip::Buffer &buffer,
                    std::string *err) override;
   bool load_tensor_fp16(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        std::string *err) override;
+  bool load_tensor_int8(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        gcore::rt::hip::Buffer &scales,
+                        std::string *err) override;
+  bool load_tensor_int4(const std::string &name, gcore::rt::hip::Buffer &buffer,
+                        gcore::rt::hip::Buffer &scales,
                         std::string *err) override;
   ModelConfig get_config() const override;
 

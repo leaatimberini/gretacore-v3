@@ -1,6 +1,8 @@
 #pragma once
 
 #include "gcore/inference/model_config.hpp"
+#include "gcore/inference/trace.hpp"
+#include "gcore/rt/greta_runtime.hpp"
 #include "gcore/rt/hip/buffer.hpp"
 #include <hip/hip_runtime.h>
 
@@ -30,6 +32,10 @@ struct BlockBuffers {
   // Norms
   gcore::rt::hip::Buffer attn_norm;
   gcore::rt::hip::Buffer ffn_norm;
+
+  // Scales for quantization
+  gcore::rt::hip::Buffer s_wq, s_wk, s_wv, s_wo;
+  gcore::rt::hip::Buffer s_w1, s_w2, s_w3;
 };
 
 /// Intermediate activation buffers (reused across layers).
@@ -50,6 +56,7 @@ struct ActivationBuffers {
   gcore::rt::hip::Buffer kv_cache_v; // [L, max_seq, H, Dh]
   // Input tokens [B, S]
   gcore::rt::hip::Buffer tokens;
+  gcore::rt::hip::Buffer d_pos; // Device-side current position
 };
 
 /// Block Scheduler: Manages execution of N transformer layers.
@@ -79,11 +86,14 @@ public:
   bool forward(const int32_t *tokens, size_t seq_start, size_t seq_len,
                std::string *err);
 
+  // Sampling
+  int32_t sample_greedy_gpu(std::string *err);
+
   /// Get the final hidden state buffer.
   gcore::rt::hip::Buffer &get_hidden_state();
 
   /// Get the final logits buffer.
-  gcore::rt::hip::Buffer &get_logits();
+  const gcore::rt::hip::Buffer &get_logits() const;
 
   /// Get model configuration.
   const ModelConfig &config() const { return config_; }
@@ -104,9 +114,17 @@ private:
   // Final logits [B, S, vocab_size]
   gcore::rt::hip::Buffer logits_;
 
-  hipStream_t stream_ = nullptr;
+  gcore::rt::GretaStream *stream_ = nullptr;
   bool initialized_ = false;
   size_t current_seq_pos_ = 0;
+
+  gcore::inference::Tracer tracer_;
+  int trace_step_ = 0;
+
+  // GRETA Graph
+  gcore::rt::GretaGraph *graph_ = nullptr;
+  bool graph_captured_ = false;
+  std::vector<hipGraphNode_t> layer_nodes_; // To update 'pos' later if needed
 };
 
 } // namespace gcore::inference

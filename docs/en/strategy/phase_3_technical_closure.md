@@ -1,185 +1,52 @@
-# Phase 3 Technical Closure: LLM Inference Pipeline
+# Phase 3 Strategy: Technical Closure & Hardware Hardening (MI300X)
+**Author:** Leandro Emanuel Timberini
 
-**Date:** 2026-01-31  
-**Status:** Completed (infrastructure base)  
-**Author:** GRETA CORE Team
+## Technical Status Summary
+GRETA CORE has successfully achieved functional stability and baseline performance optimization for Llama-2-7B on AMD MI300X (gfx942).
 
----
+### Validated KPIs
+- **Correctness:** 0 NaNs detected in all layers. Logits are stable within expected FP16/FP32 bounds.
+- **Dequantization:** bit-perfect parity for Q4_K and Q6_K compared to reference.
+- **Throughput (Decode):** **10.41 tokens/s** (Warp-only GEMV specialization).
+- **Throughput (Prefill):** **19.3 tokens/s** (Mixed MFMA/GEMV path).
 
-## Executive Summary
+## Roadmap: Phase 3.1 - 3.3
 
-Phase 3 established the complete infrastructure for LLM inference in the GRETA CORE engine. The five main components were implemented and validated on MI300X hardware:
+### Phase 3.1: Hardening & Deep Validation
+*Focus: From "it works" to "it is auditable and trustworthy".*
 
-| Component | Function | Status |
-|:---|:---|:---|
-| Weight Loader | GGUF/SafeTensors weight loading | ✅ |
-| Block Scheduler | 32-layer transformer management | ✅ |
-| Tokenizer | BPE encode/decode | ✅ |
-| Generator | Autoregressive loop with sampling | ✅ |
-| `greta_infer` CLI | Command-line interface | ✅ |
+1.  **Parity Validator:** Automatic comparison between GRETA output and CPU Reference/FP32 ground truth.
+2.  **Granular Instrumentation:** Implementation of high-resolution HIP timers per logic block:
+    -   QKV Projection (Latency/Throughput).
+    -   Self-Attention & KV-Update.
+    -   FFN (W1, W3, W2 chain).
+    -   lm_head (High-vocab latency).
+3.  **Numerical Stability Report:** Documentation of FP16 vs FP32 drift and its impact on top-1/top-k token selection.
 
----
+### Phase 3.2: Performance Scaling
+*Focus: Competitive potential and efficiency.*
 
-## Implemented Components
+1.  **lm_head Optimization:** Specialized GEMV for vocabulary (>32k) to saturate memory controllers.
+2.  **HIP Graph Integration:** Capture and replay the generation loop to eliminate $300+$ host-side kernel launch latencies.
+3.  **KV-Cache Locality:** Alignment and layout optimization for HBM3 burst-mode access.
 
-### 1. Weight Loader (`src/inference/`)
+### Phase 3.3: Technical Release (AMD-facing)
+*Focus: Professional delivery and reproducibility.*
 
-**Files:**
-- `include/gcore/inference/weight_loader.hpp`
-- `include/gcore/inference/model_config.hpp`
-- `src/weight_loader.cpp`
+1.  **Reproducibility Guide:** One-click script to verify all KPIs on a standard ROCm 7.1 environment.
+2.  **Architecture Specifications:** Documentation of the low-level inference engine logic.
+3.  **Gap Analysis:** Clear list of current limitations (e.g., P2P across multiple MI300X, FlashAttention tuning).
 
-**Features:**
-- Abstract `WeightLoader` interface for multiple formats
-- `GGUFLoader`: Parser for llama.cpp GGUF v2/v3 format
-- `SafeTensorsLoader`: Stub prepared for HuggingFace
-- `ModelConfig`: Presets for Llama-2-7B (4096 dim, 32 heads, 32 layers) and 13B
+## Technical Risks & Mitigations
 
-**Validation:**
-```
-weight_loader_test
-Model Config (Llama-2-7B):
-  dim: 4096, num_heads: 32, num_layers: 32
-  param_count: 6.73815B
-STATUS=OK
-```
+| Risk | Mitigation Strategy |
+| :--- | :--- |
+| **Launch Overhead:** Host latency dominating decode loop. | Implement HIP Graphs to offload dispatch logic to GPU firmware. |
+| **Numeric Drift:** FP16 accumulation causing divergence in long context. | Selectively use FP32 for sensitive reductions (Softmax/Norms). |
+| **Memory Bound:** low CU utilization in small batch sizes. | Increase thread-level parallelism (TLP) in GEMV via warp-specialization. |
 
-### 2. Block Scheduler
-
-**Files:**
-- `include/gcore/inference/block_scheduler.hpp`
-- `src/block_scheduler.cpp`
-
-**Structures:**
-- `BlockBuffers`: Wq, Wk, Wv, Wo (attention) + W1, W2, W3 (MLP) + norms
-- `ActivationBuffers`: x, residual, q, k, v, attn_out, mlp_gate, kv_cache
-
-**Validation:**
-```
-block_scheduler_test
-Config: 32 layers, dim=4096
-Weight buffers allocated
-Activation buffers allocated (batch=1, seq=128)
-Forward pass completed (skeleton)
-STATUS=OK
-```
-
-### 3. Tokenizer
-
-**Files:**
-- `include/gcore/inference/tokenizer.hpp`
-- `src/tokenizer.cpp`
-
-**Features:**
-- 32,000 token vocabulary (Llama standard)
-- Special tokens: BOS=1, EOS=2, UNK=0
-- Encode: text → token IDs
-- Decode: token IDs → text
-
-### 4. Generator
-
-**Files:**
-- `include/gcore/inference/generator.hpp`
-- `src/generator.cpp`
-
-**Sampling Modes:**
-- `greedy`: Argmax
-- `top_k`: Top-K with renormalization
-- `temperature`: Logit scaling
-- `top_p`: Nucleus sampling (prepared)
-
-**Statistics:**
-- Total generation time
-- Time-to-first-token
-- Tokens per second
-
-### 5. CLI `greta_infer`
-
-**File:** `tools/inference/src/greta_infer.cpp`
-
-**Options:**
-```
---model <path>      Path to GGUF weights
---prompt <text>     Input prompt
---max-tokens <n>    Maximum tokens (default: 128)
---temperature <t>   Temperature (default: 1.0)
---top-k <k>         Top-K (default: 50)
---greedy            Greedy decoding
-```
-
----
-
-## Test Model
-
-- **Model:** Llama-2-7B-Chat GGUF Q4_K_M
-- **Size:** 4.08 GB (quantized)
-- **Location MI300X:** `/root/models/llama-2-7b-chat.Q4_K_M.gguf`
-- **Source:** TheBloke/Llama-2-7B-Chat-GGUF (HuggingFace)
-
----
-
-## Execution on MI300X
-
-```
-╔═══════════════════════════════════════════════════════╗
-║           GRETA CORE - LLM Inference Engine           ║
-║                    Phase 3 Preview                    ║
-╚═══════════════════════════════════════════════════════╝
-
-Configuration:
-  Model: /root/models/llama-2-7b-chat.Q4_K_M.gguf
-  Prompt: "Hello, I am"
-  Max tokens: 20
-  Greedy: yes
-
-Model: Llama-2-7B (6.73B params)
-Initialized scheduler for 32 layers
-Buffers allocated
-Generator initialized
-
-STATUS=OK
-```
-
----
-
-## Pending Work (Phase 4)
-
-The infrastructure is complete but requires final "wiring":
-
-| Task | Description | Priority |
-|:---|:---|:---|
-| GGUF → GPU | Load GGUF tensors to HIP buffers | Critical |
-| Forward pass | Connect BlockScheduler to HIPGraphRunner | Critical |
-| Real tokenizer | Load vocab from tokenizer.model | High |
-| FP16/BF16 | Switch kernels from FP32 to half | High |
-
----
-
-## Metrics and Performance
-
-| Metric | Value | Notes |
-|:---|:---|:---|
-| Demo throughput | ~12,700 tok/s | Sampling loop only |
-| Target throughput | 200+ tok/s | With real forward pass |
-| GPU memory required | ~14 GB | FP32, Llama-2-7B |
-| GPU memory (Q4) | ~4 GB | Quantized |
-
----
-
-## Technical Decisions
-
-1. **GGUF as primary format:** Compatible with llama.cpp, wide ecosystem.
-2. **Modular sampling:** Greedy, top-k, temperature interchangeable.
-3. **Pre-allocated buffer pools:** Avoids allocations during inference.
-4. **Standalone CLI:** No Python/PyTorch dependencies.
-
----
-
-## Conclusion
-
-Phase 3 successfully completed the inference pipeline architecture. The `greta_infer` CLI executes on MI300X with real model configuration. The remaining work is connecting the data layer (GGUF parsing) with the execution layer (HIPGraphRunner).
-
-The project is ready for Phase 4: Real Execution and Optimization.
-
----
-*Technical closure document - GRETA CORE*
+## Why GRETA CORE? (AMD Value Prop)
+Unlike black-box frameworks, GRETA CORE provides:
+1.  **Explicit Runtime Control:** No hidden abstraction layers between the logic and ROCm/HIP.
+2.  **Native Matrix Core Utilization:** Architecture-specific MFMA usage tuned for gfx942.
+3.  **Optimized Mixed-Precision:** Precise balance between Q4_K/Q6_K weights and FP32 activations.

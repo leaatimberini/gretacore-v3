@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/test_l0.dir/test_l0.cpp.o CMakeFiles/test_l0.dir/media/leandro/D08A27808A2762683/gretacore/gretacore/src/rt/backend/hip/src/greta_runtime_hip.cpp.o -o test_l0   -L/opt/rocm/lib  -Wl,-rpath,/opt/rocm/lib -lamdhip64 

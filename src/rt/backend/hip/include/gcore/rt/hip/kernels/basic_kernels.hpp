@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <hip/hip_runtime.h>
 
@@ -24,6 +25,28 @@ void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
 
 void launch_embedding_lookup(hipStream_t stream, const int32_t *tokens,
                              const float *embeddings, float *output,
-                             uint32_t seq_len, uint32_t dim);
+                             uint32_t seq_len, uint32_t dim,
+                             uint32_t vocab_size);
+
+struct DebugStats {
+  uint64_t nan_count;
+  uint64_t inf_count;
+  float min_val;
+  float max_val;
+  float max_abs;
+  double sum;
+  double sum_abs;
+  uint64_t count;
+};
+
+// Debug instrumentation
+void launch_debug_tensor_stats(hipStream_t stream, const char *label,
+                               const float *d_data, uint32_t n);
+
+void launch_debug_tensor_stats_ex(hipStream_t stream, const float *d_data,
+                                  uint32_t n, DebugStats *h_out);
+
+void launch_argmax(hipStream_t stream, const float *d_logits, uint32_t n,
+                   int32_t *h_out);
 
 } // namespace gcore::rt::hip::kernels

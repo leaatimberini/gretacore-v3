@@ -3,8 +3,8 @@
 
 namespace gcore::rt::hip::kernels {
 
-__global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads, 
-                            uint32_t head_dim, float base, uint32_t pos_offset) {
+__device__ void rope_logic(float *x, uint32_t seq_len, uint32_t num_heads,
+                           uint32_t head_dim, float base, uint32_t pos_offset) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   uint32_t half_dim = head_dim / 2;
   uint32_t total_pairs = seq_len * num_heads * half_dim;
@@ -20,9 +20,6 @@ __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads,
   float cos_val = cosf(theta);
   float sin_val = sinf(theta);
 
-  // Llama-2 RoPE: split-half pairs
-  // v[i] = v[i]*cos - v[i+d/2]*sin
-  // v[i+d/2] = v[i]*sin + v[i+d/2]*cos
   uint32_t base_idx = s_batch * (num_heads * head_dim) + head_idx * head_dim + pair_idx;
   
   float v0 = x[base_idx];
@@ -30,6 +27,17 @@ __global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads,
 
   x[base_idx] = v0 * cos_val - v1 * sin_val;
   x[base_idx + half_dim] = v0 * sin_val + v1 * cos_val;
+}
+
+__global__ void rope_kernel(float *x, uint32_t seq_len, uint32_t num_heads, 
+                            uint32_t head_dim, float base, uint32_t pos_offset) {
+  rope_logic(x, seq_len, num_heads, head_dim, base, pos_offset);
+}
+
+__global__ void rope_kernel_p(float *x, uint32_t seq_len, uint32_t num_heads,
+                               uint32_t head_dim, float base,
+                               const uint32_t *pos_ptr) {
+  rope_logic(x, seq_len, num_heads, head_dim, base, *pos_ptr);
 }
 
 void launch_rope(hipStream_t stream, float *x, uint32_t seq_len, 
@@ -40,6 +48,17 @@ void launch_rope(hipStream_t stream, float *x, uint32_t seq_len,
   int grid_size = (total_pairs + block_size - 1) / block_size;
   
   rope_kernel<<<grid_size, block_size, 0, stream>>>(x, seq_len, num_heads, head_dim, base, pos_offset);
+}
+
+void launch_rope(hipStream_t stream, float *x, uint32_t seq_len,
+                 uint32_t num_heads, uint32_t head_dim, float base,
+                 const uint32_t *d_pos) {
+  uint32_t half_dim = head_dim / 2;
+  uint32_t total_pairs = seq_len * num_heads * half_dim;
+  int block_size = 256;
+  int grid_size = (total_pairs + block_size - 1) / block_size;
+
+  rope_kernel_p<<<grid_size, block_size, 0, stream>>>(x, seq_len, num_heads, head_dim, base, d_pos);
 }
 
 __global__ void causal_mask_kernel(float *data, uint32_t seq_len, float mask_val) {
@@ -59,10 +78,10 @@ void launch_causal_mask(hipStream_t stream, float *data, uint32_t seq_len, float
   causal_mask_kernel<<<grid_size, block_size, 0, stream>>>(data, seq_len, mask_val);
 }
 
-__global__ void kv_update_kernel(float *cache_k, float *cache_v, const float *new_k,
-                               const float *new_v, uint32_t pos,
-                               uint32_t max_seq_len, uint32_t num_heads,
-                               uint32_t head_dim) {
+__device__ void kv_update_logic(float *cache_k, float *cache_v, const float *new_k,
+                                const float *new_v, uint32_t pos,
+                                uint32_t max_seq_len, uint32_t num_heads,
+                                uint32_t head_dim) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   uint32_t total = num_heads * head_dim;
 
@@ -78,6 +97,20 @@ __global__ void kv_update_kernel(float *cache_k, float *cache_v, const float *ne
   cache_v[dst_off] = new_v[src_off];
 }
 
+__global__ void kv_update_kernel(float *cache_k, float *cache_v, const float *new_k,
+                               const float *new_v, uint32_t pos,
+                               uint32_t max_seq_len, uint32_t num_heads,
+                               uint32_t head_dim) {
+  kv_update_logic(cache_k, cache_v, new_k, new_v, pos, max_seq_len, num_heads, head_dim);
+}
+
+__global__ void kv_update_kernel_p(float *cache_k, float *cache_v, const float *new_k,
+                                 const float *new_v, const uint32_t *pos_ptr,
+                                 uint32_t max_seq_len, uint32_t num_heads,
+                                 uint32_t head_dim) {
+  kv_update_logic(cache_k, cache_v, new_k, new_v, *pos_ptr, max_seq_len, num_heads, head_dim);
+}
+
 void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
                       const float *new_k, const float *new_v, uint32_t pos,
                       uint32_t max_seq_len, uint32_t num_heads,
@@ -90,10 +123,22 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
       cache_k, cache_v, new_k, new_v, pos, max_seq_len, num_heads, head_dim);
 }
 
+void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
+                      const float *new_k, const float *new_v, 
+                      const uint32_t *d_pos, uint32_t max_seq_len,
+                      uint32_t num_heads, uint32_t head_dim) {
+  uint32_t total = num_heads * head_dim;
+  uint32_t threads = 256;
+  uint32_t blocks = (total + threads - 1) / threads;
+
+  kv_update_kernel_p<<<blocks, threads, 0, stream>>>(
+      cache_k, cache_v, new_k, new_v, d_pos, max_seq_len, num_heads, head_dim);
+}
+
 #define FLASH_BLOCK_SIZE 64
 #define FLASH_HEAD_DIM 128
 
-__global__ void flash_attention_decode_kernel(
+__device__ void flash_attention_decode_logic(
     const float *__restrict__ Q,      // [num_heads, head_dim]
     const float *__restrict__ K,      // [num_heads, max_seq, head_dim]
     const float *__restrict__ V,      // [num_heads, max_seq, head_dim]
@@ -136,15 +181,13 @@ __global__ void flash_attention_decode_kernel(
     }
     __syncthreads();
     
-    // Max reduction in shared memory (Block size 64)
     for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
       if (tid < stride) s_score[tid] = fmaxf(s_score[tid], s_score[tid + stride]);
       __syncthreads();
     }
     float new_max = fmaxf(s_max, s_score[0]);
-    __syncthreads(); // Wait for thread 0 to get the block max
+    __syncthreads();
     
-    // Compute exp(x - new_max) and store back to s_score
     if (tid < block_len) {
       uint32_t k_idx = k_start + tid;
       float dot = 0.0f;
@@ -157,7 +200,6 @@ __global__ void flash_attention_decode_kernel(
     }
     __syncthreads();
     
-    // Sum reduction
     for (uint32_t stride = FLASH_BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
       if (tid < stride) s_score[tid] += s_score[tid + stride];
       __syncthreads();
@@ -169,11 +211,9 @@ __global__ void flash_attention_decode_kernel(
     }
     __syncthreads();
     
-    // Critical: Update s_max and sync BEFORE rewriting s_score for output update
     if (tid == 0) s_max = new_max;
     __syncthreads();
 
-    // Re-calculate local scores for this block using the updated s_max
     if (tid < block_len) {
       uint32_t k_idx = k_start + tid;
       float dot = 0.0f;
@@ -199,6 +239,20 @@ __global__ void flash_attention_decode_kernel(
   if (tid < head_dim) o_ptr[tid] = s_output[tid] / s_sum;
 }
 
+__global__ void flash_attention_decode_kernel(
+    const float *__restrict__ Q, const float *__restrict__ K, const float *__restrict__ V,
+    float *__restrict__ O, uint32_t num_heads, uint32_t seq_len, uint32_t max_seq_len, 
+    uint32_t head_dim, float scale) {
+  flash_attention_decode_logic(Q, K, V, O, num_heads, seq_len, max_seq_len, head_dim, scale);
+}
+
+__global__ void flash_attention_decode_kernel_p(
+    const float *__restrict__ Q, const float *__restrict__ K, const float *__restrict__ V,
+    float *__restrict__ O, uint32_t num_heads, const uint32_t *pos_ptr, uint32_t max_seq_len, 
+    uint32_t head_dim, float scale) {
+  flash_attention_decode_logic(Q, K, V, O, num_heads, *pos_ptr, max_seq_len, head_dim, scale);
+}
+
 void launch_flash_attention_decode(hipStream_t stream, 
                                    const float *Q, const float *K, const float *V,
                                    float *O, uint32_t num_heads, uint32_t seq_len, 
@@ -208,6 +262,18 @@ void launch_flash_attention_decode(hipStream_t stream,
   flash_attention_decode_kernel<<<grid, block, 0, stream>>>(
       Q, K, V, O, num_heads, seq_len, max_seq_len, head_dim, scale);
 }
+
+void launch_flash_attention_decode(hipStream_t stream, 
+                                   const float *Q, const float *K, const float *V,
+                                   float *O, uint32_t num_heads, const uint32_t *d_pos,
+                                   uint32_t max_seq_len, uint32_t head_dim, float scale) {
+  dim3 grid(num_heads);
+  dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
+  flash_attention_decode_kernel_p<<<grid, block, 0, stream>>>(
+      Q, K, V, O, num_heads, d_pos, max_seq_len, head_dim, scale);
+}
+
+
 
 __global__ void flash_attention_prefill_kernel(
     const float *__restrict__ Q,      // [seq_len, num_heads, head_dim]

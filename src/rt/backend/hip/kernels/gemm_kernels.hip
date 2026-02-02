@@ -356,4 +356,572 @@ void launch_gemm_mixed_f16f32(hipStream_t stream,
   gemm_mixed_f16f32_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K, lda, ldb, ldc);
 }
 
+// =================================================================================================
+// MFMA Mixed Precision Implementation (CDNA 3 / gfx942)
+// =================================================================================================
+
+typedef _Float16 half4 __attribute__((ext_vector_type(4)));
+typedef float float4 __attribute__((ext_vector_type(4)));
+
+__global__ void __launch_bounds__(64) gemm_mfma_mixed_f16f32_kernel(
+    const float *__restrict__ a,    // M x K (Activations)
+    const __half *__restrict__ b,   // N x K (Weights, GGUF layout)
+    float *__restrict__ c,          // M x N
+    uint32_t M, uint32_t N, uint32_t K,
+    uint32_t lda, uint32_t ldb, uint32_t ldc) {
+
+    uint32_t wave_col_base = blockIdx.x * 16;
+    uint32_t wave_row_base = blockIdx.y * 16;
+    uint32_t lane = threadIdx.x;
+
+    float4 acc = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    // Shared memory for tiles (16x16 F16 is small, but use for distribution)
+    __shared__ __half As[16][16];
+    __shared__ __half Bs[16][16];
+
+    for (uint32_t k0 = 0; k0 < K; k0 += 16) {
+        // Load A to LDS (Activations F32 -> F16)
+        // Sequential threads should read sequential columns (K)
+        for (int i = 0; i < 4; ++i) {
+            uint32_t l_idx = lane * 4 + i;
+            uint32_t r_loc = l_idx / 16;
+            uint32_t c_loc = l_idx % 16;
+            uint32_t gr = wave_row_base + r_loc;
+            uint32_t gc = k0 + c_loc;
+            if (gr < M && gc < K) {
+                As[r_loc][c_loc] = __float2half(a[gr * lda + gc]);
+            } else {
+                As[r_loc][c_loc] = __float2half(0.0f);
+            }
+        }
+
+        // Load B to LDS (Weights F16, N x K layout)
+        // sequential memory is K. We have Bs[k_loc][n_loc]
+        // In memory: b[n][k]. 16 rows of N, 16 columns of K.
+        // We want sequential threads to read sequential k.
+        for (int i = 0; i < 4; ++i) {
+            uint32_t l_idx = lane * 4 + i;
+            uint32_t n_loc = l_idx / 16;
+            uint32_t k_loc = l_idx % 16;
+            uint32_t gn = wave_col_base + n_loc;
+            uint32_t gk = k0 + k_loc;
+            if (gn < N && gk < K) {
+                // Store weights in Bs such that Bs[k_loc][n_loc] is accessed by MFMA
+                // but loaded from b[gn][gk]
+                Bs[k_loc][n_loc] = b[gn * K + gk];
+            } else {
+                Bs[k_loc][n_loc] = __float2half(0.0f);
+            }
+        }
+
+        __syncthreads();
+
+        // Prepare MFMA fragments from LDS
+        // Instruction: v_mfma_f32_16x16x16_f16
+        // vA (Matrix A): 16x16. Thread i provides A[row=(i/16)*4 + 0..3, col=i%16]
+        // Actually, the manual says for 16x16x16f16:
+        // A input: 4 packed f16. Thread i holds values for A columns [i%16] and rows [(i/16)*4 + 0..3]
+        half4 a_frag;
+        uint32_t a_col_loc = lane % 16;
+        uint32_t a_row_loc_base = (lane / 16) * 4;
+        a_frag[0] = As[a_row_loc_base + 0][a_col_loc];
+        a_frag[1] = As[a_row_loc_base + 1][a_col_loc];
+        a_frag[2] = As[a_row_loc_base + 2][a_col_loc];
+        a_frag[3] = As[a_row_loc_base + 3][a_col_loc];
+
+        // B input: 16x16. Thread i holds values for B rows [i%16] and columns [(i/16)*4 + 0..3]
+        half4 b_frag;
+        uint32_t b_row_loc = lane % 16;
+        uint32_t b_col_loc_base = (lane / 16) * 4;
+        b_frag[0] = Bs[b_row_loc][b_col_loc_base + 0];
+        b_frag[1] = Bs[b_row_loc][b_col_loc_base + 1];
+        b_frag[2] = Bs[b_row_loc][b_col_loc_base + 2];
+        b_frag[3] = Bs[b_row_loc][b_col_loc_base + 3];
+
+        // Execute MFMA
+        acc = __builtin_amdgcn_mfma_f32_16x16x16f16(a_frag, b_frag, acc, 0, 0, 0);
+
+        __syncthreads();
+    }
+
+    // Store Result
+    for (int i = 0; i < 4; ++i) {
+        uint32_t c_row_local = (lane / 16) * 4 + i;
+        uint32_t c_col_local = lane % 16;
+        uint32_t c_global_row = wave_row_base + c_row_local;
+        uint32_t c_global_col = wave_col_base + c_col_local;
+        if (c_global_row < M && c_global_col < N) {
+            c[c_global_row * ldc + c_global_col] = acc[i];
+        }
+    }
+}
+
+void launch_gemm_mfma_mixed_f16f32(hipStream_t stream, 
+                                   const float *a, const __half *b, float *c,
+                                   uint32_t M, uint32_t N, uint32_t K,
+                                   uint32_t lda, uint32_t ldb, uint32_t ldc);
+
+// Specialized GEMV for small M (Decode & small Prefill)
+__global__ void gemv_mixed_f16f32_kernel(const float *__restrict__ a,
+                                         const __half *__restrict__ w,
+                                         float *__restrict__ y, uint32_t M,
+                                         uint32_t N, uint32_t K, uint32_t lda) {
+  // One block per output row of (A*W^T)
+  // Grid: (N, M)
+  uint32_t row_a = blockIdx.y;
+  uint32_t row_w = blockIdx.x;
+  if (row_a >= M || row_w >= N)
+    return;
+
+  uint32_t tid = threadIdx.x; // 0..63 for wave-oriented
+  float acc = 0.0f;
+
+  const float *a_row = a + row_a * lda;
+  const __half *w_row = w + row_w * K;
+
+  const float4 *a4 = reinterpret_cast<const float4 *>(a_row);
+  const half4 *w4 = reinterpret_cast<const half4 *>(w_row);
+  uint32_t K4 = K / 4;
+
+  for (uint32_t k = tid; k < K4; k += 64) {
+    float4 av = a4[k];
+    half4 wv = w4[k];
+    acc += av.x * (float)wv[0] + av.y * (float)wv[1] + av.z * (float)wv[2] +
+           av.w * (float)wv[3];
+  }
+
+  // Handle remainder (if K not multiple of 4)
+  for (uint32_t k = K4 * 4 + tid; k < K; k += 64) {
+    acc += a_row[k] * (float)w_row[k];
+  }
+
+  // Pure warp reduction (MI300X wave size is 64)
+  for (int offset = 32; offset > 0; offset /= 2) {
+    acc += __shfl_down(acc, offset);
+  }
+
+  if (tid == 0) {
+    y[row_a * N + row_w] = acc;
+  }
+}
+
+void launch_gemm_mfma_mixed_f16f32(hipStream_t stream, const float *a,
+                                   const __half *b, float *c, uint32_t M,
+                                   uint32_t N, uint32_t K, uint32_t lda,
+                                   uint32_t ldb, uint32_t ldc) {
+  if (M == 0 || N == 0 || K == 0)
+    return;
+
+  if (M <= 32) {
+    // Wave-parallel GEMV
+    dim3 block(64, 1, 1);
+    dim3 grid(N, M, 1);
+    gemv_mixed_f16f32_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K, lda);
+  } else {
+    // General MFMA GEMM
+    dim3 block(64, 1, 1);
+    dim3 grid((N + 15) / 16, (M + 15) / 16, 1);
+    gemm_mfma_mixed_f16f32_kernel<<<grid, block, 0, stream>>>(a, b, c, M, N, K,
+                                                              lda, ldb, ldc);
+  }
+}
+
+// Specialized GEMV for final linear layer (lm_head)
+// Grid: (N, M, 1) - where N is vocab_size, M is seq_len (usually 1 for decode)
+// Block: 256 threads
+__global__ void lm_head_gemv_kernel(const float *__restrict__ x,
+                                    const __half *__restrict__ w,
+                                    float *__restrict__ y, uint32_t M,
+                                    uint32_t N, uint32_t K) {
+  uint32_t row_x = blockIdx.y;
+  uint32_t row_w = blockIdx.x; // maps to vocab index
+  if (row_x >= M || row_w >= N)
+    return;
+
+  uint32_t tid = threadIdx.x;
+  float acc = 0.0f;
+
+  const float *x_row = x + row_x * K;
+  const __half *w_row = w + row_w * K;
+
+  const float4 *x4 = reinterpret_cast<const float4 *>(x_row);
+  const half4 *w4 = reinterpret_cast<const half4 *>(w_row);
+  uint32_t K4 = K / 4;
+
+  for (uint32_t k = tid; k < K4; k += 256) {
+    float4 xv = x4[k];
+    half4 wv = w4[k];
+    acc += xv.x * (float)wv[0] + xv.y * (float)wv[1] + xv.z * (float)wv[2] +
+           xv.w * (float)wv[3];
+  }
+
+  // Handle remainder
+  for (uint32_t k = K4 * 4 + tid; k < K; k += 256) {
+    acc += x_row[k] * (float)w_row[k];
+  }
+
+  // Block reduction
+  __shared__ float s_acc[256];
+  s_acc[tid] = acc;
+  __syncthreads();
+
+  for (uint32_t s = 128; s > 0; s >>= 1) {
+    if (tid < s) {
+      s_acc[tid] += s_acc[tid + s];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    y[row_x * N + row_w] = s_acc[0];
+  }
+}
+
+void launch_lm_head_gemv(hipStream_t stream, const float *x, const __half *w,
+                         float *y, uint32_t M, uint32_t N, uint32_t K) {
+  if (M == 0 || N == 0 || K == 0)
+    return;
+
+  dim3 block(256, 1, 1);
+  dim3 grid(N, M, 1);
+  lm_head_gemv_kernel<<<grid, block, 0, stream>>>(x, w, y, M, N, K);
+}
+
+// Specialized GEMV for INT8 Weight-Only (Decode)
+// Grid: (N, M, 1) - where N is output neurons, M is seq_len (usually 1)
+// Block: 256 threads
+__global__ void gemv_int8_wt_kernel(const float *__restrict__ x,
+                                    const int8_t *__restrict__ w,
+                                    float *__restrict__ y,
+                                    const float *__restrict__ scales,
+                                    uint32_t M, uint32_t N, uint32_t K,
+                                    uint32_t group_size) {
+  uint32_t row_x = blockIdx.y;
+  uint32_t row_w = blockIdx.x; // neuron index
+  if (row_x >= M || row_w >= N)
+    return;
+
+  uint32_t tid = threadIdx.x;
+  float acc = 0.0f;
+
+  const float *x_row = x + row_x * K;
+  const int8_t *w_row = w + row_w * K;
+  const float *s_row = scales + (row_w * K) / group_size;
+
+  for (uint32_t k = tid; k < K; k += 256) {
+    float act = x_row[k];
+    float wt = (float)w_row[k];
+    float scale = s_row[k / group_size];
+    acc += act * (wt * scale);
+  }
+
+  // Block reduction
+  __shared__ float s_acc[256];
+  s_acc[tid] = acc;
+  __syncthreads();
+
+  for (uint32_t s = 128; s > 0; s >>= 1) {
+    if (tid < s) {
+      s_acc[tid] += s_acc[tid + s];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    y[row_x * N + row_w] = s_acc[0];
+  }
+}
+
+// =================================================================================================
+// INT8 Weight-Only GEMM (MFMA CDNA 3)
+// =================================================================================================
+
+__global__ void __launch_bounds__(64) gemm_mfma_int8_wt_kernel(
+    const float *__restrict__ a,    // M x K
+    const int8_t *__restrict__ b,   // N x K (Weights, GGUF-like row-major)
+    float *__restrict__ c,          // M x N
+    const float *__restrict__ scales,
+    uint32_t M, uint32_t N, uint32_t K,
+    uint32_t lda, uint32_t ldb, uint32_t ldc,
+    uint32_t group_size) {
+
+    uint32_t wave_col_base = blockIdx.x * 16;
+    uint32_t wave_row_base = blockIdx.y * 16;
+    uint32_t lane = threadIdx.x;
+
+    float4 acc = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    // Shared memory for tiles (optional, but good for broadcast/swizzle)
+    // To keep it "fused dequant first class", we load directly to registers if possible
+    // but MFMA requires specific layout.
+    __shared__ __half As[16][16];
+    __shared__ int8_t Bs[16][16];
+
+    for (uint32_t k0 = 0; k0 < K; k0 += 16) {
+        // Load A to LDS (Activations F32 -> F16)
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            uint32_t l_idx = lane * 4 + i;
+            uint32_t r_loc = l_idx / 16;
+            uint32_t c_loc = l_idx % 16;
+            uint32_t gr = wave_row_base + r_loc;
+            uint32_t gc = k0 + c_loc;
+            if (gr < M && gc < K) {
+                As[r_loc][c_loc] = __float2half(a[gr * lda + gc]);
+            } else {
+                As[r_loc][c_loc] = __float2half(0.0f);
+            }
+        }
+
+        // Load B to LDS (Weights INT8, N x K)
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            uint32_t l_idx = lane * 4 + i;
+            uint32_t n_loc = l_idx / 16;
+            uint32_t k_loc = l_idx % 16;
+            uint32_t gn = wave_col_base + n_loc;
+            uint32_t gk = k0 + k_loc;
+            if (gn < N && gk < K) {
+                Bs[k_loc][n_loc] = b[gn * K + gk];
+            } else {
+                Bs[k_loc][n_loc] = 0;
+            }
+        }
+
+        __syncthreads();
+
+        // Prepare MFMA fragments with FUSED DEQUANT
+        half4 a_frag;
+        uint32_t a_row_loc = lane % 16;
+        uint32_t a_col_loc_base = (lane / 16) * 4;
+        a_frag[0] = As[a_row_loc][a_col_loc_base + 0];
+        a_frag[1] = As[a_row_loc][a_col_loc_base + 1];
+        a_frag[2] = As[a_row_loc][a_col_loc_base + 2];
+        a_frag[3] = As[a_row_loc][a_col_loc_base + 3];
+
+        half4 b_frag;
+        uint32_t b_col_loc = lane % 16;
+        uint32_t b_row_loc_base = (lane / 16) * 4;
+        
+        // Fused dequant: Load int8, multiply by scale, convert to half
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            uint32_t n_loc = b_col_loc;
+            uint32_t k_loc = b_row_loc_base + i;
+            uint32_t gn = wave_col_base + n_loc;
+            uint32_t gk = k0 + k_loc;
+            
+            float scale = 1.0f;
+            if (scales) {
+                scale = scales[(gn * K + gk) / group_size];
+            }
+            
+            b_frag[i] = __float2half((float)Bs[k_loc][n_loc] * scale);
+        }
+
+        // Execute MFMA
+        acc = __builtin_amdgcn_mfma_f32_16x16x16f16(a_frag, b_frag, acc, 0, 0, 0);
+
+        __syncthreads();
+    }
+
+    // Store Result
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        uint32_t c_row_local = lane % 16;
+        uint32_t c_col_local = (lane / 16) * 4 + i;
+        uint32_t c_global_row = wave_row_base + c_row_local;
+        uint32_t c_global_col = wave_col_base + c_col_local;
+        if (c_global_row < M && c_global_col < N) {
+            c[c_global_row * ldc + c_global_col] = acc[i];
+        }
+    }
+}
+
+void launch_gemm_mfma_int8_wt_fp32_acc32(
+    hipStream_t stream, const float *a, const int8_t *b, float *c,
+    const float *scales, uint32_t M, uint32_t N, uint32_t K, uint32_t lda,
+    uint32_t ldb, uint32_t ldc, uint32_t group_size) {
+  if (M == 0 || N == 0 || K == 0)
+    return;
+
+  if (M <= 32) {
+    dim3 block(256, 1, 1);
+    dim3 grid(N, M, 1);
+    gemv_int8_wt_kernel<<<grid, block, 0, stream>>>(a, b, c, scales, M, N, K,
+                                                    group_size);
+  } else {
+    dim3 block(64, 1, 1);
+    dim3 grid((N + 15) / 16, (M + 15) / 16, 1);
+    gemm_mfma_int8_wt_kernel<<<grid, block, 0, stream>>>(
+        a, b, c, scales, M, N, K, lda, ldb, ldc, group_size);
+  }
+}
+
+// Specialized GEMV for INT4 Weight-Only (Decode)
+template <typename T_A>
+__global__ void gemv_int4_wt_kernel(const T_A *__restrict__ x,
+                                    const int8_t *__restrict__ w,
+                                    float *__restrict__ y,
+                                    const float *__restrict__ scales,
+                                    uint32_t M, uint32_t N, uint32_t K,
+                                    uint32_t group_size) {
+  uint32_t row_x = blockIdx.y;
+  uint32_t row_w = blockIdx.x;
+  if (row_x >= M || row_w >= N)
+    return;
+
+  uint32_t tid = threadIdx.x;
+  float acc = 0.0f;
+
+  const T_A *x_row = x + row_x * K;
+  const int8_t *w_row = w + row_w * (K / 2);
+  const float *s_row = scales + (row_w * K) / group_size;
+
+  for (uint32_t k = tid; k < K / 2; k += 256) {
+    uint8_t packed = (uint8_t)w_row[k];
+
+    int8_t v0 = (packed & 0x0F);
+    if (v0 & 0x08)
+      v0 |= 0xF0;
+    int8_t v1 = (packed >> 4) & 0x0F;
+    if (v1 & 0x08)
+      v1 |= 0xF0;
+
+    uint32_t gk0 = k * 2;
+    uint32_t gk1 = k * 2 + 1;
+
+    acc += (float)x_row[gk0] * ((float)v0 * s_row[gk0 / group_size]);
+    acc += (float)x_row[gk1] * ((float)v1 * s_row[gk1 / group_size]);
+  }
+
+  __shared__ float s_acc[256];
+  s_acc[tid] = acc;
+  __syncthreads();
+
+  for (uint32_t s = 128; s > 0; s >>= 1) {
+    if (tid < s)
+      s_acc[tid] += s_acc[tid + s];
+    __syncthreads();
+  }
+
+  if (tid == 0)
+    y[row_x * N + row_w] = s_acc[0];
+}
+
+// MFMA INT4 Weight-Only GEMM
+template <typename T_A>
+__global__ void __launch_bounds__(64) gemm_mfma_int4_wt_kernel(
+    const T_A *__restrict__ a, const int8_t *__restrict__ b,
+    float *__restrict__ c, const float *__restrict__ scales, uint32_t M,
+    uint32_t N, uint32_t K, uint32_t lda, uint32_t ldb, uint32_t ldc,
+    uint32_t group_size) {
+  uint32_t wave_col_base = blockIdx.x * 16;
+  uint32_t wave_row_base = blockIdx.y * 16;
+  uint32_t lane = threadIdx.x;
+
+  float4 acc = {0.0f, 0.0f, 0.0f, 0.0f};
+
+  __shared__ __half As[16][16];
+  __shared__ int8_t Bs[16][16]; // Unpacked tile in LDS
+
+  for (uint32_t k0 = 0; k0 < K; k0 += 16) {
+    // Load A (Activations)
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      uint32_t l_idx = lane * 4 + i;
+      uint32_t r_loc = l_idx / 16;
+      uint32_t c_loc = l_idx % 16;
+      uint32_t gr = wave_row_base + r_loc;
+      uint32_t gc = k0 + c_loc;
+      As[r_loc][c_loc] = (gr < M && gc < K) ? __float2half((float)a[gr * lda + gc])
+                                            : __float2half(0.0f);
+    }
+
+    // Load and Unpack B (Weights INT4 packed, N x K/2)
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      uint32_t l_idx = lane * 4 + i;
+      uint32_t n_loc = l_idx / 16;
+      uint32_t k_loc = l_idx % 16; // 0..15
+      uint32_t gn = wave_col_base + n_loc;
+      uint32_t gk = k0 + k_loc;
+
+      if (gn < N && gk < K) {
+        uint8_t packed = (uint8_t)b[gn * (K / 2) + (gk / 2)];
+        int8_t v = (gk % 2 == 0) ? (packed & 0x0F) : (packed >> 4);
+        if (v & 0x08)
+          v |= 0xF0;
+        Bs[k_loc][n_loc] = v;
+      } else {
+        Bs[k_loc][n_loc] = 0;
+      }
+    }
+
+    __syncthreads();
+
+    half4 a_frag;
+    uint32_t a_row_loc = lane % 16;
+    uint32_t a_col_loc_base = (lane / 16) * 4;
+    #pragma unroll
+    for (int i = 0; i < 4; ++i)
+      a_frag[i] = As[a_row_loc][a_col_loc_base + i];
+
+    half4 b_frag;
+    uint32_t b_col_loc = lane % 16;
+    uint32_t b_row_loc_base = (lane / 16) * 4;
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      uint32_t k_loc = b_row_loc_base + i;
+      uint32_t gn = wave_col_base + b_col_loc;
+      uint32_t gk = k0 + k_loc;
+      float scale = scales ? scales[(gn * K + gk) / group_size] : 1.0f;
+      b_frag[i] = __float2half((float)Bs[k_loc][b_col_loc] * scale);
+    }
+
+    acc = __builtin_amdgcn_mfma_f32_16x16x16f16(a_frag, b_frag, acc, 0, 0, 0);
+    __syncthreads();
+  }
+
+  #pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    uint32_t c_row_loc = lane % 16;
+    uint32_t c_col_loc = (lane / 16) * 4 + i;
+    uint32_t gr = wave_row_base + c_row_loc;
+    uint32_t gc = wave_col_base + c_col_loc;
+    if (gr < M && gc < N)
+      c[gr * ldc + gc] = acc[i];
+  }
+}
+
+void launch_gemm_mfma_int4_wt_fp32_acc32(
+    hipStream_t stream, const void *a, const int8_t *b, float *c,
+    const float *scales, uint32_t M, uint32_t N, uint32_t K, uint32_t lda,
+    uint32_t ldb, uint32_t ldc, uint32_t group_size, bool is_fp16_a) {
+  if (M == 0 || N == 0 || K == 0)
+    return;
+  if (M <= 32) {
+    dim3 block(256);
+    dim3 grid(N, M);
+    if (is_fp16_a) {
+        gemv_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
+            static_cast<const __half *>(a), b, c, scales, M, N, K, group_size);
+    } else {
+        gemv_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
+            static_cast<const float *>(a), b, c, scales, M, N, K, group_size);
+    }
+  } else {
+    dim3 block(64);
+    dim3 grid((N + 15) / 16, (M + 15) / 16);
+    if (is_fp16_a) {
+        gemm_mfma_int4_wt_kernel<__half><<<grid, block, 0, stream>>>(
+            static_cast<const __half *>(a), b, c, scales, M, N, K, lda, ldb, ldc, group_size);
+    } else {
+        gemm_mfma_int4_wt_kernel<float><<<grid, block, 0, stream>>>(
+            static_cast<const float *>(a), b, c, scales, M, N, K, lda, ldb, ldc, group_size);
+    }
+  }
+}
+
 } // namespace gcore::rt::hip::kernels

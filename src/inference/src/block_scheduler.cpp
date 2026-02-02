@@ -1,11 +1,26 @@
 #include "gcore/inference/block_scheduler.hpp"
+#include "gcore/compute/greta_compute.hpp"
 #include "gcore/inference/weight_loader.hpp"
+#include "gcore/rt/greta_runtime.hpp"
+#include "gcore/rt/hip/greta_runtime_hip.hpp"
 #include "gcore/rt/hip/kernels/attention_kernels.hpp"
 #include "gcore/rt/hip/kernels/basic_kernels.hpp"
+#include "gcore/rt/hip/kernels/fused_attention_kernels.hpp"
+#include "gcore/rt/hip/kernels/fused_compute_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
-
 #include <iostream>
 #include <unordered_map>
+
+#if defined(__GNUC__)
+#define GRETA_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define GRETA_UNLIKELY(x) (x)
+#endif
+
+#define TRACE_ON(layer)                                                        \
+  (GRETA_UNLIKELY(tracer_.should_trace_layer((int)(layer), trace_step_)))
+
+#define PROFILE_ON() (GRETA_UNLIKELY(tracer_.profile_enabled()))
 
 namespace gcore::inference {
 
@@ -13,7 +28,7 @@ BlockScheduler::BlockScheduler() = default;
 
 BlockScheduler::~BlockScheduler() {
   if (stream_ != nullptr) {
-    hipStreamDestroy(stream_);
+    delete stream_;
     stream_ = nullptr;
   }
 }
@@ -22,13 +37,15 @@ bool BlockScheduler::init(const ModelConfig &config, std::string *err) {
   config_ = config;
   blocks_.resize(config_.num_layers);
 
-  hipError_t hip_err = hipStreamCreate(&stream_);
-  if (hip_err != hipSuccess) {
-    *err = "Failed to create HIP stream: " +
-           std::string(hipGetErrorString(hip_err));
+  std::cout << "[GRETA_SCHED] Creating stream..." << std::endl;
+  stream_ = gcore::rt::GretaContext::instance().create_stream();
+  if (!stream_) {
+    *err = "Failed to create GRETA stream";
     return false;
   }
+  std::cout << "[GRETA_SCHED] Stream created successfully" << std::endl;
 
+  tracer_.init_from_env();
   initialized_ = true;
   return true;
 }
@@ -43,24 +60,72 @@ bool BlockScheduler::allocate_weights(std::string *err) {
   const size_t D = config_.dim;
   const size_t H = config_.hidden_dim;
 
+  const char *use_int8 = std::getenv("GRETA_INT8_WEIGHTS");
+  bool int8_mode = (use_int8 && std::string(use_int8) == "1");
+
   for (size_t i = 0; i < config_.num_layers; ++i) {
     auto &b = blocks_[i];
-    b.wq.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
-    b.wk.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
-    b.wv.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
-    b.wo.allocate(D * D * sizeof(__half), Usage::DeviceOnly, err);
-    b.w1.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err);
-    b.w2.allocate(H * D * sizeof(__half), Usage::DeviceOnly, err);
-    b.w3.allocate(D * H * sizeof(__half), Usage::DeviceOnly, err);
-    b.attn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err);
-    b.ffn_norm.allocate(D * sizeof(float), Usage::DeviceOnly, err);
+    if (int8_mode) {
+      b.wq.allocate(D * D, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.wk.allocate(D * D, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.wv.allocate(D * D, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.wo.allocate(D * D, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.w1.allocate(D * H, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.w2.allocate(H * D, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+      b.w3.allocate(D * H, Usage::DeviceOnly, gcore::rt::GretaDataType::INT8,
+                    err);
+
+      size_t nb = (D * D + 31) / 32;
+      b.s_wq.allocate(nb * 4, Usage::DeviceOnly, gcore::rt::GretaDataType::FP32,
+                      err);
+      b.s_wk.allocate(nb * 4, Usage::DeviceOnly, gcore::rt::GretaDataType::FP32,
+                      err);
+      b.s_wv.allocate(nb * 4, Usage::DeviceOnly, gcore::rt::GretaDataType::FP32,
+                      err);
+      b.s_wo.allocate(nb * 4, Usage::DeviceOnly, gcore::rt::GretaDataType::FP32,
+                      err);
+
+      size_t nbh = (D * H + 31) / 32;
+      b.s_w1.allocate(nbh * 4, Usage::DeviceOnly,
+                      gcore::rt::GretaDataType::FP32, err);
+      b.s_w2.allocate(nbh * 4, Usage::DeviceOnly,
+                      gcore::rt::GretaDataType::FP32, err);
+      b.s_w3.allocate(nbh * 4, Usage::DeviceOnly,
+                      gcore::rt::GretaDataType::FP32, err);
+    } else {
+      b.wq.allocate(D * D * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.wk.allocate(D * D * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.wv.allocate(D * D * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.wo.allocate(D * D * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.w1.allocate(D * H * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.w2.allocate(H * D * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+      b.w3.allocate(D * H * 2, Usage::DeviceOnly,
+                    gcore::rt::GretaDataType::FP16, err);
+    }
+    b.attn_norm.allocate(D * 4, Usage::DeviceOnly,
+                         gcore::rt::GretaDataType::FP32, err);
+    b.ffn_norm.allocate(D * 4, Usage::DeviceOnly,
+                        gcore::rt::GretaDataType::FP32, err);
   }
 
-  token_embd_.allocate(config_.vocab_size * D * sizeof(float),
-                       Usage::DeviceOnly, err);
-  output_norm_.allocate(D * sizeof(float), Usage::DeviceOnly, err);
-  output_weight_.allocate(config_.vocab_size * D * sizeof(__half),
-                          Usage::DeviceOnly, err);
+  token_embd_.allocate(config_.vocab_size * D * 4, Usage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err);
+  output_norm_.allocate(D * 4, Usage::DeviceOnly,
+                        gcore::rt::GretaDataType::FP32, err);
+  output_weight_.allocate(config_.vocab_size * D * 2, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP16, err);
 
   return true;
 }
@@ -82,50 +147,129 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
   const size_t head_dim = config_.head_dim;
 
   size_t hidden_size = batch_size * max_seq_len * D * sizeof(float);
-  activations_.x.allocate(hidden_size, Usage::DeviceOnly, err);
-  activations_.norm_out.allocate(hidden_size, Usage::DeviceOnly, err);
-  activations_.q.allocate(hidden_size, Usage::DeviceOnly, err);
-  activations_.k.allocate(hidden_size, Usage::DeviceOnly, err);
-  activations_.v.allocate(hidden_size, Usage::DeviceOnly, err);
-  activations_.attn_out.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.x.allocate(hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP32, err);
+  activations_.norm_out.allocate(hidden_size, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32, err);
+  activations_.q.allocate(hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP32, err);
+  activations_.k.allocate(hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP16, err);
+  activations_.v.allocate(hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP16, err);
+  activations_.attn_out.allocate(hidden_size, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP16, err);
 
   size_t mlp_size = batch_size * max_seq_len * H * sizeof(float);
-  activations_.mlp_gate.allocate(mlp_size, Usage::DeviceOnly, err);
-  activations_.mlp_up.allocate(mlp_size, Usage::DeviceOnly, err);
-  activations_.mlp_out.allocate(hidden_size, Usage::DeviceOnly, err);
+  activations_.mlp_gate.allocate(mlp_size, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP16, err);
+  activations_.mlp_up.allocate(mlp_size, Usage::DeviceOnly,
+                               gcore::rt::GretaDataType::FP16, err);
+  activations_.mlp_out.allocate(hidden_size, Usage::DeviceOnly,
+                                gcore::rt::GretaDataType::FP16, err);
 
   size_t kv_size = L * max_seq_len * heads * head_dim * sizeof(float);
-  activations_.kv_cache_k.allocate(kv_size, Usage::DeviceOnly, err);
-  activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly, err);
+  activations_.kv_cache_k.allocate(kv_size, Usage::DeviceOnly,
+                                   gcore::rt::GretaDataType::FP16, err);
+  activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly,
+                                   gcore::rt::GretaDataType::FP16, err);
 
   size_t tokens_size = batch_size * max_seq_len * sizeof(int32_t);
-  activations_.tokens.allocate(tokens_size, Usage::DeviceOnly, err);
+  activations_.tokens.allocate(tokens_size, Usage::DeviceOnly,
+                               gcore::rt::GretaDataType::FP16, err);
+
+  activations_.d_pos.allocate(sizeof(uint32_t), Usage::DeviceOnly,
+                              gcore::rt::GretaDataType::FP16, err);
 
   size_t logits_size =
       batch_size * max_seq_len * config_.vocab_size * sizeof(float);
-  logits_.allocate(logits_size, Usage::DeviceOnly, err);
+  logits_.allocate(logits_size, Usage::DeviceOnly,
+                   gcore::rt::GretaDataType::FP32, err);
 
   return true;
 }
 
 bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
+  const char *use_int8 = std::getenv("GRETA_INT8_WEIGHTS");
+  const char *use_int4 = std::getenv("GRETA_INT4_WEIGHTS");
+  bool int8_mode = (use_int8 && std::string(use_int8) == "1");
+  bool int4_mode = (use_int4 && std::string(use_int4) == "1");
+
+  std::cout << "[GRETA_SCHED] Starting weight load (INT8: "
+            << (int8_mode ? "ON" : "OFF")
+            << ", INT4: " << (int4_mode ? "ON" : "OFF") << ")" << std::endl;
+
   for (size_t i = 0; i < config_.num_layers; ++i) {
+    if (i % 8 == 0)
+      std::cout << "[GRETA_SCHED] Loading layer " << i << "/"
+                << config_.num_layers << "..." << std::endl;
     std::string prefix = "blk." + std::to_string(i) + ".";
     auto &b = blocks_[i];
-    loader.load_tensor(prefix + "attn_norm.weight", b.attn_norm, err);
-    loader.load_tensor(prefix + "ffn_norm.weight", b.ffn_norm, err);
-    loader.load_tensor_fp16(prefix + "attn_q.weight", b.wq, err);
-    loader.load_tensor_fp16(prefix + "attn_k.weight", b.wk, err);
-    loader.load_tensor_fp16(prefix + "attn_v.weight", b.wv, err);
-    loader.load_tensor_fp16(prefix + "attn_output.weight", b.wo, err);
-    loader.load_tensor_fp16(prefix + "ffn_gate.weight", b.w1, err);
-    loader.load_tensor_fp16(prefix + "ffn_down.weight", b.w2, err);
-    loader.load_tensor_fp16(prefix + "ffn_up.weight", b.w3, err);
+    if (!loader.load_tensor(prefix + "attn_norm.weight", b.attn_norm, err))
+      return false;
+    if (!loader.load_tensor(prefix + "ffn_norm.weight", b.ffn_norm, err))
+      return false;
+
+    if (int4_mode) {
+      if (!loader.load_tensor_int4(prefix + "attn_q.weight", b.wq, b.s_wq, err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "attn_k.weight", b.wk, b.s_wk, err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "attn_v.weight", b.wv, b.s_wv, err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "attn_output.weight", b.wo, b.s_wo,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "ffn_gate.weight", b.w1, b.s_w1,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "ffn_down.weight", b.w2, b.s_w2,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int4(prefix + "ffn_up.weight", b.w3, b.s_w3, err))
+        return false;
+    } else if (int8_mode) {
+      if (!loader.load_tensor_int8(prefix + "attn_q.weight", b.wq, b.s_wq, err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "attn_k.weight", b.wk, b.s_wk, err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "attn_v.weight", b.wv, b.s_wv, err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "attn_output.weight", b.wo, b.s_wo,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "ffn_gate.weight", b.w1, b.s_w1,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "ffn_down.weight", b.w2, b.s_w2,
+                                   err))
+        return false;
+      if (!loader.load_tensor_int8(prefix + "ffn_up.weight", b.w3, b.s_w3, err))
+        return false;
+    } else {
+      if (!loader.load_tensor_fp16(prefix + "attn_q.weight", b.wq, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "attn_k.weight", b.wk, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "attn_v.weight", b.wv, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "attn_output.weight", b.wo, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "ffn_gate.weight", b.w1, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "ffn_down.weight", b.w2, err))
+        return false;
+      if (!loader.load_tensor_fp16(prefix + "ffn_up.weight", b.w3, err))
+        return false;
+    }
   }
 
-  loader.load_tensor("token_embd.weight", token_embd_, err);
-  loader.load_tensor("output_norm.weight", output_norm_, err);
-  loader.load_tensor_fp16("output.weight", output_weight_, err);
+  if (!loader.load_tensor("token_embd.weight", token_embd_, err))
+    return false;
+  if (!loader.load_tensor("output_norm.weight", output_norm_, err))
+    return false;
+  if (!loader.load_tensor_fp16("output.weight", output_weight_, err))
+    return false;
   return true;
 }
 
@@ -141,6 +285,15 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
     }                                                                          \
   } while (0)
 
+#define CHECK_GRETA(cmd, name)                                                 \
+  do {                                                                         \
+    if ((cmd) != gcore::rt::GretaResult::SUCCESS) {                            \
+      if (err)                                                                 \
+        *err = std::string(name) + " failed";                                  \
+      return false;                                                            \
+    }                                                                          \
+  } while (0)
+
 bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                                    size_t seq_len, std::string *err) {
   auto &b = blocks_[layer_idx];
@@ -149,6 +302,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   uint32_t Dh = D / H;
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim);
   uint32_t S = static_cast<uint32_t>(seq_len);
+
+  const uint32_t n_x = S * D;
+  const uint32_t n_mlp = S * hidden_dim;
 
   using namespace gcore::rt::hip::kernels;
   float *x = static_cast<float *>(activations_.x.data());
@@ -163,9 +319,6 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   const float *attn_norm = static_cast<const float *>(b.attn_norm.data());
   const float *ffn_norm = static_cast<const float *>(b.ffn_norm.data());
-  const __half *wq = static_cast<const __half *>(b.wq.data());
-  const __half *wk = static_cast<const __half *>(b.wk.data());
-  const __half *wv = static_cast<const __half *>(b.wv.data());
 
   size_t offset =
       (size_t)layer_idx * (size_t)config_.max_seq_len * (size_t)H * (size_t)Dh;
@@ -173,74 +326,281 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       static_cast<float *>(activations_.kv_cache_k.data()) + offset;
   float *cache_v =
       static_cast<float *>(activations_.kv_cache_v.data()) + offset;
+  const uint32_t *d_pos =
+      static_cast<const uint32_t *>(activations_.d_pos.data());
 
-  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, attn_norm, norm_out, S, D,
-                                        config_.rms_eps),
-                   "RMSNorm (Attn)");
-  CHECK_HIP_KERNEL(
-      launch_gemm_mixed_f16f32(stream_, norm_out, wq, q, S, D, D, D, D, D),
-      "GEMM Q");
-  CHECK_HIP_KERNEL(
-      launch_gemm_mixed_f16f32(stream_, norm_out, wk, k, S, D, D, D, D, D),
-      "GEMM K");
-  CHECK_HIP_KERNEL(
-      launch_gemm_mixed_f16f32(stream_, norm_out, wv, v, S, D, D, D, D, D),
-      "GEMM V");
+  hipStream_t hip_stream =
+      static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
+
+  gcore::rt::GretaEvent *start = nullptr, *stop = nullptr;
+  if (PROFILE_ON()) {
+    start = gcore::rt::GretaContext::instance().create_event();
+    stop = gcore::rt::GretaContext::instance().create_event();
+    start->record(stream_);
+  }
+
+  bool profile_attn = (std::getenv("GRETA_PROFILE_ATTN") != nullptr);
+  gcore::rt::GretaEvent *ev_q_start = nullptr, *ev_q_end = nullptr;
+  gcore::rt::GretaEvent *ev_k_start = nullptr, *ev_k_end = nullptr;
+  gcore::rt::GretaEvent *ev_v_start = nullptr, *ev_v_end = nullptr;
+  gcore::rt::GretaEvent *ev_rope_start = nullptr, *ev_rope_end = nullptr;
+  gcore::rt::GretaEvent *ev_kv_start = nullptr, *ev_kv_end = nullptr;
+  gcore::rt::GretaEvent *ev_core_start = nullptr, *ev_core_end = nullptr;
+
+  if (profile_attn) {
+    auto &ctx = gcore::rt::GretaContext::instance();
+    ev_q_start = ctx.create_event();
+    ev_q_end = ctx.create_event();
+    ev_k_start = ctx.create_event();
+    ev_k_end = ctx.create_event();
+    ev_v_start = ctx.create_event();
+    ev_v_end = ctx.create_event();
+    ev_rope_start = ctx.create_event();
+    ev_rope_end = ctx.create_event();
+    ev_kv_start = ctx.create_event();
+    ev_kv_end = ctx.create_event();
+    ev_core_start = ctx.create_event();
+    ev_core_end = ctx.create_event();
+  }
+
+  const char *use_fused_env = std::getenv("GRETA_USE_FUSED_RMSNORM");
+  bool use_fused =
+      (use_fused_env && std::string(use_fused_env) == "1") && (S == 1);
+
+  if (use_fused) {
+    CHECK_HIP_KERNEL(launch_fused_rmsnorm_qkv_gemv_f16(
+                         hip_stream, x, attn_norm,
+                         static_cast<const __half *>(b.wq.data()),
+                         static_cast<const __half *>(b.wk.data()),
+                         static_cast<const __half *>(b.wv.data()), q, k, v, D,
+                         config_.rms_eps),
+                     "Fused RMSNorm+QKV");
+  } else {
+    CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, attn_norm, norm_out, S,
+                                          D, config_.rms_eps),
+                     "RMSNorm (Attn)");
+
+    if (TRACE_ON(layer_idx)) {
+      launch_debug_tensor_stats(hip_stream, "L.attn_rmsnorm.norm_out", norm_out,
+                                n_x);
+    }
+
+    if (profile_attn)
+      ev_q_start->record(stream_);
+    CHECK_GRETA(
+        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                           &b.wq, &activations_.q, S, D, D),
+        "GEMM Q");
+    if (profile_attn)
+      ev_q_end->record(stream_);
+
+    if (profile_attn)
+      ev_k_start->record(stream_);
+    CHECK_GRETA(
+        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                           &b.wk, &activations_.k, S, D, D),
+        "GEMM K");
+    if (profile_attn)
+      ev_k_end->record(stream_);
+
+    if (profile_attn)
+      ev_v_start->record(stream_);
+    CHECK_GRETA(
+        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                           &b.wv, &activations_.v, S, D, D),
+        "GEMM V");
+    if (profile_attn)
+      ev_v_end->record(stream_);
+  }
+
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.q_proj.q", q, n_x);
+    launch_debug_tensor_stats(hip_stream, "L.k_proj.k", k, n_x);
+    launch_debug_tensor_stats(hip_stream, "L.v_proj.v", v, n_x);
+  }
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
+  const char *use_fused_attn_env = std::getenv("GRETA_USE_FUSED_ATTENTION");
+  bool use_fused_attn =
+      (use_fused_attn_env && std::string(use_fused_attn_env) == "1") &&
+      (S == 1);
 
-  CHECK_HIP_KERNEL(launch_rope(stream_, q, S, H, Dh, config_.rope_base, pos),
-                   "RoPE Q");
-  CHECK_HIP_KERNEL(launch_rope(stream_, k, S, H, Dh, config_.rope_base, pos),
-                   "RoPE K");
+  if (profile_attn)
+    ev_rope_start->record(stream_);
 
-  for (uint32_t s = 0; s < S; ++s) {
-    CHECK_HIP_KERNEL(launch_kv_update(stream_, cache_k, cache_v, k + s * D,
-                                      v + s * D, pos + s, config_.max_seq_len,
-                                      H, Dh),
-                     "KV Update");
+  if (use_fused_attn) {
+    (void)gcore::rt::hip::kernels::launch_fused_rope_kv_update_decode(
+        hip_stream, q, k, v, cache_k, cache_v, d_pos, config_.max_seq_len, H,
+        Dh, config_.rope_base);
+  } else {
+    if (S == 1) {
+      CHECK_HIP_KERNEL(
+          launch_rope(hip_stream, q, S, H, Dh, config_.rope_base, d_pos),
+          "RoPE Q");
+      CHECK_HIP_KERNEL(
+          launch_rope(hip_stream, k, S, H, Dh, config_.rope_base, d_pos),
+          "RoPE K");
+    } else {
+      CHECK_HIP_KERNEL(
+          launch_rope(hip_stream, q, S, H, Dh, config_.rope_base, pos),
+          "RoPE Q");
+      CHECK_HIP_KERNEL(
+          launch_rope(hip_stream, k, S, H, Dh, config_.rope_base, pos),
+          "RoPE K");
+    }
   }
+  if (profile_attn)
+    ev_rope_end->record(stream_);
+
+  if (profile_attn)
+    ev_kv_start->record(stream_);
+  if (!use_fused_attn) {
+    if (S == 1) {
+      CHECK_HIP_KERNEL(launch_kv_update(hip_stream, cache_k, cache_v, k, v,
+                                        d_pos, config_.max_seq_len, H, Dh),
+                       "KV Update");
+    } else {
+      for (uint32_t s = 0; s < S; ++s) {
+        CHECK_HIP_KERNEL(launch_kv_update(hip_stream, cache_k, cache_v,
+                                          k + s * D, v + s * D, pos + s,
+                                          config_.max_seq_len, H, Dh),
+                         "KV Update");
+      }
+    }
+  }
+  if (profile_attn)
+    ev_kv_end->record(stream_);
 
   float scale = 1.0f / sqrtf(static_cast<float>(Dh));
+  if (profile_attn)
+    ev_core_start->record(stream_);
+
   if (S == 1) {
-    launch_flash_attention_decode(stream_, q, cache_k, cache_v, attn_out, H,
-                                  pos + 1, config_.max_seq_len, Dh, scale);
+    CHECK_GRETA(gcore::compute::GretaCompute::attention_decode(
+                    stream_, &activations_.q, &activations_.kv_cache_k,
+                    &activations_.kv_cache_v, &activations_.d_pos,
+                    &activations_.attn_out, H, Dh, S, config_.max_seq_len,
+                    scale, config_.rope_base),
+                "Attention Core");
   } else {
-    launch_flash_attention_prefill(stream_, q, k, v, attn_out, S, H, Dh, scale,
-                                   true);
+    launch_flash_attention_prefill(hip_stream, q, k, v, attn_out, S, H, Dh,
+                                   scale, true);
   }
 
-  const __half *wo = static_cast<const __half *>(b.wo.data());
-  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, attn_out, wo, mlp_out, S,
-                                            D, D, D, D, D),
-                   "GEMM O");
-  CHECK_HIP_KERNEL(launch_add(stream_, x, mlp_out, x, S * D),
+  if (profile_attn)
+    ev_core_end->record(stream_);
+
+  if (profile_attn && layer_idx == 0) {
+    stream_->synchronize();
+    float q_ms = ev_q_end->elapsed_time_since(ev_q_start);
+    float k_ms = ev_k_end->elapsed_time_since(ev_k_start);
+    float v_ms = ev_v_end->elapsed_time_since(ev_v_start);
+    float rope_ms = ev_rope_end->elapsed_time_since(ev_rope_start);
+    float kv_ms = ev_kv_end->elapsed_time_since(ev_kv_start);
+    float core_ms = ev_core_end->elapsed_time_since(ev_core_start);
+
+    printf(
+        "[ATTN_PROF] Q:%.3f K:%.3f V:%.3f RoPE:%.3f KV:%.3f Core:%.3f (ms)\n",
+        q_ms, k_ms, v_ms, rope_ms, kv_ms, core_ms);
+
+    delete ev_q_start;
+    delete ev_q_end;
+    delete ev_k_start;
+    delete ev_k_end;
+    delete ev_v_start;
+    delete ev_v_end;
+    delete ev_rope_start;
+    delete ev_rope_end;
+    delete ev_kv_start;
+    delete ev_kv_end;
+    delete ev_core_start;
+    delete ev_core_end;
+  }
+
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.attn.attn_out", attn_out, n_x);
+  }
+
+  CHECK_GRETA(
+      gcore::compute::GretaCompute::gemm(stream_, &activations_.attn_out, &b.wo,
+                                         &activations_.mlp_out, S, D, D),
+      "GEMM O");
+  CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (Attn)");
 
-  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, ffn_norm, norm_out, S, D,
-                                        config_.rms_eps),
-                   "RMSNorm (FFN)");
-  const __half *w1 = static_cast<const __half *>(b.w1.data());
-  const __half *w3 = static_cast<const __half *>(b.w3.data());
-  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w1, mlp_gate, S,
-                                            hidden_dim, D, D, hidden_dim,
-                                            hidden_dim),
-                   "GEMM W1");
-  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, w3, mlp_up, S,
-                                            hidden_dim, D, D, hidden_dim,
-                                            hidden_dim),
-                   "GEMM W3");
-
-  CHECK_HIP_KERNEL(launch_silu(stream_, mlp_gate, mlp_gate, S * hidden_dim),
-                   "SiLU");
   CHECK_HIP_KERNEL(
-      launch_mul(stream_, mlp_gate, mlp_up, mlp_gate, S * hidden_dim), "Mul");
+      launch_rmsnorm_naive(hip_stream, x,
+                           static_cast<const float *>(b.ffn_norm.data()),
+                           norm_out, S, D, config_.rms_eps),
+      "RMSNorm (FFN)");
 
-  const __half *w2 = static_cast<const __half *>(b.w2.data());
-  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, mlp_gate, w2, mlp_out, S,
-                                            D, hidden_dim, hidden_dim, D, D),
-                   "GEMM W2");
-  CHECK_HIP_KERNEL(launch_add(stream_, x, mlp_out, x, S * D), "Residual (FFN)");
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.ffn_rmsnorm.norm_out", norm_out,
+                              n_x);
+  }
+
+  const char *use_fused_ffn_env = std::getenv("GRETA_USE_FUSED_FFN");
+  bool use_fused_ffn =
+      (use_fused_ffn_env && std::string(use_fused_ffn_env) == "1") && (S == 1);
+
+  if (use_fused_ffn) {
+    CHECK_HIP_KERNEL(
+        launch_fused_ffn_front_f16(
+            hip_stream, norm_out, static_cast<const __half *>(b.w1.data()),
+            static_cast<const __half *>(b.w3.data()), mlp_gate, D, hidden_dim),
+        "Fused FFN Front");
+  } else {
+    CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                    stream_, &activations_.norm_out, &b.w1,
+                    &activations_.mlp_gate, S, hidden_dim, D),
+                "GEMM W1");
+    CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                    stream_, &activations_.norm_out, &b.w3,
+                    &activations_.mlp_up, S, hidden_dim, D),
+                "GEMM W3");
+
+    if (TRACE_ON(layer_idx)) {
+      launch_debug_tensor_stats(hip_stream, "L.ffn.gate.nonfused", mlp_gate,
+                                n_mlp);
+      launch_debug_tensor_stats(hip_stream, "L.ffn.up.nonfused", mlp_up, n_mlp);
+    }
+
+    CHECK_HIP_KERNEL(
+        launch_silu(hip_stream, mlp_gate, mlp_gate, S * hidden_dim), "SiLU");
+    CHECK_HIP_KERNEL(
+        launch_mul(hip_stream, mlp_gate, mlp_up, mlp_gate, S * hidden_dim),
+        "Mul");
+  }
+
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.ffn.gate_after_mul", mlp_gate,
+                              n_mlp);
+  }
+
+  CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                  stream_, &activations_.mlp_gate, &b.w2, &activations_.mlp_out,
+                  S, D, hidden_dim),
+              "GEMM W2");
+
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.ffn.out", mlp_out, n_x);
+  }
+
+  CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
+                   "Residual (FFN)");
+
+  if (PROFILE_ON()) {
+    stop->record(stream_);
+    stream_->synchronize();
+    float ms = stop->elapsed_time_since(start);
+    printf("[PROFILE] Layer %zu total: %.3f ms\n", layer_idx, ms);
+    delete start;
+    delete stop;
+  }
+
+  if (TRACE_ON(layer_idx)) {
+    launch_debug_tensor_stats(hip_stream, "L.residual.x", x, n_x);
+  }
 
   return true;
 }
@@ -259,38 +619,77 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   const int32_t *d_tokens =
       static_cast<const int32_t *>(activations_.tokens.data());
 
-  CHECK_HIP_KERNEL(launch_embedding_lookup(stream_, d_tokens, embd_w, x, S, D),
+  hipStream_t hip_stream =
+      static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
+
+  CHECK_HIP_KERNEL(launch_embedding_lookup(hip_stream, d_tokens, embd_w, x, S,
+                                           D, config_.vocab_size),
                    "Embedding Lookup");
 
-  for (size_t i = 0; i < config_.num_layers; ++i) {
-    if (!execute_layer(i, seq_start, seq_len, err))
-      return false;
+  uint32_t pos = static_cast<uint32_t>(seq_start);
+  activations_.d_pos.copy_to_device(&pos, sizeof(uint32_t), err);
+
+  const char *use_graph_env = std::getenv("GRETA_GRAPH");
+  bool use_graph =
+      (use_graph_env && std::string(use_graph_env) == "1") && (S == 1);
+
+  if (use_graph && graph_captured_) {
+    const char *profile_blocks = std::getenv("GRETA_PROFILE_BLOCKS");
+    if (profile_blocks && std::string(profile_blocks) == "1") {
+      printf("[GRETA_L0_AUDIT] Graph Launch (Decode Step)\n");
+    }
+    CHECK_GRETA(graph_->launch(stream_), "Graph Launch");
+  } else {
+    if (use_graph && !graph_captured_) {
+      if (!graph_)
+        graph_ = gcore::rt::GretaContext::instance().create_graph();
+      graph_->capture_start(stream_);
+    }
+
+    for (size_t i = 0; i < config_.num_layers; ++i) {
+      if (!execute_layer(i, seq_start, seq_len, err))
+        return false;
+    }
+
+    float *norm_out = static_cast<float *>(activations_.norm_out.data());
+    const float *onorm_w = static_cast<const float *>(output_norm_.data());
+
+    CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, onorm_w, norm_out, S,
+                                          D, config_.rms_eps),
+                     "Final RMSNorm");
+
+    CHECK_GRETA(
+        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                           &output_weight_, &logits_, S, V, D),
+        "LM Head");
+
+    if (use_graph && !graph_captured_) {
+      graph_->capture_end(stream_);
+      CHECK_GRETA(graph_->instantiate(), "Graph Instantiate");
+      graph_captured_ = true;
+    }
   }
 
-  float *norm_out = static_cast<float *>(activations_.norm_out.data());
-  float *logits = static_cast<float *>(logits_.data());
-  const float *onorm_w = static_cast<const float *>(output_norm_.data());
-  const __half *ow_w = static_cast<const __half *>(output_weight_.data());
-
-  CHECK_HIP_KERNEL(launch_rmsnorm_naive(stream_, x, onorm_w, norm_out, S, D,
-                                        config_.rms_eps),
-                   "Final RMSNorm");
-  CHECK_HIP_KERNEL(launch_gemm_mixed_f16f32(stream_, norm_out, ow_w, logits, S,
-                                            V, D, D, V, V),
-                   "Logits GEMM");
-
-  hipError_t err_code = hipStreamSynchronize(stream_);
-  if (err_code != hipSuccess) {
-    if (err)
-      *err = "Final sync failed: " + std::string(hipGetErrorString(err_code));
-    return false;
-  }
+  stream_->synchronize();
+  trace_step_++;
   return true;
 }
 
 gcore::rt::hip::Buffer &BlockScheduler::get_hidden_state() {
   return activations_.x;
 }
-gcore::rt::hip::Buffer &BlockScheduler::get_logits() { return logits_; }
+const gcore::rt::hip::Buffer &BlockScheduler::get_logits() const {
+  return logits_;
+}
+
+int32_t BlockScheduler::sample_greedy_gpu(std::string *err) {
+  int32_t top_id = 0;
+  hipStream_t hip_stream =
+      static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
+  rt::hip::kernels::launch_argmax(hip_stream,
+                                  static_cast<const float *>(logits_.data()),
+                                  config_.vocab_size, &top_id);
+  return top_id;
+}
 
 } // namespace gcore::inference

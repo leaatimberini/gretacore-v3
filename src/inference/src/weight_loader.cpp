@@ -440,9 +440,17 @@ bool GGUFLoader::load_tensor(const std::string &name,
       dequantize_q4_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
     up = fp32.data();
     ups = n_elem * 4;
+  } else if (gtype == GGMLType::Q6_K) {
+    fp32.resize(n_elem);
+    size_t bs = 256, ts = 210, nb = n_elem / bs;
+    for (size_t b = 0; b < nb; ++b)
+      dequantize_q6_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
+    up = fp32.data();
+    ups = n_elem * 4;
   } else
     return false;
-  if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly, err))
+  if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP32, err))
     return false;
   return buffer.copy_to_device(up, ups, err);
 }
@@ -479,12 +487,230 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
       dequantize_q4_k_block(raw.data() + b * ts, tmp.data() + b * bs, bs);
     for (size_t i = 0; i < n_elem; ++i)
       fp16[i] = fp32_to_fp16(tmp[i]);
+  } else if (gtype == GGMLType::Q6_K) {
+    std::vector<float> tmp(n_elem);
+    size_t bs = 256, ts = 210, nb = n_elem / bs;
+    for (size_t b = 0; b < nb; ++b)
+      dequantize_q6_k_block(raw.data() + b * ts, tmp.data() + b * bs, bs);
+    for (size_t i = 0; i < n_elem; ++i)
+      fp16[i] = fp32_to_fp16(tmp[i]);
   } else
     return false;
   size_t ups = n_elem * 2;
-  if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly, err))
+  if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly,
+                       gcore::rt::GretaDataType::FP16, err))
     return false;
   return buffer.copy_to_device(fp16.data(), ups, err);
+}
+
+bool GGUFLoader::load_tensor_int8(const std::string &name,
+                                  gcore::rt::hip::Buffer &buffer,
+                                  gcore::rt::hip::Buffer &scales,
+                                  std::string *err) {
+  const TensorInfo *it = nullptr;
+  for (const auto &t : impl_->tensors)
+    if (t.name == name) {
+      it = &t;
+      break;
+    }
+  if (!it)
+    return false;
+
+  GGMLType gtype = ggml_type_from_name(it->dtype);
+  std::cout << "[GRETA_LOAD] Loading tensor: " << name
+            << " (Type: " << it->dtype << ", Size: " << it->size_bytes
+            << " bytes)" << std::endl;
+  std::vector<uint8_t> raw(it->size_bytes);
+  impl_->file.seekg(it->offset);
+  impl_->file.read((char *)raw.data(), it->size_bytes);
+
+  size_t n_elem = 1;
+  for (auto d : it->shape)
+    n_elem *= d;
+
+  std::vector<int8_t> weights(n_elem);
+  std::vector<float> scale_data;
+  uint32_t group_size = 32;
+
+  if (gtype == GGMLType::Q8_0) {
+    size_t nb = n_elem / 32;
+    scale_data.resize(nb);
+    for (size_t b = 0; b < nb; ++b) {
+      const uint8_t *src = raw.data() + b * 34;
+      uint16_t d_raw;
+      std::memcpy(&d_raw, src, 2);
+      scale_data[b] = fp16_to_fp32(d_raw);
+      std::memcpy(weights.data() + b * 32, src + 2, 32);
+    }
+  } else {
+    // Convert FP32/FP16/Other to INT8 with scales
+    std::vector<float> fp32(n_elem);
+    if (gtype == GGMLType::F32) {
+      std::memcpy(fp32.data(), raw.data(), n_elem * 4);
+    } else if (gtype == GGMLType::F16) {
+      const uint16_t *s = (const uint16_t *)raw.data();
+      for (size_t i = 0; i < n_elem; ++i)
+        fp32[i] = fp16_to_fp32(s[i]);
+    } else if (gtype == GGMLType::Q4_K) {
+      size_t bs = 256, ts = 144, nb = n_elem / bs;
+      for (size_t b = 0; b < nb; ++b)
+        dequantize_q4_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
+    } else if (gtype == GGMLType::Q6_K) {
+      size_t bs = 256, ts = 210, nb = n_elem / bs;
+      for (size_t b = 0; b < nb; ++b)
+        dequantize_q6_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
+    } else {
+      if (err)
+        *err = "Unsupported INT8 conversion for type " + it->dtype;
+      return false;
+    }
+
+    size_t nb = (n_elem + 31) / 32;
+    scale_data.resize(nb);
+    std::cout << "[GRETA_LOAD] Quantizing " << n_elem << " elements to INT8..."
+              << std::endl;
+    for (size_t b = 0; b < nb; ++b) {
+      if (b % 100000 == 0 && b > 0)
+        std::cout << "  - Block " << b << "/" << nb << std::endl;
+      float max_val = 0.0f;
+      for (size_t i = 0; i < 32 && (b * 32 + i) < n_elem; ++i) {
+        max_val = std::max(max_val, std::abs(fp32[b * 32 + i]));
+      }
+      float scale = max_val / 127.0f;
+      scale_data[b] = scale;
+      float inv_scale = scale > 1e-9f ? 1.0f / scale : 0.0f;
+      for (size_t i = 0; i < 32 && (b * 32 + i) < n_elem; ++i) {
+        weights[b * 32 + i] = (int8_t)std::round(fp32[b * 32 + i] * inv_scale);
+      }
+    }
+    std::cout << "[GRETA_LOAD] Quantization complete." << std::endl;
+  }
+
+  if (!buffer.allocate(n_elem, rt::hip::BufferUsage::DeviceOnly,
+                       rt::GretaDataType::INT8, err))
+    return false;
+  if (!scales.allocate(scale_data.size() * 4, rt::hip::BufferUsage::DeviceOnly,
+                       rt::GretaDataType::FP32, err))
+    return false;
+
+  if (!buffer.copy_to_device(weights.data(), n_elem, err))
+    return false;
+  if (!scales.copy_to_device(scale_data.data(), scale_data.size() * 4, err))
+    return false;
+
+  gcore::rt::GretaQuantInfo qinfo;
+  qinfo.group_size = group_size;
+  qinfo.scales = scales.data();
+  buffer.set_quant_info(qinfo);
+
+  return true;
+}
+
+bool GGUFLoader::load_tensor_int4(const std::string &name,
+                                  gcore::rt::hip::Buffer &buffer,
+                                  gcore::rt::hip::Buffer &scales,
+                                  std::string *err) {
+  const TensorInfo *it = nullptr;
+  for (const auto &t : impl_->tensors)
+    if (t.name == name) {
+      it = &t;
+      break;
+    }
+  if (!it)
+    return false;
+
+  GGMLType gtype = ggml_type_from_name(it->dtype);
+  std::cout << "[GRETA_LOAD] Loading tensor (INT4): " << name
+            << " (Type: " << it->dtype << ", Size: " << it->size_bytes
+            << " bytes)" << std::endl;
+
+  std::vector<uint8_t> raw(it->size_bytes);
+  impl_->file.seekg(it->offset);
+  impl_->file.read((char *)raw.data(), it->size_bytes);
+
+  size_t n_elem = 1;
+  for (auto d : it->shape)
+    n_elem *= d;
+
+  // 1. Dequantize to FP32
+  std::vector<float> fp32(n_elem);
+  if (gtype == GGMLType::F32) {
+    std::memcpy(fp32.data(), raw.data(), n_elem * 4);
+  } else if (gtype == GGMLType::F16) {
+    const uint16_t *s = (const uint16_t *)raw.data();
+    for (size_t i = 0; i < n_elem; ++i)
+      fp32[i] = fp16_to_fp32(s[i]);
+  } else if (gtype == GGMLType::Q4_K) {
+    size_t bs = 256, ts = 144, nb = n_elem / bs;
+    for (size_t b = 0; b < nb; ++b)
+      dequantize_q4_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
+  } else if (gtype == GGMLType::Q6_K) {
+    size_t bs = 256, ts = 210, nb = n_elem / bs;
+    for (size_t b = 0; b < nb; ++b)
+      dequantize_q6_k_block(raw.data() + b * ts, fp32.data() + b * bs, bs);
+  } else {
+    if (err)
+      *err = "Unsupported INT4 conversion for type " + it->dtype;
+    return false;
+  }
+
+  // 2. Quantize to INT4 and Pack
+  size_t n_groups = (n_elem + 31) / 32;
+  std::vector<float> scale_data(n_groups);
+  std::vector<uint8_t> packed_weights((n_elem + 1) / 2);
+
+  std::cout << "[GRETA_LOAD] Quantizing " << n_elem << " elements to INT4..."
+            << std::endl;
+
+  for (size_t g = 0; g < n_groups; ++g) {
+    if (g % 200000 == 0 && g > 0)
+      std::cout << "  - Group " << g << "/" << n_groups << std::endl;
+
+    float max_val = 0.0f;
+    for (size_t i = 0; i < 32 && (g * 32 + i) < n_elem; ++i) {
+      max_val = std::max(max_val, std::abs(fp32[g * 32 + i]));
+    }
+
+    float scale = max_val / 7.0f;
+    scale_data[g] = scale;
+    float inv_scale = (scale > 1e-9f) ? 1.0f / scale : 0.0f;
+
+    for (size_t i = 0; i < 32 && (g * 32 + i) < n_elem; i += 2) {
+      size_t idx0 = g * 32 + i;
+      size_t idx1 = idx0 + 1;
+
+      int8_t v0 = (int8_t)std::round(fp32[idx0] * inv_scale);
+      v0 = std::max((int8_t)-8, std::min((int8_t)7, v0));
+
+      int8_t v1 = 0;
+      if (idx1 < n_elem) {
+        v1 = (int8_t)std::round(fp32[idx1] * inv_scale);
+        v1 = std::max((int8_t)-8, std::min((int8_t)7, v1));
+      }
+
+      packed_weights[idx0 / 2] = (v0 & 0x0F) | ((v1 & 0x0F) << 4);
+    }
+  }
+
+  // 3. Upload to Device
+  if (!buffer.allocate(packed_weights.size(), rt::hip::BufferUsage::DeviceOnly,
+                       rt::GretaDataType::INT4, err))
+    return false;
+  if (!scales.allocate(scale_data.size() * 4, rt::hip::BufferUsage::DeviceOnly,
+                       rt::GretaDataType::FP32, err))
+    return false;
+
+  if (!buffer.copy_to_device(packed_weights.data(), packed_weights.size(), err))
+    return false;
+  if (!scales.copy_to_device(scale_data.data(), scale_data.size() * 4, err))
+    return false;
+
+  gcore::rt::GretaQuantInfo qinfo;
+  qinfo.group_size = 32;
+  qinfo.scales = scales.data();
+  buffer.set_quant_info(qinfo);
+
+  return true;
 }
 
 struct SafeTensorsLoader::Impl {};
@@ -501,6 +727,18 @@ bool SafeTensorsLoader::load_tensor(const std::string &name,
 bool SafeTensorsLoader::load_tensor_fp16(const std::string &name,
                                          gcore::rt::hip::Buffer &b,
                                          std::string *e) {
+  return false;
+}
+bool SafeTensorsLoader::load_tensor_int8(const std::string &name,
+                                         gcore::rt::hip::Buffer &buffer,
+                                         gcore::rt::hip::Buffer &scales,
+                                         std::string *err) {
+  return false;
+}
+bool SafeTensorsLoader::load_tensor_int4(const std::string &name,
+                                         gcore::rt::hip::Buffer &buffer,
+                                         gcore::rt::hip::Buffer &scales,
+                                         std::string *err) {
   return false;
 }
 ModelConfig SafeTensorsLoader::get_config() const {
