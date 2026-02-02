@@ -4,3 +4,11 @@ tools/bench/runtime/build/
 __pycache__/
 *.pyc
 .DS_Store
+*.o
+*.a
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+greta_infer
+test_l0
