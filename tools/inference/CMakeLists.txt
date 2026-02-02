@@ -5,6 +5,8 @@ project(greta_inference_tools LANGUAGES CXX HIP)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(OpenMP REQUIRED)
+
 # Force MI300X architecture
 set(CMAKE_HIP_ARCHITECTURES "gfx942")
 
@@ -59,7 +61,7 @@ target_compile_definitions(greta_infer PRIVATE
     __HIP_PLATFORM_AMD__=1
 )
 target_link_directories(greta_infer PRIVATE ${ROCM_PATH}/lib)
-target_link_libraries(greta_infer PRIVATE amdhip64)
+target_link_libraries(greta_infer PRIVATE amdhip64 OpenMP::OpenMP_CXX)
 
 # SentencePiece linkage
 if(GRETA_USE_SENTENCEPIECE)
