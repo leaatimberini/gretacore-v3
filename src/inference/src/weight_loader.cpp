@@ -713,6 +713,9 @@ bool GGUFLoader::load_tensor_int8(const std::string &name,
   } else {
     // Convert FP32/FP16/Other to INT8 with scales
     std::vector<float> fp32(n_elem);
+    const bool is_kv_weight =
+        (name.find("attn_k.weight") != std::string::npos ||
+         name.find("attn_v.weight") != std::string::npos);
     if (gtype == GGMLType::F32) {
       std::memcpy(fp32.data(), raw.data(), n_elem * 4);
     } else if (gtype == GGMLType::F16) {
@@ -731,6 +734,50 @@ bool GGUFLoader::load_tensor_int8(const std::string &name,
       if (err)
         *err = "Unsupported INT8 conversion for type " + it->dtype;
       return false;
+    }
+
+    if (is_kv_weight && impl_->config.num_heads_kv > 0 &&
+        impl_->config.head_dim > 0) {
+      const uint32_t kv_dim =
+          impl_->config.num_heads_kv * impl_->config.head_dim;
+      const uint32_t model_dim = impl_->config.dim;
+      if (it->shape.size() != 2 || kv_dim == 0 || model_dim == 0) {
+        if (err) {
+          *err = "GQA KV INT8 load failed for " + name +
+                 ": unexpected shape dims or config mismatch. got [" +
+                 (it->shape.size() > 0 ? std::to_string(it->shape[0]) : "?") +
+                 "," +
+                 (it->shape.size() > 1 ? std::to_string(it->shape[1]) : "?") +
+                 "]";
+        }
+        return false;
+      }
+      if (it->shape[0] == model_dim && it->shape[1] == kv_dim) {
+        std::vector<float> transposed((size_t)kv_dim * (size_t)model_dim,
+                                      0.0f);
+        for (uint32_t r = 0; r < kv_dim; ++r) {
+          for (uint32_t c = 0; c < model_dim; ++c) {
+            transposed[(size_t)r * model_dim + c] =
+                fp32[(size_t)c * kv_dim + r];
+          }
+        }
+        fp32.swap(transposed);
+        n_elem = fp32.size();
+        std::cout << "[GRETA_LOAD] Transposed " << name
+                  << " from [D, KV] to [KV, D]" << std::endl;
+      } else if (it->shape[0] == kv_dim && it->shape[1] == model_dim) {
+        // Already in expected [KV, D] layout.
+      } else if (kv_dim == model_dim && it->shape[0] == model_dim &&
+                 it->shape[1] == model_dim) {
+        // Standard MHA layout, no action.
+      } else {
+        if (err) {
+          *err = "GQA KV INT8 load failed for " + name +
+                 ": unsupported shape [" + std::to_string(it->shape[0]) + "," +
+                 std::to_string(it->shape[1]) + "]";
+        }
+        return false;
+      }
     }
 
     size_t nb = (n_elem + 31) / 32;
@@ -804,6 +851,9 @@ bool GGUFLoader::load_tensor_int4(const std::string &name,
 
   // 1. Dequantize to FP32
   std::vector<float> fp32(n_elem);
+  const bool is_kv_weight =
+      (name.find("attn_k.weight") != std::string::npos ||
+       name.find("attn_v.weight") != std::string::npos);
   if (gtype == GGMLType::F32) {
     std::memcpy(fp32.data(), raw.data(), n_elem * 4);
   } else if (gtype == GGMLType::F16) {
@@ -822,6 +872,49 @@ bool GGUFLoader::load_tensor_int4(const std::string &name,
     if (err)
       *err = "Unsupported INT4 conversion for type " + it->dtype;
     return false;
+  }
+
+  if (is_kv_weight && impl_->config.num_heads_kv > 0 &&
+      impl_->config.head_dim > 0) {
+    const uint32_t kv_dim =
+        impl_->config.num_heads_kv * impl_->config.head_dim;
+    const uint32_t model_dim = impl_->config.dim;
+    if (it->shape.size() != 2 || kv_dim == 0 || model_dim == 0) {
+      if (err) {
+        *err = "GQA KV INT4 load failed for " + name +
+               ": unexpected shape dims or config mismatch. got [" +
+               (it->shape.size() > 0 ? std::to_string(it->shape[0]) : "?") +
+               "," +
+               (it->shape.size() > 1 ? std::to_string(it->shape[1]) : "?") +
+               "]";
+      }
+      return false;
+    }
+    if (it->shape[0] == model_dim && it->shape[1] == kv_dim) {
+      std::vector<float> transposed((size_t)kv_dim * (size_t)model_dim, 0.0f);
+      for (uint32_t r = 0; r < kv_dim; ++r) {
+        for (uint32_t c = 0; c < model_dim; ++c) {
+          transposed[(size_t)r * model_dim + c] =
+              fp32[(size_t)c * kv_dim + r];
+        }
+      }
+      fp32.swap(transposed);
+      n_elem = fp32.size();
+      std::cout << "[GRETA_LOAD] Transposed " << name
+                << " from [D, KV] to [KV, D]" << std::endl;
+    } else if (it->shape[0] == kv_dim && it->shape[1] == model_dim) {
+      // Already in expected [KV, D] layout.
+    } else if (kv_dim == model_dim && it->shape[0] == model_dim &&
+               it->shape[1] == model_dim) {
+      // Standard MHA layout, no action.
+    } else {
+      if (err) {
+        *err = "GQA KV INT4 load failed for " + name +
+               ": unsupported shape [" + std::to_string(it->shape[0]) + "," +
+               std::to_string(it->shape[1]) + "]";
+      }
+      return false;
+    }
   }
 
   // 2. Quantize to INT4 and Pack
@@ -878,14 +971,17 @@ bool GGUFLoader::load_tensor_int4(const std::string &name,
 
   // 4. Per-head Scaling (Phase 5.3)
   uint32_t num_heads = impl_->config.num_heads;
+  if (is_kv_weight && impl_->config.num_heads_kv > 0)
+    num_heads = impl_->config.num_heads_kv;
+  const uint32_t head_dim = impl_->config.head_dim;
   std::vector<float> h_scales(num_heads, 1.0f);
   bool is_qkv = (name.find("attn_q") != std::string::npos ||
                  name.find("attn_k") != std::string::npos ||
                  name.find("attn_v") != std::string::npos);
 
-  if (is_qkv && num_heads > 0) {
+  if (is_qkv && num_heads > 0 && head_dim > 0) {
     size_t D = impl_->config.dim;
-    size_t Dh = D / num_heads;
+    size_t Dh = head_dim;
 #pragma omp parallel for
     for (uint32_t h = 0; h < num_heads; ++h) {
       float h_max = 0.0f;

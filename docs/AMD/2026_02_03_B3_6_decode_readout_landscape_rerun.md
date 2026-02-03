@@ -48,6 +48,7 @@ export GRETA_TRACE_PREFILL_DECODE=1
 export GRETA_TRACE_PREFILL_DECODE_OUT=$OUTDIR/b3_6_prefill_decode.jsonl
 export GRETA_TRACE_LANDSCAPE=1
 export GRETA_TRACE_LANDSCAPE_OUT=$OUTDIR/b3_6_landscape.jsonl
+export GRETA_INT4_WEIGHTS=1   # usar int4 si VRAM disponible es baja
 MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 cd /root/gretacore/tools/inference/build
 ./greta_infer --model "$MODEL" --prompt "Hi" --max-tokens 16 --greedy --debug-decode 16 \
@@ -88,5 +89,8 @@ Durante carga de pesos (si aplica GQA):
 - No hay crash en `hipMemcpy D2H`.
 - Se generan `b3_6_readout.jsonl`, `b3_6_prefill_decode.jsonl`, `b3_6_landscape.jsonl` y `b3_6_run.log`.
 - Readout/landscape muestran variación coherente por step.
+
+## Estado VRAM MI300X (observado)
+- `rocm-smi` reportó VRAM total ~205.8GB, usada ~196.8GB (quedan ~9GB). Esto puede forzar el uso de `GRETA_INT4_WEIGHTS=1` para evitar OOM durante carga de pesos.
 
 L.E.T / Leandro Emanuel Timberini
