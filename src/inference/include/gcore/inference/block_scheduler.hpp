@@ -105,6 +105,9 @@ public:
   /// Get the final logits buffer.
   const gcore::rt::hip::Buffer &get_logits() const;
 
+  /// Get LM head weight buffer.
+  const gcore::rt::hip::Buffer &get_output_weight() const;
+
   /// Get model configuration.
   const ModelConfig &config() const { return config_; }
 

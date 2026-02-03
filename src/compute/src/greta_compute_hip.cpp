@@ -4,8 +4,64 @@
 #include "gcore/rt/hip/kernels/fused_attention_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
+
+static bool env_flag(const char *k) {
+  const char *v = std::getenv(k);
+  return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
+}
+
+static bool trace_lmhead_enabled() {
+  static const bool enabled =
+      env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA") ||
+      env_flag("GRETA_TRACE_RMS_VERIFY") ||
+      env_flag("GRETA_TRACE_LMHEAD_CPU_PROBE");
+  return enabled;
+}
+
+static std::string &current_op_label() {
+  static std::string label;
+  return label;
+}
+
+static gcore::compute::GemmAuditInfo &last_gemm_audit() {
+  static gcore::compute::GemmAuditInfo info;
+  return info;
+}
+
+static uint64_t hash_f32(const float *p, size_t n) {
+  const size_t count = (n < 64) ? n : 64;
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < count; ++i) {
+    uint32_t v;
+    std::memcpy(&v, &p[i], sizeof(uint32_t));
+    h ^= static_cast<uint64_t>(v);
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+static std::string dtype_name(gcore::rt::GretaDataType t) {
+  switch (t) {
+  case gcore::rt::GretaDataType::FP32:
+    return "FP32";
+  case gcore::rt::GretaDataType::FP16:
+    return "FP16";
+  case gcore::rt::GretaDataType::BF16:
+    return "BF16";
+  case gcore::rt::GretaDataType::INT8:
+    return "INT8";
+  case gcore::rt::GretaDataType::INT4:
+    return "INT4";
+  case gcore::rt::GretaDataType::Q4_K:
+    return "Q4_K";
+  default:
+    return "UNKNOWN";
+  }
+}
 
 namespace gcore::compute {
 
@@ -47,6 +103,45 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
 
   GretaDataType type_A = A->data_type();
   GretaDataType type_B = B->data_type();
+
+  const bool trace_audit = trace_lmhead_enabled() &&
+      (current_op_label() == "lm_head");
+  if (trace_audit) {
+    auto &info = last_gemm_audit();
+    info.op_label = current_op_label();
+    info.route = use_mfma ? "MFMA" : "VALU";
+    info.quant_mode = dtype_name(type_B);
+    info.layout_used = "N x K (row_major)";
+    info.type_a = static_cast<int>(type_A);
+    info.type_b = static_cast<int>(type_B);
+    info.accum_type = static_cast<int>(accum_type);
+    info.m = M;
+    info.n = N;
+    info.k = K;
+    info.perhead_enabled = perhead_enabled;
+    info.scales_ptr = 0;
+    info.scales_hash = 0;
+    info.head_scales_ptr = 0;
+    info.head_scales_hash = 0;
+    if ((type_B == GretaDataType::INT4 || type_B == GretaDataType::INT8)) {
+      auto qinfo = B->quant_info();
+      info.scales_ptr = reinterpret_cast<uintptr_t>(qinfo.scales);
+      info.head_scales_ptr = reinterpret_cast<uintptr_t>(qinfo.head_scales);
+      if (qinfo.scales) {
+        float tmp[64];
+        if (hipMemcpy(tmp, qinfo.scales, sizeof(tmp), hipMemcpyDeviceToHost) == hipSuccess) {
+          info.scales_hash = hash_f32(tmp, 64);
+        }
+      }
+      if (qinfo.head_scales && qinfo.num_heads > 0) {
+        const size_t count = qinfo.num_heads < 64 ? qinfo.num_heads : 64;
+        std::vector<float> tmp(count);
+        if (hipMemcpy(tmp.data(), qinfo.head_scales, count * sizeof(float), hipMemcpyDeviceToHost) == hipSuccess) {
+          info.head_scales_hash = hash_f32(tmp.data(), count);
+        }
+      }
+    }
+  }
 
   if (profile_blocks && std::string(profile_blocks) == "1") {
     printf(
@@ -132,6 +227,18 @@ GretaResult GretaCompute::rmsnorm(GretaStream *stream, GretaMemory *input,
                                   uint32_t dim, float eps) {
   // Placeholder for RMSNorm L1 (would call basic_kernels.hip)
   return GretaResult::SUCCESS;
+}
+
+void GretaCompute::set_op_label(const char *label) {
+  if (label) {
+    current_op_label() = label;
+  } else {
+    current_op_label().clear();
+  }
+}
+
+GemmAuditInfo GretaCompute::get_last_gemm_audit() {
+  return last_gemm_audit();
 }
 
 } // namespace gcore::compute

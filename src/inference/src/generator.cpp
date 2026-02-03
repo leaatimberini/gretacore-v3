@@ -3,6 +3,7 @@
 #include "gcore/inference/tokenizer.hpp"
 #include "gcore/inference/trace.hpp"
 #include "gcore/inference/layer_trace.hpp"
+#include "gcore/compute/greta_compute.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -83,6 +84,109 @@ static Top2Logits top2_logits(const float *p, size_t n) {
     }
   }
   return out;
+}
+
+static float fp16_to_fp32(uint16_t h) {
+  uint32_t sign = (h >> 15) & 0x1;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+  if (exp == 0) {
+    if (mant == 0)
+      return sign ? -0.0f : 0.0f;
+    exp = 1;
+    while ((mant & 0x400) == 0) {
+      mant <<= 1;
+      exp--;
+    }
+    mant &= ~0x400;
+  } else if (exp == 31) {
+    return sign ? -INFINITY : INFINITY;
+  }
+  uint32_t f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+  float result;
+  std::memcpy(&result, &f, 4);
+  return result;
+}
+
+static double sumsq_f32(const float *p, size_t n) {
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    double v = static_cast<double>(p[i]);
+    sum += v * v;
+  }
+  return sum;
+}
+
+static const char *dtype_name(gcore::rt::GretaDataType t) {
+  switch (t) {
+  case gcore::rt::GretaDataType::FP32:
+    return "FP32";
+  case gcore::rt::GretaDataType::FP16:
+    return "FP16";
+  case gcore::rt::GretaDataType::BF16:
+    return "BF16";
+  case gcore::rt::GretaDataType::INT8:
+    return "INT8";
+  case gcore::rt::GretaDataType::INT4:
+    return "INT4";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static std::vector<int> topk_ids(const float *logits, size_t n, int k) {
+  std::vector<std::pair<float, int>> v;
+  v.reserve(n);
+  for (size_t i = 0; i < n; ++i)
+    v.push_back({logits[i], static_cast<int>(i)});
+  std::sort(v.rbegin(), v.rend());
+  const int kk = std::min<int>(k, (int)v.size());
+  std::vector<int> ids;
+  ids.reserve(kk);
+  for (int i = 0; i < kk; ++i)
+    ids.push_back(v[i].second);
+  return ids;
+}
+
+static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
+                              const std::vector<float> &rms_vec,
+                              size_t dim, const std::vector<int> &ids,
+                              std::vector<float> &out_logits,
+                              int &out_top1_id) {
+  if (weights.data_type() != gcore::rt::GretaDataType::FP16)
+    return false;
+  if (rms_vec.size() != dim)
+    return false;
+
+  std::vector<uint16_t> row(dim);
+  out_logits.clear();
+  out_logits.reserve(ids.size());
+
+  float best_logit = -1e38f;
+  int best_id = -1;
+
+  for (int id : ids) {
+    size_t offset = static_cast<size_t>(id) * dim * sizeof(uint16_t);
+    if (offset + dim * sizeof(uint16_t) > weights.size())
+      continue;
+    if (!weights.copy_to_host_offset(row.data(), offset,
+                                     dim * sizeof(uint16_t), nullptr))
+      continue;
+    double sum = 0.0;
+    for (size_t i = 0; i < dim; ++i) {
+      float w = fp16_to_fp32(row[i]);
+      sum += static_cast<double>(rms_vec[i]) * static_cast<double>(w);
+    }
+    float logit = static_cast<float>(sum);
+    out_logits.push_back(logit);
+    if (logit > best_logit) {
+      best_logit = logit;
+      best_id = id;
+    }
+  }
+
+  out_top1_id = best_id;
+  return best_id >= 0;
 }
 
 static void append_line(const char *path, const std::string &line) {
@@ -179,6 +283,89 @@ static void log_readout(const char *path, const ReadoutTrace &t) {
   append_line(path, oss.str());
 }
 
+
+struct DeltaTrace {
+  const char *phase = nullptr;
+  int step = 0;
+  size_t tokens_total = 0;
+  size_t seq_len = 0;
+  size_t pos_id = 0;
+  uint64_t hidden_hash = 0;
+  F32Stats hidden_stats{};
+  uint64_t rms_hash = 0;
+  F32Stats rms_stats{};
+  double rms_sumsq = 0.0;
+  float rms_eps = 0.0f;
+  const char *rms_weight_dtype = nullptr;
+  const char *rms_input_dtype = nullptr;
+  uint64_t logits_hash = 0;
+  int top1_id = -1;
+  float top1_logit = 0.0f;
+  int top2_id = -1;
+  float top2_logit = 0.0f;
+  float gap = 0.0f;
+  std::string lm_head_route;
+  std::string lm_head_quant_mode;
+  std::string lm_head_layout_used;
+  int lm_head_dtype_a = 0;
+  int lm_head_dtype_b = 0;
+  int lm_head_accum_dtype = 0;
+  bool lm_head_perhead_enabled = false;
+  uintptr_t lm_head_scales_ptr = 0;
+  uint64_t lm_head_scales_hash = 0;
+  uintptr_t lm_head_head_scales_ptr = 0;
+  uint64_t lm_head_head_scales_hash = 0;
+  int cpu_probe_top1_id = -1;
+  bool cpu_probe_agrees_gpu = false;
+  int cpu_probe_prefill_top1 = -1;
+  int cpu_probe_decode0_top1 = -1;
+};
+
+static void log_delta(const char *path, const DeltaTrace &t) {
+  if (!path || !*path)
+    return;
+  std::ostringstream oss;
+  oss << "{\"phase\":\"" << (t.phase ? t.phase : "") << "\""
+      << ",\"step\":" << t.step
+      << ",\"tokens_total\":" << t.tokens_total
+      << ",\"seq_len\":" << t.seq_len
+      << ",\"pos_id\":" << t.pos_id
+      << ",\"hidden_hash\":" << t.hidden_hash
+      << ",\"hidden_min\":" << t.hidden_stats.min
+      << ",\"hidden_max\":" << t.hidden_stats.max
+      << ",\"hidden_mean\":" << t.hidden_stats.mean
+      << ",\"rms_hash\":" << t.rms_hash
+      << ",\"rms_min\":" << t.rms_stats.min
+      << ",\"rms_max\":" << t.rms_stats.max
+      << ",\"rms_mean\":" << t.rms_stats.mean
+      << ",\"rms_sumsq\":" << t.rms_sumsq
+      << ",\"rms_eps\":" << t.rms_eps
+      << ",\"rms_weight_dtype\":\"" << (t.rms_weight_dtype ? t.rms_weight_dtype : "") << "\""
+      << ",\"rms_input_dtype\":\"" << (t.rms_input_dtype ? t.rms_input_dtype : "") << "\""
+      << ",\"logits_hash\":" << t.logits_hash
+      << ",\"top1_id\":" << t.top1_id
+      << ",\"top1_logit\":" << t.top1_logit
+      << ",\"top2_id\":" << t.top2_id
+      << ",\"top2_logit\":" << t.top2_logit
+      << ",\"gap\":" << t.gap
+      << ",\"lm_head_route\":\"" << t.lm_head_route << "\""
+      << ",\"lm_head_quant_mode\":\"" << t.lm_head_quant_mode << "\""
+      << ",\"lm_head_layout_used\":\"" << t.lm_head_layout_used << "\""
+      << ",\"lm_head_dtype_a\":" << t.lm_head_dtype_a
+      << ",\"lm_head_dtype_b\":" << t.lm_head_dtype_b
+      << ",\"lm_head_accum_dtype\":" << t.lm_head_accum_dtype
+      << ",\"lm_head_perhead_enabled\":" << (t.lm_head_perhead_enabled ? "true" : "false")
+      << ",\"lm_head_scales_ptr\":" << t.lm_head_scales_ptr
+      << ",\"lm_head_scales_hash\":" << t.lm_head_scales_hash
+      << ",\"lm_head_head_scales_ptr\":" << t.lm_head_head_scales_ptr
+      << ",\"lm_head_head_scales_hash\":" << t.lm_head_head_scales_hash
+      << ",\"cpu_probe_top1_id\":" << t.cpu_probe_top1_id
+      << ",\"cpu_probe_agrees_gpu\":" << (t.cpu_probe_agrees_gpu ? "true" : "false")
+      << ",\"cpu_probe_prefill_top1\":" << t.cpu_probe_prefill_top1
+      << ",\"cpu_probe_decode0_top1\":" << t.cpu_probe_decode0_top1
+      << "}";
+  append_line(path, oss.str());
+}
 static void log_landscape(const char *path, int step,
                           const std::vector<float> &logits, int topk) {
   if (!path || !*path)
@@ -403,17 +590,29 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const char *trace_readout_out = std::getenv("GRETA_TRACE_READOUT_OUT");
   const bool trace_prefill_decode = env_flag("GRETA_TRACE_PREFILL_DECODE");
   const char *trace_prefill_decode_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+  const bool trace_delta = env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA");
+  const char *trace_delta_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+  const bool trace_rms_verify = env_flag("GRETA_TRACE_RMS_VERIFY");
+  const bool trace_cpu_probe = env_flag("GRETA_TRACE_LMHEAD_CPU_PROBE");
   const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
-  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape;
+  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape || trace_delta;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode) {
+  if (trace_readout || trace_prefill_decode || trace_delta) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
+
+  DeltaTrace prefill_delta;
+  bool prefill_delta_ready = false;
+  bool prefill_delta_written = false;
+  std::vector<float> prefill_rms_copy;
+  std::vector<int> prefill_topk_ids;
+  int cpu_prefill_top1 = -1;
+  int cpu_decode_top1 = -1;
 
   if (trace_any) {
     if (!validate_trace_shapes(config_, err)) {
@@ -442,7 +641,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     return output;
   }
 
-  if (trace_readout || trace_prefill_decode) {
+  if (trace_readout || trace_prefill_decode || trace_delta) {
     const size_t tokens_total = prompt_tokens.size();
     const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
     const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
@@ -530,7 +729,60 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (trace_prefill_decode && trace_prefill_decode_out) {
       log_readout(trace_prefill_decode_out, trace);
     }
+    if (trace_delta && trace_delta_out) {
+      gcore::compute::GemmAuditInfo audit =
+          gcore::compute::GretaCompute::get_last_gemm_audit();
+      DeltaTrace delta{};
+      delta.phase = "prefill_last";
+      delta.step = 0;
+      delta.tokens_total = tokens_total;
+      delta.seq_len = seq_len;
+      delta.pos_id = pos_id;
+      delta.hidden_hash = hhash;
+      delta.hidden_stats = hstats;
+      delta.rms_hash = rhash;
+      delta.rms_stats = rstats;
+      delta.rms_sumsq =
+          trace_rms_verify ? sumsq_f32(rms_host.data(), config_.dim) : 0.0;
+      delta.rms_eps = trace_rms_verify ? config_.rms_eps : 0.0f;
+      delta.rms_weight_dtype = trace_rms_verify ? "unknown" : "";
+      delta.rms_input_dtype =
+          trace_rms_verify
+              ? dtype_name(scheduler_->get_hidden_state().data_type())
+              : "";
+      delta.logits_hash = lhash;
+      delta.top1_id = top2.top1_id;
+      delta.top1_logit = top2.top1_logit;
+      delta.top2_id = top2.top2_id;
+      delta.top2_logit = top2.top2_logit;
+      delta.gap = gap;
+      delta.lm_head_route = audit.route;
+      delta.lm_head_quant_mode = audit.quant_mode;
+      delta.lm_head_layout_used = audit.layout_used;
+      delta.lm_head_dtype_a = audit.type_a;
+      delta.lm_head_dtype_b = audit.type_b;
+      delta.lm_head_accum_dtype = audit.accum_type;
+      delta.lm_head_perhead_enabled = audit.perhead_enabled;
+      delta.lm_head_scales_ptr = audit.scales_ptr;
+      delta.lm_head_scales_hash = audit.scales_hash;
+      delta.lm_head_head_scales_ptr = audit.head_scales_ptr;
+      delta.lm_head_head_scales_hash = audit.head_scales_hash;
+
+      if (trace_cpu_probe) {
+        prefill_rms_copy = rms_host;
+        prefill_topk_ids = topk_ids(logits_host.data(), config_.vocab_size, 10);
+      }
+
+      prefill_delta = delta;
+      prefill_delta_ready = true;
+
+      if (!trace_cpu_probe) {
+        log_delta(trace_delta_out, prefill_delta);
+        prefill_delta_written = true;
+      }
+    }
   }
+
   if (trace_landscape && trace_landscape_out) {
     log_landscape(trace_landscape_out, 0, logits_host, landscape_topk);
   }
@@ -596,7 +848,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (!scheduler_->forward(&last_token_id, output.size() - 1, 1, err)) {
       break;
     }
-    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode;
+    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode || trace_delta;
     const size_t decode_logits_offset =
         (output.size() - 1) * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
@@ -611,7 +863,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         break;
       }
 
-      if (trace_readout || trace_prefill_decode) {
+      if (trace_readout || trace_prefill_decode || trace_delta) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
@@ -703,7 +955,84 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         if (trace_prefill_decode && trace_prefill_decode_out) {
           log_readout(trace_prefill_decode_out, trace);
         }
+        if (trace_delta && trace_delta_out && i == 1) {
+          gcore::compute::GemmAuditInfo audit =
+              gcore::compute::GretaCompute::get_last_gemm_audit();
+          DeltaTrace delta{};
+          delta.phase = "decode0";
+          delta.step = i;
+          delta.tokens_total = tokens_total;
+          delta.seq_len = seq_len;
+          delta.pos_id = pos_id;
+          delta.hidden_hash = hhash;
+          delta.hidden_stats = hstats;
+          delta.rms_hash = rhash;
+          delta.rms_stats = rstats;
+          delta.rms_sumsq =
+              trace_rms_verify ? sumsq_f32(rms_host.data(), config_.dim) : 0.0;
+          delta.rms_eps = trace_rms_verify ? config_.rms_eps : 0.0f;
+          delta.rms_weight_dtype = trace_rms_verify ? "unknown" : "";
+          delta.rms_input_dtype =
+              trace_rms_verify
+                  ? dtype_name(scheduler_->get_hidden_state().data_type())
+                  : "";
+          delta.logits_hash = lhash;
+          delta.top1_id = top2.top1_id;
+          delta.top1_logit = top2.top1_logit;
+          delta.top2_id = top2.top2_id;
+          delta.top2_logit = top2.top2_logit;
+          delta.gap = gap;
+          delta.lm_head_route = audit.route;
+          delta.lm_head_quant_mode = audit.quant_mode;
+          delta.lm_head_layout_used = audit.layout_used;
+          delta.lm_head_dtype_a = audit.type_a;
+          delta.lm_head_dtype_b = audit.type_b;
+          delta.lm_head_accum_dtype = audit.accum_type;
+          delta.lm_head_perhead_enabled = audit.perhead_enabled;
+          delta.lm_head_scales_ptr = audit.scales_ptr;
+          delta.lm_head_scales_hash = audit.scales_hash;
+          delta.lm_head_head_scales_ptr = audit.head_scales_ptr;
+          delta.lm_head_head_scales_hash = audit.head_scales_hash;
+
+          if (trace_cpu_probe && prefill_delta_ready) {
+            std::vector<int> decode_topk_ids =
+                topk_ids(logits_host.data(), config_.vocab_size, 10);
+            std::vector<int> candidate_ids = prefill_topk_ids;
+            for (int id : decode_topk_ids) {
+              if (std::find(candidate_ids.begin(), candidate_ids.end(), id) ==
+                  candidate_ids.end()) {
+                candidate_ids.push_back(id);
+              }
+            }
+
+            const auto &lm_head_w = scheduler_->get_output_weight();
+            std::vector<float> tmp_logits;
+            if (cpu_probe_lm_head(lm_head_w, prefill_rms_copy, config_.dim,
+                                  candidate_ids, tmp_logits, cpu_prefill_top1)) {
+              prefill_delta.cpu_probe_top1_id = cpu_prefill_top1;
+              prefill_delta.cpu_probe_agrees_gpu =
+                  (cpu_prefill_top1 == prefill_delta.top1_id);
+            }
+            if (cpu_probe_lm_head(lm_head_w, rms_host, config_.dim,
+                                  candidate_ids, tmp_logits, cpu_decode_top1)) {
+              delta.cpu_probe_top1_id = cpu_decode_top1;
+              delta.cpu_probe_agrees_gpu =
+                  (cpu_decode_top1 == delta.top1_id);
+            }
+            prefill_delta.cpu_probe_prefill_top1 = cpu_prefill_top1;
+            prefill_delta.cpu_probe_decode0_top1 = cpu_decode_top1;
+            delta.cpu_probe_prefill_top1 = cpu_prefill_top1;
+            delta.cpu_probe_decode0_top1 = cpu_decode_top1;
+          }
+
+          if (prefill_delta_ready && !prefill_delta_written) {
+            log_delta(trace_delta_out, prefill_delta);
+            prefill_delta_written = true;
+          }
+          log_delta(trace_delta_out, delta);
+        }
       }
+
 
       if (trace_landscape && trace_landscape_out) {
         log_landscape(trace_landscape_out, i, logits_host, landscape_topk);

@@ -1,6 +1,7 @@
 #pragma once
 #include "gcore/rt/greta_runtime.hpp"
 #include <cstdint>
+#include <string>
 
 /**
  * GRETA CORE - Compute Core (L1)
@@ -9,6 +10,25 @@
 namespace gcore::compute {
 
 using namespace gcore::rt;
+
+
+struct GemmAuditInfo {
+  std::string op_label;
+  std::string route;
+  std::string quant_mode;
+  std::string layout_used;
+  int type_a = 0;
+  int type_b = 0;
+  int accum_type = 0;
+  uint32_t m = 0;
+  uint32_t n = 0;
+  uint32_t k = 0;
+  bool perhead_enabled = false;
+  uintptr_t scales_ptr = 0;
+  uint64_t scales_hash = 0;
+  uintptr_t head_scales_ptr = 0;
+  uint64_t head_scales_hash = 0;
+};
 
 class GretaCompute {
 public:
@@ -27,6 +47,9 @@ public:
   static GretaResult rmsnorm(GretaStream *stream, GretaMemory *input,
                              GretaMemory *weight, GretaMemory *output,
                              uint32_t dim, float eps);
+
+  static void set_op_label(const char *label);
+  static GemmAuditInfo get_last_gemm_audit();
 };
 
 class GretaFused {

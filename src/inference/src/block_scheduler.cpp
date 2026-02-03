@@ -969,11 +969,13 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
       return false;
     }
     GretaMemoryView logits_view(&logits_, logits_offset_bytes);
+    gcore::compute::GretaCompute::set_op_label("lm_head");
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
                                            &output_weight_, &logits_view, S, V,
                                            D),
         "LM Head");
+    gcore::compute::GretaCompute::set_op_label(nullptr);
 
     if (use_graph && !graph_captured_) {
       graph_->capture_end(stream_);
@@ -1001,6 +1003,10 @@ const gcore::rt::hip::Buffer &BlockScheduler::get_norm_out() const {
 
 const gcore::rt::hip::Buffer &BlockScheduler::get_logits() const {
   return logits_;
+}
+
+const gcore::rt::hip::Buffer &BlockScheduler::get_output_weight() const {
+  return output_weight_;
 }
 
 int32_t BlockScheduler::sample_greedy_gpu(size_t logits_offset_bytes,
