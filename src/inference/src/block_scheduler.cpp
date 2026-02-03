@@ -194,8 +194,11 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
   const size_t D = config_.dim;
   const size_t H = config_.hidden_dim;
   const size_t L = config_.num_layers;
-  const size_t heads = config_.num_heads;
+  const size_t heads_q = config_.num_heads;
+  const size_t heads_kv =
+      config_.num_heads_kv > 0 ? config_.num_heads_kv : config_.num_heads;
   const size_t head_dim = config_.head_dim;
+  const size_t kv_dim = heads_kv * head_dim;
 
   size_t hidden_size = batch_size * max_seq_len * D * sizeof(float);
   activations_.x.allocate(hidden_size, Usage::DeviceOnly,
@@ -204,26 +207,28 @@ bool BlockScheduler::allocate_activations(size_t batch_size, size_t max_seq_len,
                                  gcore::rt::GretaDataType::FP32, err);
   activations_.q.allocate(hidden_size, Usage::DeviceOnly,
                           gcore::rt::GretaDataType::FP32, err);
-  activations_.k.allocate(hidden_size, Usage::DeviceOnly,
-                          gcore::rt::GretaDataType::FP16, err);
-  activations_.v.allocate(hidden_size, Usage::DeviceOnly,
-                          gcore::rt::GretaDataType::FP16, err);
+  const size_t kv_hidden_size =
+      batch_size * max_seq_len * kv_dim * sizeof(float);
+  activations_.k.allocate(kv_hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP32, err);
+  activations_.v.allocate(kv_hidden_size, Usage::DeviceOnly,
+                          gcore::rt::GretaDataType::FP32, err);
   activations_.attn_out.allocate(hidden_size, Usage::DeviceOnly,
-                                 gcore::rt::GretaDataType::FP16, err);
+                                 gcore::rt::GretaDataType::FP32, err);
 
   size_t mlp_size = batch_size * max_seq_len * H * sizeof(float);
   activations_.mlp_gate.allocate(mlp_size, Usage::DeviceOnly,
-                                 gcore::rt::GretaDataType::FP16, err);
+                                 gcore::rt::GretaDataType::FP32, err);
   activations_.mlp_up.allocate(mlp_size, Usage::DeviceOnly,
-                               gcore::rt::GretaDataType::FP16, err);
+                               gcore::rt::GretaDataType::FP32, err);
   activations_.mlp_out.allocate(hidden_size, Usage::DeviceOnly,
-                                gcore::rt::GretaDataType::FP16, err);
+                                gcore::rt::GretaDataType::FP32, err);
 
-  size_t kv_size = L * max_seq_len * heads * head_dim * sizeof(float);
+  size_t kv_size = L * max_seq_len * heads_kv * head_dim * sizeof(float);
   activations_.kv_cache_k.allocate(kv_size, Usage::DeviceOnly,
-                                   gcore::rt::GretaDataType::FP16, err);
+                                   gcore::rt::GretaDataType::FP32, err);
   activations_.kv_cache_v.allocate(kv_size, Usage::DeviceOnly,
-                                   gcore::rt::GretaDataType::FP16, err);
+                                   gcore::rt::GretaDataType::FP32, err);
 
   size_t tokens_size = batch_size * max_seq_len * sizeof(int32_t);
   activations_.tokens.allocate(tokens_size, Usage::DeviceOnly,
@@ -358,14 +363,17 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                                    size_t seq_len, std::string *err) {
   auto &b = blocks_[layer_idx];
   uint32_t D = static_cast<uint32_t>(config_.dim);
-  uint32_t H = static_cast<uint32_t>(config_.num_heads);
-  uint32_t Dh = D / H;
+  uint32_t Hq = static_cast<uint32_t>(config_.num_heads);
+  uint32_t Hkv = static_cast<uint32_t>(
+      config_.num_heads_kv > 0 ? config_.num_heads_kv : config_.num_heads);
+  uint32_t Dh = D / Hq;
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim);
   uint32_t S = static_cast<uint32_t>(seq_len);
 
   const uint32_t n_x = S * D;
   const uint32_t n_mlp = S * hidden_dim;
-  const uint32_t n_kv = S * H * Dh;
+  const uint32_t n_kv = S * Hkv * Dh;
+  const uint32_t kv_dim = Hkv * Dh;
 
   using namespace gcore::rt::hip::kernels;
   float *x = static_cast<float *>(activations_.x.data());
@@ -381,8 +389,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const float *attn_norm = static_cast<const float *>(b.attn_norm.data());
   const float *ffn_norm = static_cast<const float *>(b.ffn_norm.data());
 
-  size_t offset =
-      (size_t)layer_idx * (size_t)config_.max_seq_len * (size_t)H * (size_t)Dh;
+  size_t offset = (size_t)layer_idx * (size_t)config_.max_seq_len *
+                  (size_t)Hkv * (size_t)Dh;
   float *cache_k =
       static_cast<float *>(activations_.kv_cache_k.data()) + offset;
   float *cache_v =
@@ -432,7 +440,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   const char *use_fused_env = std::getenv("GRETA_USE_FUSED_RMSNORM");
   bool use_fused =
-      (use_fused_env && std::string(use_fused_env) == "1") && (S == 1);
+      (use_fused_env && std::string(use_fused_env) == "1") && (S == 1) &&
+      (Hkv == Hq);
 
   if (use_fused) {
     CHECK_HIP_KERNEL(launch_fused_rmsnorm_qkv_gemv_f16(
@@ -447,12 +456,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       layer_tracer_.trace_tensor("q", trace_step_,
                                  static_cast<int>(layer_idx), hip_stream,
                                  q, n_x);
-      layer_tracer_.trace_tensor_f16("k", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(k), n_kv);
-      layer_tracer_.trace_tensor_f16("v", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(v), n_kv);
+      layer_tracer_.trace_tensor("k", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 k, n_kv);
+      layer_tracer_.trace_tensor("v", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 v, n_kv);
     }
   } else {
     CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, attn_norm, norm_out, S,
@@ -483,7 +492,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       ev_k_start->record(stream_);
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &b.wk, &activations_.k, S, D, D),
+                                           &b.wk, &activations_.k, S, kv_dim,
+                                           D),
         "GEMM K");
     if (profile_attn)
       ev_k_end->record(stream_);
@@ -492,7 +502,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       ev_v_start->record(stream_);
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &b.wv, &activations_.v, S, D, D),
+                                           &b.wv, &activations_.v, S, kv_dim,
+                                           D),
         "GEMM V");
     if (profile_attn)
       ev_v_end->record(stream_);
@@ -501,26 +512,26 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       layer_tracer_.trace_tensor("q", trace_step_,
                                  static_cast<int>(layer_idx), hip_stream,
                                  q, n_x);
-      layer_tracer_.trace_tensor_f16("k", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(k), n_kv);
-      layer_tracer_.trace_tensor_f16("v", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(v), n_kv);
+      layer_tracer_.trace_tensor("k", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 k, n_kv);
+      layer_tracer_.trace_tensor("v", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 v, n_kv);
     }
   }
 
   if (TRACE_ON(layer_idx)) {
     launch_debug_tensor_stats(hip_stream, "L.q_proj.q", q, n_x);
-    launch_debug_tensor_stats(hip_stream, "L.k_proj.k", k, n_x);
-    launch_debug_tensor_stats(hip_stream, "L.v_proj.v", v, n_x);
+    launch_debug_tensor_stats(hip_stream, "L.k_proj.k", k, n_kv);
+    launch_debug_tensor_stats(hip_stream, "L.v_proj.v", v, n_kv);
   }
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   const char *use_fused_attn_env = std::getenv("GRETA_USE_FUSED_ATTENTION");
   bool use_fused_attn =
       (use_fused_attn_env && std::string(use_fused_attn_env) == "1") &&
-      (S == 1);
+      (S == 1) && (Hkv == Hq);
 
   if (profile_attn)
     ev_rope_start->record(stream_);
@@ -528,22 +539,25 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (use_fused_attn) {
     CHECK_HIP_KERNEL(launch_fused_rope_kv_update_decode(
                          hip_stream, q, k, v, cache_k, cache_v, d_pos,
-                         config_.max_seq_len, H, Dh, config_.rope_base),
+                         config_.max_seq_len, Hq, Dh, config_.rope_base),
                      "Fused RoPE+KV Update");
+    CHECK_HIP_KERNEL(
+        launch_rope(hip_stream, q, S, Hq, Dh, config_.rope_base, d_pos),
+        "RoPE Q (Fused KV)");
   } else {
     if (S == 1) {
       CHECK_HIP_KERNEL(
-          launch_rope(hip_stream, q, S, H, Dh, config_.rope_base, d_pos),
+          launch_rope(hip_stream, q, S, Hq, Dh, config_.rope_base, d_pos),
           "RoPE Q");
       CHECK_HIP_KERNEL(
-          launch_rope(hip_stream, k, S, H, Dh, config_.rope_base, d_pos),
+          launch_rope(hip_stream, k, S, Hkv, Dh, config_.rope_base, d_pos),
           "RoPE K");
     } else {
       CHECK_HIP_KERNEL(
-          launch_rope(hip_stream, q, S, H, Dh, config_.rope_base, pos),
+          launch_rope(hip_stream, q, S, Hq, Dh, config_.rope_base, pos),
           "RoPE Q");
       CHECK_HIP_KERNEL(
-          launch_rope(hip_stream, k, S, H, Dh, config_.rope_base, pos),
+          launch_rope(hip_stream, k, S, Hkv, Dh, config_.rope_base, pos),
           "RoPE K");
     }
   }
@@ -555,13 +569,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (!use_fused_attn) {
     if (S == 1) {
       CHECK_HIP_KERNEL(launch_kv_update(hip_stream, cache_k, cache_v, k, v,
-                                        d_pos, config_.max_seq_len, H, Dh),
+                                        d_pos, config_.max_seq_len, Hkv, Dh),
                        "KV Update");
     } else {
       for (uint32_t s = 0; s < S; ++s) {
         CHECK_HIP_KERNEL(launch_kv_update(hip_stream, cache_k, cache_v,
-                                          k + s * D, v + s * D, pos + s,
-                                          config_.max_seq_len, H, Dh),
+                                          k + s * kv_dim, v + s * kv_dim,
+                                          pos + s, config_.max_seq_len, Hkv,
+                                          Dh),
                          "KV Update");
       }
     }
@@ -577,13 +592,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     CHECK_GRETA(gcore::compute::GretaCompute::attention_decode(
                     stream_, &activations_.q, &activations_.kv_cache_k,
                     &activations_.kv_cache_v, &activations_.d_pos,
-                    &activations_.attn_out, H, Dh, S, config_.max_seq_len,
-                    scale, config_.rope_base),
+                    &activations_.attn_out, Hq, Hkv, Dh, S,
+                    config_.max_seq_len, scale, config_.rope_base),
                 "Attention Core");
   } else {
     CHECK_HIP_KERNEL(launch_flash_attention_prefill(hip_stream, q, k, v,
-                                                    attn_out, S, H, Dh, scale,
-                                                    true),
+                                                    attn_out, S, Hq, Hkv, Dh,
+                                                    scale, true),
                      "Flash Attention Prefill");
   }
 
@@ -618,9 +633,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   }
 
   if (trace_layer) {
-    layer_tracer_.trace_tensor_f16("attn_out", trace_step_,
-                                   static_cast<int>(layer_idx), hip_stream,
-                                   reinterpret_cast<const __half *>(attn_out), n_x);
+    layer_tracer_.trace_tensor("attn_out", trace_step_,
+                               static_cast<int>(layer_idx), hip_stream,
+                               attn_out, n_x);
   }
 
   if (TRACE_ON(layer_idx)) {
@@ -672,12 +687,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 "GEMM W3");
 
     if (trace_layer) {
-      layer_tracer_.trace_tensor_f16("mlp_gate", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(mlp_gate), n_mlp);
-      layer_tracer_.trace_tensor_f16("mlp_up", trace_step_,
-                                     static_cast<int>(layer_idx), hip_stream,
-                                     reinterpret_cast<const __half *>(mlp_up), n_mlp);
+      layer_tracer_.trace_tensor("mlp_gate", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 mlp_gate, n_mlp);
+      layer_tracer_.trace_tensor("mlp_up", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 mlp_up, n_mlp);
     }
 
     if (TRACE_ON(layer_idx)) {
@@ -704,9 +719,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               "GEMM W2");
 
   if (trace_layer) {
-    layer_tracer_.trace_tensor_f16("mlp_out", trace_step_,
-                                   static_cast<int>(layer_idx), hip_stream,
-                                   reinterpret_cast<const __half *>(mlp_out), n_x);
+    layer_tracer_.trace_tensor("mlp_out", trace_step_,
+                               static_cast<int>(layer_idx), hip_stream,
+                               mlp_out, n_x);
   }
 
   if (TRACE_ON(layer_idx)) {

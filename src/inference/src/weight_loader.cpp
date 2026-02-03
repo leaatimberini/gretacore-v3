@@ -615,80 +615,47 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
   const bool is_kv_weight =
       (name.find("attn_k.weight") != std::string::npos ||
        name.find("attn_v.weight") != std::string::npos);
-  if (is_kv_weight && impl_->config.num_heads > 0 &&
-      impl_->config.num_heads_kv > 0 &&
-      impl_->config.num_heads_kv != impl_->config.num_heads) {
-    const uint32_t num_heads = impl_->config.num_heads;
-    const uint32_t num_heads_kv = impl_->config.num_heads_kv;
-    const uint32_t head_dim = impl_->config.head_dim;
-    const uint32_t full_dim = num_heads * head_dim;
-    const uint32_t kv_dim = num_heads_kv * head_dim;
+  if (is_kv_weight && impl_->config.num_heads_kv > 0 &&
+      impl_->config.head_dim > 0) {
+    const uint32_t kv_dim = impl_->config.num_heads_kv * impl_->config.head_dim;
     const uint32_t model_dim = impl_->config.dim;
-
-    if (num_heads % num_heads_kv != 0) {
+    if (it->shape.size() != 2 || kv_dim == 0 || model_dim == 0) {
       if (err) {
-        *err = "GQA KV expansion failed for " + name +
-               ": num_heads not divisible by num_heads_kv (" +
-               std::to_string(num_heads) + " % " +
-               std::to_string(num_heads_kv) + ")";
-      }
-      return false;
-    }
-
-    if (it->shape.size() != 2 || full_dim != model_dim || head_dim == 0 ||
-        kv_dim == 0) {
-      if (err) {
-        *err = "GQA KV expansion failed for " + name +
+        *err = "GQA KV load failed for " + name +
                ": unexpected shape dims or config mismatch. got [" +
                (it->shape.size() > 0 ? std::to_string(it->shape[0]) : "?") +
                "," +
                (it->shape.size() > 1 ? std::to_string(it->shape[1]) : "?") +
-               "], expected [" + std::to_string(kv_dim) + "," +
-               std::to_string(model_dim) + "] or [" +
-               std::to_string(model_dim) + "," +
-               std::to_string(kv_dim) + "]";
+               "]";
       }
       return false;
     }
 
-    const uint32_t group = num_heads / num_heads_kv;
-    std::vector<uint16_t> kv_matrix((size_t)kv_dim * (size_t)model_dim, 0);
-    if (it->shape[0] == kv_dim && it->shape[1] == model_dim) {
-      kv_matrix = fp16;
-    } else if (it->shape[0] == model_dim && it->shape[1] == kv_dim) {
+    if (it->shape[0] == model_dim && it->shape[1] == kv_dim) {
+      std::vector<uint16_t> transposed((size_t)kv_dim * (size_t)model_dim, 0);
       for (uint32_t r = 0; r < kv_dim; ++r) {
         for (uint32_t c = 0; c < model_dim; ++c) {
-          kv_matrix[(size_t)r * model_dim + c] =
+          transposed[(size_t)r * model_dim + c] =
               fp16[(size_t)c * kv_dim + r];
         }
       }
+      fp16.swap(transposed);
+      n_elem = fp16.size();
+      std::cout << "[GRETA_LOAD] Transposed " << name
+                << " from [D, KV] to [KV, D]" << std::endl;
+    } else if (it->shape[0] == kv_dim && it->shape[1] == model_dim) {
+      // Already in expected [KV, D] layout.
+    } else if (kv_dim == model_dim && it->shape[0] == model_dim &&
+               it->shape[1] == model_dim) {
+      // Standard MHA layout, no action.
     } else {
       if (err) {
-        *err = "GQA KV expansion failed for " + name +
+        *err = "GQA KV load failed for " + name +
                ": unsupported shape [" + std::to_string(it->shape[0]) + "," +
                std::to_string(it->shape[1]) + "]";
       }
       return false;
     }
-
-    std::vector<uint16_t> expanded((size_t)full_dim * (size_t)model_dim, 0);
-    for (uint32_t kv_head = 0; kv_head < num_heads_kv; ++kv_head) {
-      for (uint32_t g = 0; g < group; ++g) {
-        uint32_t out_head = kv_head * group + g;
-        for (uint32_t r = 0; r < head_dim; ++r) {
-          size_t src_row = (size_t)kv_head * head_dim + r;
-          size_t dst_row = (size_t)out_head * head_dim + r;
-          std::memcpy(&expanded[dst_row * model_dim],
-                      &kv_matrix[src_row * model_dim],
-                      (size_t)model_dim * sizeof(uint16_t));
-        }
-      }
-    }
-    fp16.swap(expanded);
-    n_elem = fp16.size();
-    std::cout << "[GRETA_LOAD] Expanded " << name << " KV heads "
-              << num_heads_kv << " -> " << num_heads
-              << " (repeat per group)" << std::endl;
   }
 
   size_t ups = n_elem * 2;

@@ -102,26 +102,27 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
 GretaResult GretaCompute::attention_decode(
     GretaStream *stream, GretaMemory *Q, GretaMemory *K_cache,
     GretaMemory *V_cache, GretaMemory *d_pos, GretaMemory *O,
-    uint32_t num_heads, uint32_t head_dim, uint32_t seq_len,
-    uint32_t max_seq_len, float scale, float rope_base) {
+    uint32_t num_heads, uint32_t num_heads_kv, uint32_t head_dim,
+    uint32_t seq_len, uint32_t max_seq_len, float scale, float rope_base) {
   auto *s = static_cast<GretaStreamHip *>(stream);
 
   // Auditoría
   const char *profile_blocks = std::getenv("GRETA_PROFILE_BLOCKS");
   if (profile_blocks && std::string(profile_blocks) == "1") {
-    printf("[GRETA_L1_AUDIT] ATTN Decode | Heads: %u | HeadDim: %u | MaxSeq: "
-           "%u | Scale: %.4f\n",
-           num_heads, head_dim, max_seq_len, scale);
+    printf("[GRETA_L1_AUDIT] ATTN Decode | Heads: %u | KV Heads: %u | "
+           "HeadDim: %u | MaxSeq: %u | Scale: %.4f\n",
+           num_heads, num_heads_kv, head_dim, max_seq_len, scale);
   }
 
-  // Wrap Task 4.3 logic: FlashAttention Decode with Shared-Memory RoPE
-  launch_flash_attention_decode_fused_rope(
+  (void)rope_base;
+  // Non-fused decode path (RoPE applied in scheduler)
+  launch_flash_attention_decode(
       s->handle(), static_cast<const float *>(Q->data()),
       static_cast<const float *>(K_cache->data()),
       static_cast<const float *>(V_cache->data()),
-      static_cast<float *>(O->data()), num_heads,
+      static_cast<float *>(O->data()), num_heads, num_heads_kv,
       static_cast<const uint32_t *>(d_pos->data()), max_seq_len, head_dim,
-      scale, rope_base);
+      scale);
 
   return GretaResult::SUCCESS;
 }

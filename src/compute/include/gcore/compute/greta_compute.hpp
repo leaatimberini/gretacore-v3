@@ -20,8 +20,9 @@ public:
   static GretaResult
   attention_decode(GretaStream *stream, GretaMemory *Q, GretaMemory *K_cache,
                    GretaMemory *V_cache, GretaMemory *d_pos, GretaMemory *O,
-                   uint32_t num_heads, uint32_t head_dim, uint32_t seq_len,
-                   uint32_t max_seq_len, float scale, float rope_base);
+                   uint32_t num_heads, uint32_t num_heads_kv,
+                   uint32_t head_dim, uint32_t seq_len, uint32_t max_seq_len,
+                   float scale, float rope_base);
 
   static GretaResult rmsnorm(GretaStream *stream, GretaMemory *input,
                              GretaMemory *weight, GretaMemory *output,

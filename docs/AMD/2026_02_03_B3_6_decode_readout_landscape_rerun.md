@@ -24,8 +24,9 @@ The D2H tracing path was hardened to isolate and prevent the `hipMemcpy D2H fail
 - Build unblock:
   - Se removió `src/rt/backend/hip/src/arena.cpp` de `tools/inference/CMakeLists.txt` porque el archivo no existe en este repo y no hay referencias activas al mismo.
   - Se eliminó `tools/inference/CMakeCache.txt` (archivo de build trackeado) para permitir reconfiguración out-of-source en distintos entornos.
-- GQA KV workaround:
-  - Expansión de `attn_k.weight`/`attn_v.weight` cuando `num_heads_kv < num_heads` para evitar accesos ilegales (replica heads KV por grupo), aceptando shapes `[kv_dim, D]` o `[D, kv_dim]` (transposición automática si corresponde).
+- GQA KV soporte:
+  - Ajuste de pipeline a `num_heads_kv` (buffers/KV-cache/kernels) y transposición automática de `attn_k.weight`/`attn_v.weight` si vienen en layout `[D, KV]` (se normaliza a `[KV, D]`).
+  - Decode usa kernel no-fused con RoPE aplicado en scheduler; prefill y decode mapean `kv_head = head / group`.
 
 ## Reproducción local (CPU-only / validación de offsets)
 Comandos previstos:
@@ -81,7 +82,7 @@ Cuando `GRETA_TRACE_*` esté activo:
 - `[GRETA_TRACE_D2H] tensor=... step=... layer=... src_ptr=... alloc_bytes=... offset_bytes=... size_bytes=...`
 - `[GRETA_TRACE_SHAPE] ...` si hay inconsistencia de configuración.
 Durante carga de pesos (si aplica GQA):
-- `[GRETA_LOAD] Expanded blk.X.attn_[k|v].weight KV heads A -> B (repeat per group)`
+- `[GRETA_LOAD] Transposed blk.X.attn_[k|v].weight from [D, KV] to [KV, D]`
 
 ## Criterio de éxito B3.6
 - No hay crash en `hipMemcpy D2H`.

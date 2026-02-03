@@ -75,13 +75,14 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
  */
 void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
-                                   uint32_t num_heads, uint32_t seq_len,
-                                   uint32_t max_seq_len, uint32_t head_dim,
-                                   float scale);
+                                   uint32_t num_heads, uint32_t num_heads_kv,
+                                   uint32_t seq_len, uint32_t max_seq_len,
+                                   uint32_t head_dim, float scale);
 
 void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
-                                   uint32_t num_heads, const uint32_t *d_pos,
+                                   uint32_t num_heads, uint32_t num_heads_kv,
+                                   const uint32_t *d_pos,
                                    uint32_t max_seq_len, uint32_t head_dim,
                                    float scale);
 
@@ -105,7 +106,7 @@ void launch_flash_attention_decode(hipStream_t stream, const float *Q,
 void launch_flash_attention_prefill(hipStream_t stream, const float *Q,
                                     const float *K, const float *V, float *O,
                                     uint32_t seq_len, uint32_t num_heads,
-                                    uint32_t head_dim, float scale,
-                                    bool causal);
+                                    uint32_t num_heads_kv, uint32_t head_dim,
+                                    float scale, bool causal);
 
 } // namespace gcore::rt::hip::kernels

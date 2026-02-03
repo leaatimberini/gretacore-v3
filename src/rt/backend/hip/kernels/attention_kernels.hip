@@ -140,16 +140,20 @@ void launch_kv_update(hipStream_t stream, float *cache_k, float *cache_v,
 
 __device__ void flash_attention_decode_logic(
     const float *__restrict__ Q,      // [num_heads, head_dim]
-    const float *__restrict__ K,      // [num_heads, max_seq, head_dim]
-    const float *__restrict__ V,      // [num_heads, max_seq, head_dim]
+    const float *__restrict__ K,      // [num_heads_kv, max_seq, head_dim]
+    const float *__restrict__ V,      // [num_heads_kv, max_seq, head_dim]
     float *__restrict__ O,            // [num_heads, head_dim]
-    uint32_t num_heads, uint32_t seq_len, uint32_t max_seq_len, 
-    uint32_t head_dim, float scale) {
+    uint32_t num_heads, uint32_t num_heads_kv, uint32_t seq_len,
+    uint32_t max_seq_len, uint32_t head_dim, float scale) {
 
   uint32_t head = blockIdx.x;
   uint32_t tid = threadIdx.x;
   
   if (head >= num_heads) return;
+  if (num_heads_kv == 0) return;
+  uint32_t group = num_heads / num_heads_kv;
+  uint32_t kv_head = (group > 0) ? (head / group) : 0;
+  if (kv_head >= num_heads_kv) return;
   
   __shared__ float s_score[FLASH_BLOCK_SIZE];
   __shared__ float s_max;
@@ -161,8 +165,8 @@ __device__ void flash_attention_decode_logic(
   __syncthreads();
 
   const float *q_ptr = Q + head * head_dim;
-  const float *k_ptr = K + head * max_seq_len * head_dim;
-  const float *v_ptr = V + head * max_seq_len * head_dim;
+  const float *k_ptr = K + kv_head * max_seq_len * head_dim;
+  const float *v_ptr = V + kv_head * max_seq_len * head_dim;
   float *o_ptr = O + head * head_dim;
 
   for (uint32_t k_start = 0; k_start < seq_len; k_start += FLASH_BLOCK_SIZE) {
@@ -241,51 +245,65 @@ __device__ void flash_attention_decode_logic(
 
 __global__ void flash_attention_decode_kernel(
     const float *__restrict__ Q, const float *__restrict__ K, const float *__restrict__ V,
-    float *__restrict__ O, uint32_t num_heads, uint32_t seq_len, uint32_t max_seq_len, 
-    uint32_t head_dim, float scale) {
-  flash_attention_decode_logic(Q, K, V, O, num_heads, seq_len, max_seq_len, head_dim, scale);
+    float *__restrict__ O, uint32_t num_heads, uint32_t num_heads_kv,
+    uint32_t seq_len, uint32_t max_seq_len, uint32_t head_dim, float scale) {
+  flash_attention_decode_logic(Q, K, V, O, num_heads, num_heads_kv, seq_len,
+                               max_seq_len, head_dim, scale);
 }
 
 __global__ void flash_attention_decode_kernel_p(
     const float *__restrict__ Q, const float *__restrict__ K, const float *__restrict__ V,
-    float *__restrict__ O, uint32_t num_heads, const uint32_t *pos_ptr, uint32_t max_seq_len, 
-    uint32_t head_dim, float scale) {
-  flash_attention_decode_logic(Q, K, V, O, num_heads, *pos_ptr, max_seq_len, head_dim, scale);
+    float *__restrict__ O, uint32_t num_heads, uint32_t num_heads_kv,
+    const uint32_t *pos_ptr, uint32_t max_seq_len, uint32_t head_dim,
+    float scale) {
+  flash_attention_decode_logic(Q, K, V, O, num_heads, num_heads_kv, *pos_ptr,
+                               max_seq_len, head_dim, scale);
 }
 
 void launch_flash_attention_decode(hipStream_t stream, 
                                    const float *Q, const float *K, const float *V,
-                                   float *O, uint32_t num_heads, uint32_t seq_len, 
-                                   uint32_t max_seq_len, uint32_t head_dim, float scale) {
+                                   float *O, uint32_t num_heads,
+                                   uint32_t num_heads_kv, uint32_t seq_len,
+                                   uint32_t max_seq_len, uint32_t head_dim,
+                                   float scale) {
   dim3 grid(num_heads);
   dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
   flash_attention_decode_kernel<<<grid, block, 0, stream>>>(
-      Q, K, V, O, num_heads, seq_len, max_seq_len, head_dim, scale);
+      Q, K, V, O, num_heads, num_heads_kv, seq_len, max_seq_len, head_dim,
+      scale);
 }
 
 void launch_flash_attention_decode(hipStream_t stream, 
                                    const float *Q, const float *K, const float *V,
-                                   float *O, uint32_t num_heads, const uint32_t *d_pos,
-                                   uint32_t max_seq_len, uint32_t head_dim, float scale) {
+                                   float *O, uint32_t num_heads,
+                                   uint32_t num_heads_kv,
+                                   const uint32_t *d_pos,
+                                   uint32_t max_seq_len, uint32_t head_dim,
+                                   float scale) {
   dim3 grid(num_heads);
   dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
   flash_attention_decode_kernel_p<<<grid, block, 0, stream>>>(
-      Q, K, V, O, num_heads, d_pos, max_seq_len, head_dim, scale);
+      Q, K, V, O, num_heads, num_heads_kv, d_pos, max_seq_len, head_dim,
+      scale);
 }
 
 
 
 __global__ void flash_attention_prefill_kernel(
     const float *__restrict__ Q,      // [seq_len, num_heads, head_dim]
-    const float *__restrict__ K,      // [seq_len, num_heads, head_dim]
-    const float *__restrict__ V,      // [seq_len, num_heads, head_dim]
+    const float *__restrict__ K,      // [seq_len, num_heads_kv, head_dim]
+    const float *__restrict__ V,      // [seq_len, num_heads_kv, head_dim]
     float *__restrict__ O,            // [seq_len, num_heads, head_dim]
-    uint32_t seq_len, uint32_t num_heads, uint32_t head_dim,
-    float scale, bool causal) {
+    uint32_t seq_len, uint32_t num_heads, uint32_t num_heads_kv,
+    uint32_t head_dim, float scale, bool causal) {
 
   uint32_t head = blockIdx.x;
   uint32_t q_block = blockIdx.y;
   uint32_t tid = threadIdx.x;
+  if (num_heads_kv == 0) return;
+  uint32_t group = num_heads / num_heads_kv;
+  uint32_t kv_head = (group > 0) ? (head / group) : 0;
+  if (kv_head >= num_heads_kv) return;
   
   uint32_t q_start = q_block * FLASH_BLOCK_SIZE;
   if (q_start >= seq_len) return;
@@ -309,7 +327,8 @@ __global__ void flash_attention_prefill_kernel(
       float dot = 0.0f;
       for (uint32_t d = 0; d < head_dim; ++d) {
         uint32_t q_off = q_idx * num_heads * head_dim + head * head_dim + d;
-        uint32_t k_off = k_idx * num_heads * head_dim + head * head_dim + d;
+        uint32_t k_off =
+            k_idx * num_heads_kv * head_dim + kv_head * head_dim + d;
         dot += Q[q_off] * K[k_off];
       }
       float s = dot * scale;
@@ -320,7 +339,8 @@ __global__ void flash_attention_prefill_kernel(
       l = correction * l + p;
       
       for (uint32_t d = 0; d < head_dim; ++d) {
-        uint32_t v_off = k_idx * num_heads * head_dim + head * head_dim + d;
+        uint32_t v_off =
+            k_idx * num_heads_kv * head_dim + kv_head * head_dim + d;
         o[d] = correction * o[d] + p * V[v_off];
       }
       m = m_new;
@@ -337,12 +357,13 @@ __global__ void flash_attention_prefill_kernel(
 
 void launch_flash_attention_prefill(hipStream_t stream,
                                     const float *Q, const float *K, const float *V,
-                                    float *O, uint32_t seq_len, uint32_t num_heads, 
-                                    uint32_t head_dim, float scale, bool causal) {
+                                    float *O, uint32_t seq_len, uint32_t num_heads,
+                                    uint32_t num_heads_kv, uint32_t head_dim,
+                                    float scale, bool causal) {
   dim3 grid(num_heads, (seq_len + FLASH_BLOCK_SIZE - 1) / FLASH_BLOCK_SIZE);
   dim3 block(FLASH_BLOCK_SIZE);
   flash_attention_prefill_kernel<<<grid, block, 0, stream>>>(
-      Q, K, V, O, seq_len, num_heads, head_dim, scale, causal);
+      Q, K, V, O, seq_len, num_heads, num_heads_kv, head_dim, scale, causal);
 }
 
 } // namespace gcore::rt::hip::kernels
