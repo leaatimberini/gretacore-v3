@@ -91,10 +91,16 @@ public:
                std::string *err);
 
   // Sampling
-  int32_t sample_greedy_gpu(std::string *err);
+  int32_t sample_greedy_gpu(size_t logits_offset_bytes, std::string *err);
 
   /// Get the final hidden state buffer.
   gcore::rt::hip::Buffer &get_hidden_state();
+
+  /// Get the final RMSNorm output buffer.
+  gcore::rt::hip::Buffer &get_norm_out();
+
+  /// Get the final RMSNorm output buffer (const).
+  const gcore::rt::hip::Buffer &get_norm_out() const;
 
   /// Get the final logits buffer.
   const gcore::rt::hip::Buffer &get_logits() const;

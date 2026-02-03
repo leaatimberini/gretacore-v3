@@ -31,6 +31,43 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
+class GretaMemoryView final : public gcore::rt::GretaMemory {
+public:
+  GretaMemoryView(gcore::rt::GretaMemory *base, size_t offset_bytes)
+      : base_(base), offset_bytes_(offset_bytes) {}
+
+  void *data() override {
+    return static_cast<char *>(base_->data()) + offset_bytes_;
+  }
+  const void *data() const override {
+    return static_cast<const char *>(base_->data()) + offset_bytes_;
+  }
+  size_t size() const override {
+    size_t base_size = base_->size();
+    return offset_bytes_ <= base_size ? (base_size - offset_bytes_) : 0;
+  }
+
+  gcore::rt::GretaDataType data_type() const override {
+    return base_->data_type();
+  }
+  gcore::rt::GretaQuantInfo quant_info() const override {
+    return base_->quant_info();
+  }
+
+  bool copy_from_host(const void *src, size_t size) override {
+    hipError_t res = hipMemcpy(data(), src, size, hipMemcpyHostToDevice);
+    return res == hipSuccess;
+  }
+  bool copy_to_host(void *dst, size_t size) const override {
+    hipError_t res = hipMemcpy(dst, data(), size, hipMemcpyDeviceToHost);
+    return res == hipSuccess;
+  }
+
+private:
+  gcore::rt::GretaMemory *base_;
+  size_t offset_bytes_;
+};
+
 static bool trace_kernel_sync_enabled() {
   static const bool enabled =
       env_flag("GRETA_TRACE_READOUT") || env_flag("GRETA_TRACE_PREFILL_DECODE") ||
@@ -918,9 +955,24 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                                           D, config_.rms_eps),
                      "Final RMSNorm");
 
+    size_t logits_offset_bytes =
+        static_cast<size_t>(seq_start) * static_cast<size_t>(V) * sizeof(float);
+    size_t logits_bytes =
+        static_cast<size_t>(S) * static_cast<size_t>(V) * sizeof(float);
+    if (logits_offset_bytes + logits_bytes > logits_.size()) {
+      if (err) {
+        *err = "LM Head logits offset out of range: offset=" +
+               std::to_string(logits_offset_bytes) +
+               " bytes=" + std::to_string(logits_bytes) +
+               " alloc=" + std::to_string(logits_.size());
+      }
+      return false;
+    }
+    GretaMemoryView logits_view(&logits_, logits_offset_bytes);
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &output_weight_, &logits_, S, V, D),
+                                           &output_weight_, &logits_view, S, V,
+                                           D),
         "LM Head");
 
     if (use_graph && !graph_captured_) {
@@ -938,16 +990,28 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
 gcore::rt::hip::Buffer &BlockScheduler::get_hidden_state() {
   return activations_.x;
 }
+
+gcore::rt::hip::Buffer &BlockScheduler::get_norm_out() {
+  return activations_.norm_out;
+}
+
+const gcore::rt::hip::Buffer &BlockScheduler::get_norm_out() const {
+  return activations_.norm_out;
+}
+
 const gcore::rt::hip::Buffer &BlockScheduler::get_logits() const {
   return logits_;
 }
 
-int32_t BlockScheduler::sample_greedy_gpu(std::string *err) {
+int32_t BlockScheduler::sample_greedy_gpu(size_t logits_offset_bytes,
+                                          std::string *err) {
+  (void)err;
   int32_t top_id = 0;
   hipStream_t hip_stream =
       static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
-  rt::hip::kernels::launch_argmax(hip_stream,
-                                  static_cast<const float *>(logits_.data()),
+  const float *logits_base = static_cast<const float *>(logits_.data());
+  const size_t offset_elems = logits_offset_bytes / sizeof(float);
+  rt::hip::kernels::launch_argmax(hip_stream, logits_base + offset_elems,
                                   config_.vocab_size, &top_id);
   return top_id;
 }

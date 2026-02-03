@@ -55,6 +55,36 @@ static uint64_t hash_f32(const float *p, size_t n) {
   return h;
 }
 
+struct Top2Logits {
+  int top1_id = -1;
+  float top1_logit = 0.0f;
+  int top2_id = -1;
+  float top2_logit = 0.0f;
+};
+
+static Top2Logits top2_logits(const float *p, size_t n) {
+  Top2Logits out{};
+  if (n == 0)
+    return out;
+  out.top1_id = 0;
+  out.top1_logit = p[0];
+  out.top2_id = 0;
+  out.top2_logit = -1e38f;
+  for (size_t i = 1; i < n; ++i) {
+    float v = p[i];
+    if (v > out.top1_logit) {
+      out.top2_logit = out.top1_logit;
+      out.top2_id = out.top1_id;
+      out.top1_logit = v;
+      out.top1_id = static_cast<int>(i);
+    } else if (v > out.top2_logit) {
+      out.top2_logit = v;
+      out.top2_id = static_cast<int>(i);
+    }
+  }
+  return out;
+}
+
 static void append_line(const char *path, const std::string &line) {
   if (!path || !*path)
     return;
@@ -64,29 +94,79 @@ static void append_line(const char *path, const std::string &line) {
   f << line << "\n";
 }
 
-static void log_readout(const char *path, const char *phase, int step,
-                        size_t token_index, size_t hidden_offset_bytes,
-                        uintptr_t hidden_ptr, const F32Stats &hstats,
-                        uint64_t hhash, size_t logits_offset_bytes,
-                        uintptr_t logits_ptr, const F32Stats &lstats,
-                        uint64_t lhash, size_t vocab) {
+struct ReadoutTrace {
+  const char *phase = nullptr;
+  int step = 0;
+  size_t tokens_total = 0;
+  size_t seq_len = 0;
+  size_t pos_id = 0;
+  size_t token_index = 0;
+  size_t expected_last_index = 0;
+  size_t hidden_token_index_used = 0;
+  bool readout_mismatch = false;
+  size_t hidden_stride_bytes = 0;
+  size_t hidden_offset_bytes = 0;
+  size_t hidden_alloc_bytes = 0;
+  uintptr_t hidden_src_ptr = 0;
+  F32Stats hidden_stats{};
+  uint64_t hidden_hash = 0;
+  uintptr_t rms_in_ptr = 0;
+  uintptr_t rms_out_ptr = 0;
+  uintptr_t lm_in_ptr = 0;
+  size_t rms_offset_bytes = 0;
+  F32Stats rms_stats{};
+  uint64_t rms_hash = 0;
+  size_t logits_offset_bytes = 0;
+  uintptr_t logits_ptr = 0;
+  F32Stats logits_stats{};
+  uint64_t logits_hash = 0;
+  int top1_id = -1;
+  float top1_logit = 0.0f;
+  int top2_id = -1;
+  float top2_logit = 0.0f;
+  float gap = 0.0f;
+  size_t vocab = 0;
+};
+
+static void log_readout(const char *path, const ReadoutTrace &t) {
   std::ostringstream oss;
-  oss << "{\"phase\":\"" << phase << "\""
-      << ",\"step\":" << step
-      << ",\"token_index\":" << token_index
-      << ",\"hidden_offset\":" << hidden_offset_bytes
-      << ",\"hidden_ptr\":" << hidden_ptr
-      << ",\"hidden_hash\":" << hhash
-      << ",\"hidden_min\":" << hstats.min
-      << ",\"hidden_max\":" << hstats.max
-      << ",\"hidden_mean\":" << hstats.mean
-      << ",\"logits_offset\":" << logits_offset_bytes
-      << ",\"logits_ptr\":" << logits_ptr
-      << ",\"logits_hash\":" << lhash
-      << ",\"logits_min\":" << lstats.min
-      << ",\"logits_max\":" << lstats.max
-      << ",\"logits_mean\":" << lstats.mean
-      << ",\"vocab\":" << vocab
+  oss << "{\"phase\":\"" << (t.phase ? t.phase : "") << "\""
+      << ",\"step\":" << t.step
+      << ",\"tokens_total\":" << t.tokens_total
+      << ",\"seq_len\":" << t.seq_len
+      << ",\"pos_id\":" << t.pos_id
+      << ",\"token_index\":" << t.token_index
+      << ",\"expected_last_index\":" << t.expected_last_index
+      << ",\"hidden_token_index_used\":" << t.hidden_token_index_used
+      << ",\"readout_mismatch\":" << (t.readout_mismatch ? "true" : "false")
+      << ",\"hidden_src_ptr\":" << t.hidden_src_ptr
+      << ",\"hidden_alloc_bytes\":" << t.hidden_alloc_bytes
+      << ",\"hidden_stride_bytes\":" << t.hidden_stride_bytes
+      << ",\"hidden_offset_bytes\":" << t.hidden_offset_bytes
+      << ",\"hidden_hash\":" << t.hidden_hash
+      << ",\"hidden_min\":" << t.hidden_stats.min
+      << ",\"hidden_max\":" << t.hidden_stats.max
+      << ",\"hidden_mean\":" << t.hidden_stats.mean
+      << ",\"rms_in_ptr\":" << t.rms_in_ptr
+      << ",\"rms_out_ptr\":" << t.rms_out_ptr
+      << ",\"lm_in_ptr\":" << t.lm_in_ptr
+      << ",\"rms_offset_bytes\":" << t.rms_offset_bytes
+      << ",\"rms_hash\":" << t.rms_hash
+      << ",\"rms_min\":" << t.rms_stats.min
+      << ",\"rms_max\":" << t.rms_stats.max
+      << ",\"rms_mean\":" << t.rms_stats.mean
+      << ",\"logits_offset_bytes\":" << t.logits_offset_bytes
+      << ",\"logits_ptr\":" << t.logits_ptr
+      << ",\"logits_hash\":" << t.logits_hash
+      << ",\"logits_min\":" << t.logits_stats.min
+      << ",\"logits_max\":" << t.logits_stats.max
+      << ",\"logits_mean\":" << t.logits_stats.mean
+      << ",\"top1_id\":" << t.top1_id
+      << ",\"top1_logit\":" << t.top1_logit
+      << ",\"top2_id\":" << t.top2_id
+      << ",\"top2_logit\":" << t.top2_logit
+      << ",\"gap\":" << t.gap
+      << ",\"vocab\":" << t.vocab
       << "}";
   append_line(path, oss.str());
 }
@@ -321,8 +401,11 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape;
 
   std::vector<float> hidden_host;
-  if (trace_readout || trace_prefill_decode)
+  std::vector<float> rms_host;
+  if (trace_readout || trace_prefill_decode) {
     hidden_host.resize(config_.dim);
+    rms_host.resize(config_.dim);
+  }
 
   if (trace_any) {
     if (!validate_trace_shapes(config_, err)) {
@@ -337,8 +420,11 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   }
 
   // Sample first generated token from the last set of logits in the prefill
-  size_t last_token_offset =
-      (prompt_tokens.size() - 1) * config_.vocab_size * sizeof(float);
+  size_t last_token_offset = 0;
+  if (!prompt_tokens.empty()) {
+    last_token_offset = (prompt_tokens.size() - 1) * config_.vocab_size *
+                        sizeof(float);
+  }
   const auto &logits_buf = scheduler_->get_logits();
   log_d2h_trace(trace_any, "logits", 0, -1, logits_buf, last_token_offset,
                 config_.vocab_size * sizeof(float));
@@ -349,9 +435,16 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   }
 
   if (trace_readout || trace_prefill_decode) {
-    const size_t token_index = prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
-    const size_t hidden_offset = token_index * config_.dim * sizeof(float);
+    const size_t tokens_total = prompt_tokens.size();
+    const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
+    const size_t expected_last_index = token_index;
+    const size_t hidden_token_index_used = token_index;
+    const size_t seq_len = tokens_total;
+    const size_t pos_id = token_index;
+    const size_t hidden_stride_bytes = config_.dim * sizeof(float);
+    const size_t hidden_offset = hidden_token_index_used * hidden_stride_bytes;
     const auto &hidden_buf = scheduler_->get_hidden_state();
+    const auto &rms_buf = scheduler_->get_norm_out();
     log_d2h_trace(trace_any, "hidden", 0, -1, hidden_buf, hidden_offset,
                   config_.dim * sizeof(float));
     if (!scheduler_->get_hidden_state().copy_to_host_offset(
@@ -359,21 +452,64 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             config_.dim * sizeof(float), err)) {
       return output;
     }
+    const size_t rms_offset = hidden_token_index_used * hidden_stride_bytes;
+    if (!rms_buf.copy_to_host_offset(rms_host.data(), rms_offset,
+                                     config_.dim * sizeof(float), err)) {
+      return output;
+    }
     const F32Stats hstats = stats_f32(hidden_host.data(), config_.dim);
     const uint64_t hhash = hash_f32(hidden_host.data(), config_.dim);
+    const F32Stats rstats = stats_f32(rms_host.data(), config_.dim);
+    const uint64_t rhash = hash_f32(rms_host.data(), config_.dim);
     const F32Stats lstats = stats_f32(logits_host.data(), config_.vocab_size);
     const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
-    const uintptr_t hidden_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_hidden_state().data());
-    const uintptr_t logits_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_logits().data());
+    const Top2Logits top2 = top2_logits(logits_host.data(), config_.vocab_size);
+    const float gap = top2.top1_logit - top2.top2_logit;
+    const uintptr_t hidden_ptr =
+        reinterpret_cast<uintptr_t>(hidden_buf.data());
+    const uintptr_t rms_ptr =
+        reinterpret_cast<uintptr_t>(rms_buf.data());
+    const uintptr_t logits_ptr =
+        reinterpret_cast<uintptr_t>(logits_buf.data());
+
+    ReadoutTrace trace{};
+    trace.phase = "prefill_last";
+    trace.step = 0;
+    trace.tokens_total = tokens_total;
+    trace.seq_len = seq_len;
+    trace.pos_id = pos_id;
+    trace.token_index = token_index;
+    trace.expected_last_index = expected_last_index;
+    trace.hidden_token_index_used = hidden_token_index_used;
+    trace.readout_mismatch = (hidden_token_index_used != expected_last_index);
+    trace.hidden_stride_bytes = hidden_stride_bytes;
+    trace.hidden_offset_bytes = hidden_offset;
+    trace.hidden_alloc_bytes = hidden_buf.size();
+    trace.hidden_src_ptr = hidden_ptr;
+    trace.hidden_stats = hstats;
+    trace.hidden_hash = hhash;
+    trace.rms_in_ptr = hidden_ptr;
+    trace.rms_out_ptr = rms_ptr;
+    trace.lm_in_ptr = rms_ptr;
+    trace.rms_offset_bytes = rms_offset;
+    trace.rms_stats = rstats;
+    trace.rms_hash = rhash;
+    trace.logits_offset_bytes = last_token_offset;
+    trace.logits_ptr = logits_ptr;
+    trace.logits_stats = lstats;
+    trace.logits_hash = lhash;
+    trace.top1_id = top2.top1_id;
+    trace.top1_logit = top2.top1_logit;
+    trace.top2_id = top2.top2_id;
+    trace.top2_logit = top2.top2_logit;
+    trace.gap = gap;
+    trace.vocab = config_.vocab_size;
+
     if (trace_readout && trace_readout_out) {
-      log_readout(trace_readout_out, "prefill", 0, token_index, hidden_offset,
-                  hidden_ptr, hstats, hhash, last_token_offset, logits_ptr,
-                  lstats, lhash, config_.vocab_size);
+      log_readout(trace_readout_out, trace);
     }
     if (trace_prefill_decode && trace_prefill_decode_out) {
-      log_readout(trace_prefill_decode_out, "prefill", 0, token_index, hidden_offset,
-                  hidden_ptr, hstats, hhash, last_token_offset, logits_ptr,
-                  lstats, lhash, config_.vocab_size);
+      log_readout(trace_prefill_decode_out, trace);
     }
   }
   if (trace_landscape && trace_landscape_out) {
@@ -442,21 +578,32 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       break;
     }
     const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode;
+    const size_t decode_logits_offset =
+        (output.size() - 1) * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
-      next_token = scheduler_->sample_greedy_gpu(err);
+      next_token = scheduler_->sample_greedy_gpu(decode_logits_offset, err);
     } else {
       const auto &logits_buf = scheduler_->get_logits();
-      log_d2h_trace(trace_any, "logits", i, -1, logits_buf, 0,
-                    config_.vocab_size * sizeof(float));
-      if (!scheduler_->get_logits().copy_to_host(
-              logits_host.data(), config_.vocab_size * sizeof(float), err)) {
+      log_d2h_trace(trace_any, "logits", i, -1, logits_buf,
+                    decode_logits_offset, config_.vocab_size * sizeof(float));
+      if (!scheduler_->get_logits().copy_to_host_offset(
+              logits_host.data(), decode_logits_offset,
+              config_.vocab_size * sizeof(float), err)) {
         break;
       }
 
       if (trace_readout || trace_prefill_decode) {
-        const size_t token_index = output.size() - 1;
-        const size_t hidden_offset = 0;
+        const size_t tokens_total = output.size();
+        const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
+        const size_t expected_last_index = token_index;
+        const size_t hidden_token_index_used = 0;
+        const size_t seq_len = 1;
+        const size_t pos_id = token_index;
+        const size_t hidden_stride_bytes = config_.dim * sizeof(float);
+        const size_t hidden_offset =
+            hidden_token_index_used * hidden_stride_bytes;
         const auto &hidden_buf = scheduler_->get_hidden_state();
+        const auto &rms_buf = scheduler_->get_norm_out();
         log_d2h_trace(trace_any, "hidden", i, -1, hidden_buf, hidden_offset,
                       config_.dim * sizeof(float));
         if (!scheduler_->get_hidden_state().copy_to_host_offset(
@@ -464,21 +611,68 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
                 config_.dim * sizeof(float), err)) {
           break;
         }
+        const size_t rms_offset = hidden_token_index_used * hidden_stride_bytes;
+        if (!rms_buf.copy_to_host_offset(rms_host.data(), rms_offset,
+                                         config_.dim * sizeof(float), err)) {
+          break;
+        }
         const F32Stats hstats = stats_f32(hidden_host.data(), config_.dim);
         const uint64_t hhash = hash_f32(hidden_host.data(), config_.dim);
-        const F32Stats lstats = stats_f32(logits_host.data(), config_.vocab_size);
-        const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
-        const uintptr_t hidden_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_hidden_state().data());
-        const uintptr_t logits_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_logits().data());
+        const F32Stats rstats = stats_f32(rms_host.data(), config_.dim);
+        const uint64_t rhash = hash_f32(rms_host.data(), config_.dim);
+        const F32Stats lstats =
+            stats_f32(logits_host.data(), config_.vocab_size);
+        const uint64_t lhash =
+            hash_f32(logits_host.data(), config_.vocab_size);
+        const Top2Logits top2 =
+            top2_logits(logits_host.data(), config_.vocab_size);
+        const float gap = top2.top1_logit - top2.top2_logit;
+        const uintptr_t hidden_ptr =
+            reinterpret_cast<uintptr_t>(hidden_buf.data());
+        const uintptr_t rms_ptr =
+            reinterpret_cast<uintptr_t>(rms_buf.data());
+        const uintptr_t logits_ptr =
+            reinterpret_cast<uintptr_t>(logits_buf.data());
+
+        ReadoutTrace trace{};
+        trace.phase = "decode";
+        trace.step = i;
+        trace.tokens_total = tokens_total;
+        trace.seq_len = seq_len;
+        trace.pos_id = pos_id;
+        trace.token_index = token_index;
+        trace.expected_last_index = expected_last_index;
+        trace.hidden_token_index_used = hidden_token_index_used;
+        trace.readout_mismatch =
+            (hidden_token_index_used != expected_last_index);
+        trace.hidden_stride_bytes = hidden_stride_bytes;
+        trace.hidden_offset_bytes = hidden_offset;
+        trace.hidden_alloc_bytes = hidden_buf.size();
+        trace.hidden_src_ptr = hidden_ptr;
+        trace.hidden_stats = hstats;
+        trace.hidden_hash = hhash;
+        trace.rms_in_ptr = hidden_ptr;
+        trace.rms_out_ptr = rms_ptr;
+        trace.lm_in_ptr = rms_ptr;
+        trace.rms_offset_bytes = rms_offset;
+        trace.rms_stats = rstats;
+        trace.rms_hash = rhash;
+        trace.logits_offset_bytes = decode_logits_offset;
+        trace.logits_ptr = logits_ptr;
+        trace.logits_stats = lstats;
+        trace.logits_hash = lhash;
+        trace.top1_id = top2.top1_id;
+        trace.top1_logit = top2.top1_logit;
+        trace.top2_id = top2.top2_id;
+        trace.top2_logit = top2.top2_logit;
+        trace.gap = gap;
+        trace.vocab = config_.vocab_size;
+
         if (trace_readout && trace_readout_out) {
-          log_readout(trace_readout_out, "decode", i, token_index, hidden_offset,
-                      hidden_ptr, hstats, hhash, 0, logits_ptr,
-                      lstats, lhash, config_.vocab_size);
+          log_readout(trace_readout_out, trace);
         }
         if (trace_prefill_decode && trace_prefill_decode_out) {
-          log_readout(trace_prefill_decode_out, "decode", i, token_index, hidden_offset,
-                      hidden_ptr, hstats, hhash, 0, logits_ptr,
-                      lstats, lhash, config_.vocab_size);
+          log_readout(trace_prefill_decode_out, trace);
         }
       }
 
