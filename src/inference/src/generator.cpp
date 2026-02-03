@@ -189,6 +189,7 @@ static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
   return best_id >= 0;
 }
 
+
 static void append_line(const char *path, const std::string &line) {
   if (!path || !*path)
     return;
@@ -305,8 +306,22 @@ struct DeltaTrace {
   float top2_logit = 0.0f;
   float gap = 0.0f;
   std::string lm_head_route;
+  std::string lm_head_force_route;
   std::string lm_head_quant_mode;
   std::string lm_head_layout_used;
+  std::string lm_head_layout_assumed;
+  std::string lm_head_layout_actual;
+  uint32_t lm_head_m = 0;
+  uint32_t lm_head_n = 0;
+  uint32_t lm_head_k = 0;
+  uint32_t lm_head_vocab = 0;
+  uint32_t lm_head_lda = 0;
+  uint32_t lm_head_ldb = 0;
+  uint32_t lm_head_ldc = 0;
+  uintptr_t lm_head_a_ptr = 0;
+  uintptr_t lm_head_b_ptr_base = 0;
+  uintptr_t lm_head_b_ptr_effective = 0;
+  uintptr_t lm_head_c_ptr = 0;
   int lm_head_dtype_a = 0;
   int lm_head_dtype_b = 0;
   int lm_head_accum_dtype = 0;
@@ -349,8 +364,22 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"top2_logit\":" << t.top2_logit
       << ",\"gap\":" << t.gap
       << ",\"lm_head_route\":\"" << t.lm_head_route << "\""
+      << ",\"lm_head_force_route\":\"" << t.lm_head_force_route << "\""
       << ",\"lm_head_quant_mode\":\"" << t.lm_head_quant_mode << "\""
       << ",\"lm_head_layout_used\":\"" << t.lm_head_layout_used << "\""
+      << ",\"lm_head_layout_assumed\":\"" << t.lm_head_layout_assumed << "\""
+      << ",\"lm_head_layout_actual\":\"" << t.lm_head_layout_actual << "\""
+      << ",\"lm_head_m\":" << t.lm_head_m
+      << ",\"lm_head_n\":" << t.lm_head_n
+      << ",\"lm_head_k\":" << t.lm_head_k
+      << ",\"lm_head_vocab\":" << t.lm_head_vocab
+      << ",\"lm_head_lda\":" << t.lm_head_lda
+      << ",\"lm_head_ldb\":" << t.lm_head_ldb
+      << ",\"lm_head_ldc\":" << t.lm_head_ldc
+      << ",\"lm_head_a_ptr\":" << t.lm_head_a_ptr
+      << ",\"lm_head_b_ptr_base\":" << t.lm_head_b_ptr_base
+      << ",\"lm_head_b_ptr_effective\":" << t.lm_head_b_ptr_effective
+      << ",\"lm_head_c_ptr\":" << t.lm_head_c_ptr
       << ",\"lm_head_dtype_a\":" << t.lm_head_dtype_a
       << ",\"lm_head_dtype_b\":" << t.lm_head_dtype_b
       << ",\"lm_head_accum_dtype\":" << t.lm_head_accum_dtype
@@ -757,8 +786,22 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       delta.top2_logit = top2.top2_logit;
       delta.gap = gap;
       delta.lm_head_route = audit.route;
+      delta.lm_head_force_route = audit.force_route;
       delta.lm_head_quant_mode = audit.quant_mode;
       delta.lm_head_layout_used = audit.layout_used;
+      delta.lm_head_layout_assumed = audit.layout_assumed;
+      delta.lm_head_layout_actual = audit.layout_actual;
+      delta.lm_head_m = audit.m;
+      delta.lm_head_n = audit.n;
+      delta.lm_head_k = audit.k;
+      delta.lm_head_vocab = audit.n;
+      delta.lm_head_lda = audit.lda;
+      delta.lm_head_ldb = audit.ldb;
+      delta.lm_head_ldc = audit.ldc;
+      delta.lm_head_a_ptr = audit.a_ptr;
+      delta.lm_head_b_ptr_base = audit.b_ptr_base;
+      delta.lm_head_b_ptr_effective = audit.b_ptr_effective;
+      delta.lm_head_c_ptr = audit.c_ptr;
       delta.lm_head_dtype_a = audit.type_a;
       delta.lm_head_dtype_b = audit.type_b;
       delta.lm_head_accum_dtype = audit.accum_type;

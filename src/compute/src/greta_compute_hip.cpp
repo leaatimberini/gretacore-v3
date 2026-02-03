@@ -100,6 +100,23 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
       reason = "Forced by GRETA_GEMM_FORCE=VALU";
     }
   }
+  std::string lmhead_force_route = "auto";
+  const char *lmhead_force = std::getenv("GRETA_LMHEAD_FORCE_ROUTE");
+  if (lmhead_force && current_op_label() == "lm_head") {
+    std::string force_str(lmhead_force);
+    if (force_str == "mfma" || force_str == "MFMA") {
+      use_mfma = true;
+      reason = "Forced by GRETA_LMHEAD_FORCE_ROUTE=mfma";
+      lmhead_force_route = "mfma";
+    } else if (force_str == "valu" || force_str == "VALU") {
+      use_mfma = false;
+      reason = "Forced by GRETA_LMHEAD_FORCE_ROUTE=valu";
+      lmhead_force_route = "valu";
+    } else {
+      lmhead_force_route = "auto";
+    }
+  }
+
 
   GretaDataType type_A = A->data_type();
   GretaDataType type_B = B->data_type();
@@ -110,14 +127,24 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
     auto &info = last_gemm_audit();
     info.op_label = current_op_label();
     info.route = use_mfma ? "MFMA" : "VALU";
+    info.force_route = lmhead_force_route;
     info.quant_mode = dtype_name(type_B);
-    info.layout_used = "N x K (row_major)";
+    info.layout_used = "KxN row_major";
+    info.layout_assumed = "KxN row_major";
+    info.layout_actual = "KxN row_major";
     info.type_a = static_cast<int>(type_A);
     info.type_b = static_cast<int>(type_B);
     info.accum_type = static_cast<int>(accum_type);
     info.m = M;
     info.n = N;
     info.k = K;
+    info.lda = lda;
+    info.ldb = ldb;
+    info.ldc = ldc;
+    info.a_ptr = reinterpret_cast<uintptr_t>(A->data());
+    info.b_ptr_base = reinterpret_cast<uintptr_t>(B->data());
+    info.b_ptr_effective = reinterpret_cast<uintptr_t>(B->data());
+    info.c_ptr = reinterpret_cast<uintptr_t>(C->data());
     info.perhead_enabled = perhead_enabled;
     info.scales_ptr = 0;
     info.scales_hash = 0;
