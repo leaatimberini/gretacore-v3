@@ -139,4 +139,14 @@ No KFD PIDs currently running
   - `greta-v1.gguf` reproduce el mismo OOM en `Embedding Lookup`.
 - Próximo paso requerido: instancia MI300X con VRAM libre estable o modelo GGUF pequeño disponible.
 
+## Reintento post-reboot (2026-02-03 17:21 UTC)
+- VRAM inicial en 0% según `rocm-smi` tras reboot y reclaim.
+- Run con `GRETA_INT4_WEIGHTS=1` y `GRETA_MAX_SEQ_LEN=256` (Llama3 8B Q4) completó generación.
+- JSONL generados:
+  - `b3_6_readout.jsonl` (5.6K)
+  - `b3_6_prefill_decode.jsonl` (5.6K)
+  - `b3_6_landscape.jsonl` (4.3K)
+- Log:
+  - `b3_6_run.log` (68K)
+
 L.E.T / Leandro Emanuel Timberini
