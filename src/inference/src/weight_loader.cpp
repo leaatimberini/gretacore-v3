@@ -284,6 +284,120 @@ struct GGUFLoader::Impl {
     file.read(reinterpret_cast<char *>(&val_type), 4);
     if (!file)
       return false;
+
+    auto read_u32 = [&](uint32_t t, uint32_t &out) -> bool {
+      if (t == 4) {
+        uint32_t v = 0;
+        file.read(reinterpret_cast<char *>(&v), 4);
+        out = v;
+        return static_cast<bool>(file);
+      } else if (t == 5) {
+        int32_t v = 0;
+        file.read(reinterpret_cast<char *>(&v), 4);
+        out = static_cast<uint32_t>(v);
+        return static_cast<bool>(file);
+      } else if (t == 2) {
+        uint16_t v = 0;
+        file.read(reinterpret_cast<char *>(&v), 2);
+        out = v;
+        return static_cast<bool>(file);
+      } else if (t == 3) {
+        int16_t v = 0;
+        file.read(reinterpret_cast<char *>(&v), 2);
+        out = static_cast<uint32_t>(v);
+        return static_cast<bool>(file);
+      } else if (t == 6) {
+        float v = 0.0f;
+        file.read(reinterpret_cast<char *>(&v), 4);
+        out = static_cast<uint32_t>(v);
+        return static_cast<bool>(file);
+      } else if (t == 7) {
+        double v = 0.0;
+        file.read(reinterpret_cast<char *>(&v), 8);
+        out = static_cast<uint32_t>(v);
+        return static_cast<bool>(file);
+      }
+      return false;
+    };
+
+    auto read_f32 = [&](uint32_t t, float &out) -> bool {
+      if (t == 6) {
+        float v = 0.0f;
+        file.read(reinterpret_cast<char *>(&v), 4);
+        out = v;
+        return static_cast<bool>(file);
+      } else if (t == 7) {
+        double v = 0.0;
+        file.read(reinterpret_cast<char *>(&v), 8);
+        out = static_cast<float>(v);
+        return static_cast<bool>(file);
+      }
+      return false;
+    };
+
+    if (key == "llama.embedding_length") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.dim = v;
+      if (config.num_heads > 0)
+        config.head_dim = config.dim / config.num_heads;
+      return true;
+    }
+    if (key == "llama.feed_forward_length") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.hidden_dim = v;
+      return true;
+    }
+    if (key == "llama.block_count") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.num_layers = v;
+      return true;
+    }
+    if (key == "llama.attention.head_count") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.num_heads = v;
+      if (config.num_heads_kv == 0)
+        config.num_heads_kv = v;
+      if (config.num_heads > 0)
+        config.head_dim = config.dim / config.num_heads;
+      return true;
+    }
+    if (key == "llama.attention.head_count_kv") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.num_heads_kv = v;
+      return true;
+    }
+    if (key == "llama.context_length") {
+      uint32_t v = 0;
+      if (!read_u32(val_type, v))
+        return false;
+      config.max_seq_len = v;
+      return true;
+    }
+    if (key == "llama.rope.freq_base") {
+      float v = 0.0f;
+      if (!read_f32(val_type, v))
+        return false;
+      config.rope_base = v;
+      return true;
+    }
+    if (key == "llama.norm_eps") {
+      float v = 0.0f;
+      if (!read_f32(val_type, v))
+        return false;
+      config.rms_eps = v;
+      return true;
+    }
+
     if (key == "tokenizer.ggml.tokens" && val_type == 9) {
       uint32_t arr_type;
       uint64_t arr_len;

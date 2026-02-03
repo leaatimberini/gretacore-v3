@@ -5,12 +5,18 @@
 #include "gcore/inference/layer_trace.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <random>
 
 namespace gcore::inference {
+
+static bool env_flag(const char *k) {
+  const char *v = std::getenv(k);
+  return v && v[0] == 1;
+}
 
 Generator::Generator() = default;
 

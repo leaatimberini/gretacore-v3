@@ -1,14 +1,19 @@
 #include "gcore/inference/layer_trace.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <iostream>
 #include <sstream>
 #include <unordered_set>
-#include <iostream>
 
 namespace gcore::inference {
+
+static bool env_flag(const char *k) {
+  const char *v = std::getenv(k);
+  return v && v[0] == 1;
+}
 
 struct F32Stats {
   float min = 0.0f;
@@ -56,7 +61,6 @@ static uint64_t hash_f32(const float *p, size_t n) {
   }
   return h;
 }
-
 
 static std::vector<int> parse_layers(const char *v) {
   std::vector<int> layers;
@@ -232,6 +236,7 @@ void LayerTracer::trace_tensor(const char *tag, int step, int layer,
   } else {
     std::cout << oss.str() << "\n";
   }
+}
 
 void LayerTracer::trace_tensor_f16(const char *tag, int step, int layer,
                                    hipStream_t stream, const __half *d,
@@ -261,22 +266,18 @@ void LayerTracer::trace_tensor_f16(const char *tag, int step, int layer,
   uint64_t h = hash_f32(host.data(), n);
 
   std::ostringstream oss;
-  oss << "{"step":" << step << ","layer":" << layer
-      << ","tag":"" << tag << """
-      << ","n":" << n << ","hash":" << h
-      << ","min":" << s.min << ","max":" << s.max
-      << ","mean":" << s.mean << ","nan":" << s.nan
-      << ","inf":" << s.inf << "}";
+  oss << "{\"step\":" << step << ",\"layer\":" << layer
+      << ",\"tag\":\"" << tag << "\""
+      << ",\"n\":" << n << ",\"hash\":" << h
+      << ",\"min\":" << s.min << ",\"max\":" << s.max
+      << ",\"mean\":" << s.mean << ",\"nan\":" << s.nan
+      << ",\"inf\":" << s.inf << "}";
 
   if (out_.is_open()) {
-    out_ << oss.str() << "
-";
+    out_ << oss.str() << "\n";
   } else {
-    std::cout << oss.str() << "
-";
+    std::cout << oss.str() << "\n";
   }
-}
-
 }
 
 void layer_trace_emit_step_header(int step, size_t pos_id, size_t seq_len,

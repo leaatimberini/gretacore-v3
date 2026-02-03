@@ -10,6 +10,7 @@ namespace gcore::inference {
 struct ModelConfig {
   uint32_t dim = 4096;         // Hidden dimension
   uint32_t num_heads = 32;     // Number of attention heads
+  uint32_t num_heads_kv = 32;  // Number of KV heads
   uint32_t num_layers = 32;    // Number of transformer layers
   uint32_t vocab_size = 32000; // Vocabulary size
   uint32_t hidden_dim = 11008; // MLP hidden dimension (Llama uses 11008 for 7B)
@@ -24,6 +25,7 @@ struct ModelConfig {
     ModelConfig cfg;
     cfg.dim = 4096;
     cfg.num_heads = 32;
+    cfg.num_heads_kv = 32;
     cfg.num_layers = 32;
     cfg.vocab_size = 32000;
     cfg.hidden_dim = 11008;
@@ -37,6 +39,7 @@ struct ModelConfig {
     ModelConfig cfg;
     cfg.dim = 5120;
     cfg.num_heads = 40;
+    cfg.num_heads_kv = 40;
     cfg.num_layers = 40;
     cfg.vocab_size = 32000;
     cfg.hidden_dim = 13824;

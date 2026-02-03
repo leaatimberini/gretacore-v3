@@ -123,6 +123,10 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     config = loader->get_config();
+    if (config.num_heads_kv == 0)
+      config.num_heads_kv = config.num_heads;
+    if (config.num_heads > 0)
+      config.head_dim = config.dim / config.num_heads;
   }
 
   std::cout << "Model config: layers=" << config.num_layers
