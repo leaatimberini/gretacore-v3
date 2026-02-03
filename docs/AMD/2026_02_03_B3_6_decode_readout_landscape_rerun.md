@@ -21,6 +21,8 @@ The D2H tracing path was hardened to isolate and prevent the `hipMemcpy D2H fail
 - Atribución de kernels (solo con `GRETA_TRACE_*`):
   - `hipGetLastError()` + `hipDeviceSynchronize()` tras kernels críticos/GretaCompute.
   - Se instrumentaron `Fused RoPE+KV Update` y `Flash Attention Prefill`.
+- Build unblock:
+  - Se removió `src/rt/backend/hip/src/arena.cpp` de `tools/inference/CMakeLists.txt` porque el archivo no existe en este repo y no hay referencias activas al mismo.
 
 ## Reproducción local (CPU-only / validación de offsets)
 Comandos previstos:
@@ -31,7 +33,10 @@ cd tools/inference/build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
-Nota: en este entorno local falló `cmake` por falta de `src/rt/backend/hip/src/arena.cpp` (preexistente en este checkout), por lo que la validación de build local queda pendiente hasta que el archivo esté disponible en este repo.
+Nota: en este entorno local falló `cmake` por:
+- `tools/inference/CMakeCache.txt` apunta a otra ruta de origen (mismatch de build dir).
+- `src/rt/backend/hip/src/arena.cpp` no existe (preexistente en este checkout).
+Se removió `arena.cpp` de CMakeLists para destrabar el build, pero el cache aún bloquea una reconfiguración limpia en este entorno.
 
 ## Ejecución MI300X (B3.6)
 ```bash

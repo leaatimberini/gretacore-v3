@@ -35,7 +35,6 @@ set(INFERENCE_SOURCES
     ${INFERENCE_DIR}/src/layer_trace.cpp
     ${RT_HIP_DIR}/src/buffer.cpp
     ${RT_HIP_DIR}/src/greta_runtime_hip.cpp
-    ${RT_HIP_DIR}/src/arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/compute/src/greta_compute_hip.cpp
 )
 
