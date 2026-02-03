@@ -96,11 +96,15 @@ static void append_line(const char *path, const std::string &line) {
 
 struct ReadoutTrace {
   const char *phase = nullptr;
+  const char *readout_buffer_kind = nullptr;
+  const char *hidden_source_tag = nullptr;
   int step = 0;
   size_t tokens_total = 0;
   size_t seq_len = 0;
   size_t pos_id = 0;
   size_t token_index = 0;
+  size_t used_index = 0;
+  size_t logical_last_index = 0;
   size_t expected_last_index = 0;
   size_t hidden_token_index_used = 0;
   bool readout_mismatch = false;
@@ -131,11 +135,15 @@ struct ReadoutTrace {
 static void log_readout(const char *path, const ReadoutTrace &t) {
   std::ostringstream oss;
   oss << "{\"phase\":\"" << (t.phase ? t.phase : "") << "\""
+      << ",\"readout_buffer_kind\":\"" << (t.readout_buffer_kind ? t.readout_buffer_kind : "") << "\""
+      << ",\"hidden_source_tag\":\"" << (t.hidden_source_tag ? t.hidden_source_tag : "") << "\""
       << ",\"step\":" << t.step
       << ",\"tokens_total\":" << t.tokens_total
       << ",\"seq_len\":" << t.seq_len
       << ",\"pos_id\":" << t.pos_id
       << ",\"token_index\":" << t.token_index
+      << ",\"used_index\":" << t.used_index
+      << ",\"logical_last_index\":" << t.logical_last_index
       << ",\"expected_last_index\":" << t.expected_last_index
       << ",\"hidden_token_index_used\":" << t.hidden_token_index_used
       << ",\"readout_mismatch\":" << (t.readout_mismatch ? "true" : "false")
@@ -437,8 +445,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   if (trace_readout || trace_prefill_decode) {
     const size_t tokens_total = prompt_tokens.size();
     const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
-    const size_t expected_last_index = token_index;
+    const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
     const size_t hidden_token_index_used = token_index;
+    const size_t used_index = hidden_token_index_used;
     const size_t seq_len = tokens_total;
     const size_t pos_id = token_index;
     const size_t hidden_stride_bytes = config_.dim * sizeof(float);
@@ -472,16 +481,26 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     const uintptr_t logits_ptr =
         reinterpret_cast<uintptr_t>(logits_buf.data());
 
+    const bool readout_is_single_token = false;
+    const bool readout_mismatch =
+        readout_is_single_token
+            ? (logical_last_index != (tokens_total > 0 ? (tokens_total - 1) : 0))
+            : (used_index != logical_last_index);
+
     ReadoutTrace trace{};
     trace.phase = "prefill_last";
+    trace.readout_buffer_kind = "seq";
+    trace.hidden_source_tag = "prefill_hidden_seq";
     trace.step = 0;
     trace.tokens_total = tokens_total;
     trace.seq_len = seq_len;
     trace.pos_id = pos_id;
     trace.token_index = token_index;
-    trace.expected_last_index = expected_last_index;
+    trace.used_index = used_index;
+    trace.logical_last_index = logical_last_index;
+    trace.expected_last_index = logical_last_index;
     trace.hidden_token_index_used = hidden_token_index_used;
-    trace.readout_mismatch = (hidden_token_index_used != expected_last_index);
+    trace.readout_mismatch = readout_mismatch;
     trace.hidden_stride_bytes = hidden_stride_bytes;
     trace.hidden_offset_bytes = hidden_offset;
     trace.hidden_alloc_bytes = hidden_buf.size();
@@ -595,8 +614,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       if (trace_readout || trace_prefill_decode) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
-        const size_t expected_last_index = token_index;
+        const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t hidden_token_index_used = 0;
+        const size_t used_index = hidden_token_index_used;
         const size_t seq_len = 1;
         const size_t pos_id = token_index;
         const size_t hidden_stride_bytes = config_.dim * sizeof(float);
@@ -634,17 +654,26 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         const uintptr_t logits_ptr =
             reinterpret_cast<uintptr_t>(logits_buf.data());
 
+        const bool readout_is_single_token = true;
+        const bool readout_mismatch =
+            readout_is_single_token
+                ? (logical_last_index != (tokens_total > 0 ? (tokens_total - 1) : 0))
+                : (used_index != logical_last_index);
+
         ReadoutTrace trace{};
         trace.phase = "decode";
+        trace.readout_buffer_kind = "single_token";
+        trace.hidden_source_tag = "decode_hidden_single_token";
         trace.step = i;
         trace.tokens_total = tokens_total;
         trace.seq_len = seq_len;
         trace.pos_id = pos_id;
         trace.token_index = token_index;
-        trace.expected_last_index = expected_last_index;
+        trace.used_index = used_index;
+        trace.logical_last_index = logical_last_index;
+        trace.expected_last_index = logical_last_index;
         trace.hidden_token_index_used = hidden_token_index_used;
-        trace.readout_mismatch =
-            (hidden_token_index_used != expected_last_index);
+        trace.readout_mismatch = readout_mismatch;
         trace.hidden_stride_bytes = hidden_stride_bytes;
         trace.hidden_offset_bytes = hidden_offset;
         trace.hidden_alloc_bytes = hidden_buf.size();
