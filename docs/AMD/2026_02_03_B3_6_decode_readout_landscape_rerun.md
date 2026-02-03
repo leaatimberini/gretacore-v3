@@ -94,4 +94,11 @@ Durante carga de pesos (si aplica GQA):
 ## Estado VRAM MI300X (observado)
 - `rocm-smi` reportó VRAM total ~205.8GB, usada ~196.8GB (quedan ~9GB). Esto puede forzar el uso de `GRETA_INT4_WEIGHTS=1` para evitar OOM durante carga de pesos.
 
+## Resultados (MI300X)
+- Run con `GRETA_INT4_WEIGHTS=1` y `GRETA_MAX_SEQ_LEN=256`:
+  - Carga de pesos avanzó hasta capa ~8 y falló con `HIP allocation failed: out of memory`.
+  - No se generaron JSONL (`b3_6_readout.jsonl`, `b3_6_prefill_decode.jsonl`, `b3_6_landscape.jsonl`).
+  - `b3_6_run.log` contiene el detalle de la carga y el punto de fallo.
+- Próximo paso requerido: liberar VRAM en la instancia o ejecutar en un MI300X con memoria disponible suficiente para completar la carga.
+
 L.E.T / Leandro Emanuel Timberini
