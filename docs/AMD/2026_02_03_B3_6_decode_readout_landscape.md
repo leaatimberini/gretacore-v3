@@ -31,11 +31,11 @@ MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 ## ES — Resultados
 - Resultado: **ERROR** `hipMemcpy D2H failed: an illegal memory access was encountered`
 - Tokens generados: 0
-- No se generaron JSONL de readout/landscape por abort temprano.
+- No se generaron JSONL de readout/landscape por abort temprano (solo log del run).
 
 ## ES — Evidencia
 - Log: `/root/gretacore/artifacts/alignment/2026-02-03/b3_6_run.log`
-- Commit: `ae59dc2f7bc7a73f9a48e1820161a856181668ba`
+- Commit: `6602886af2c2caef1b31ff57a5b0cf04dae6e558`
 
 ## ES — Impacto para AMD vs H100/CUDA
 La instrumentación B3.6 agrega trazabilidad detallada del readout (offset/puntero/hash) y del landscape de logits, elevando la capacidad de diagnóstico por encima del enfoque “caja negra”. La falla D2H indica un problema de robustez del pipeline de copia/offset que debe resolverse para sostener comparabilidad con H100+CUDA y mantener calidad estable en decode.
@@ -78,11 +78,11 @@ MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 ## EN — Results
 - Result: **ERROR** `hipMemcpy D2H failed: an illegal memory access was encountered`
 - Generated tokens: 0
-- No readout/landscape JSONL artifacts due to early abort.
+- No readout/landscape JSONL artifacts due to early abort (run log only).
 
 ## EN — Evidence
 - Log: `/root/gretacore/artifacts/alignment/2026-02-03/b3_6_run.log`
-- Commit: `ae59dc2f7bc7a73f9a48e1820161a856181668ba`
+- Commit: `6602886af2c2caef1b31ff57a5b0cf04dae6e558`
 
 ## EN — AMD impact vs H100/CUDA
 B3.6 instrumentation adds fine-grained readout and logits landscape tracing, improving auditability beyond black-box inference. The D2H failure points to a pipeline robustness issue (copy/offset) that must be resolved to sustain H100+CUDA-grade stability and decode quality.
