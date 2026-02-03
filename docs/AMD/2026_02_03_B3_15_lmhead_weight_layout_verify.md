@@ -14,16 +14,16 @@ Goal: verify LM head weight layout/stride (W_vocab) by comparing CPU predictions
 - Métricas: `abs_err_row`, `abs_err_col`, `best_layout`, hashes de ventana
 
 ## Resultados (ES)
-TBD (llenar con `best_layout` y errores por token).
+Resultados del JSONL: best_layout=row_major_match para 79/96965/12345, pero row_window/col_window=0 y row_logit/col_logit=0. Esto indica lectura de pesos nula o ruta de verificación no compatible con el formato real (posible INT4/packing).
 
 ## Results (EN)
-TBD (fill with `best_layout` and per-token errors).
+JSONL shows best_layout=row_major_match for 79/96965/12345, but row/col windows are all zeros and row/col logits are 0. This suggests null weight reads or a verify path incompatible with the real weight format (likely INT4/packing).
 
 ## Conclusión (ES)
-TBD según layout dominante (row vs col).
+La verificación directa de W en FP16 no es concluyente; se requiere verificación compatible con INT4/packing o desactivar MFMA mientras se corrige.
 
 ## Conclusion (EN)
-TBD based on dominant layout (row vs col).
+Direct FP16 W verification is inconclusive; need INT4/packing-aware verification or disable MFMA while fixing.
 
 ## Próximo Paso / Next Step (B3.16)
 Aplicar fix mínimo en LM head MFMA según evidencia.

@@ -23,26 +23,26 @@ Tabla prefill_last vs decode0 (top1/top2/gap):
 
 | Prompt | Route | prefill_last top1 | decode0 top1 | cpu_probe_agrees (prefill/decode) |
 |---|---|---:|---:|---|
-| p4_sys | mfma | TBD | TBD | TBD/TBD |
-| p4_sys | valu | TBD | TBD | TBD/TBD |
-| p5_ba  | mfma | TBD | TBD | TBD/TBD |
-| p5_ba  | valu | TBD | TBD | TBD/TBD |
+| p4_sys | mfma | 79 | 96965 | false/true |
+| p4_sys | valu | 127158 | 96965 | true/true |
+| p5_ba  | mfma | 79 | 96965 | false/true |
+| p5_ba  | valu | 127158 | 96965 | true/true |
 
 ## Results (EN)
 Prefill_last vs decode0 table (top1/top2/gap):
 
 | Prompt | Route | prefill_last top1 | decode0 top1 | cpu_probe_agrees (prefill/decode) |
 |---|---|---:|---:|---|
-| p4_sys | mfma | TBD | TBD | TBD/TBD |
-| p4_sys | valu | TBD | TBD | TBD/TBD |
-| p5_ba  | mfma | TBD | TBD | TBD/TBD |
-| p5_ba  | valu | TBD | TBD | TBD/TBD |
+| p4_sys | mfma | 79 | 96965 | false/true |
+| p4_sys | valu | 127158 | 96965 | true/true |
+| p5_ba  | mfma | 79 | 96965 | false/true |
+| p5_ba  | valu | 127158 | 96965 | true/true |
 
 ## Conclusión (ES)
-TBD según resultados (confirmar MFMA como causa).
+MFMA en prefill produce logits inconsistentes (cpu_probe_agrees=false). Forzar VALU corrige coherencia del prefill (cpu_probe_agrees=true).
 
 ## Conclusion (EN)
-TBD based on results (confirm MFMA as root cause).
+MFMA in prefill yields inconsistent logits (cpu_probe_agrees=false). Forcing VALU restores prefill consistency (cpu_probe_agrees=true).
 
 ## Próximo Paso / Next Step (B3.15)
 Verificación puntual de layout/pesos del LM head.
