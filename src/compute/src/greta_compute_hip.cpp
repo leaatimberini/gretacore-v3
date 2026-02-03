@@ -116,6 +116,11 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
       lmhead_force_route = "auto";
     }
   }
+  if (current_op_label() == "lm_head" && lmhead_force_route == "auto") {
+    use_mfma = false;
+    reason = "LM head MFMA disabled (B3.16)";
+  }
+
 
 
   GretaDataType type_A = A->data_type();
