@@ -611,6 +611,67 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
       fp16[i] = fp32_to_fp16(tmp[i]);
   } else
     return false;
+
+  const bool is_kv_weight =
+      (name.find("attn_k.weight") != std::string::npos ||
+       name.find("attn_v.weight") != std::string::npos);
+  if (is_kv_weight && impl_->config.num_heads > 0 &&
+      impl_->config.num_heads_kv > 0 &&
+      impl_->config.num_heads_kv != impl_->config.num_heads) {
+    const uint32_t num_heads = impl_->config.num_heads;
+    const uint32_t num_heads_kv = impl_->config.num_heads_kv;
+    const uint32_t head_dim = impl_->config.head_dim;
+    const uint32_t full_dim = num_heads * head_dim;
+    const uint32_t kv_dim = num_heads_kv * head_dim;
+    const uint32_t model_dim = impl_->config.dim;
+
+    if (num_heads % num_heads_kv != 0) {
+      if (err) {
+        *err = "GQA KV expansion failed for " + name +
+               ": num_heads not divisible by num_heads_kv (" +
+               std::to_string(num_heads) + " % " +
+               std::to_string(num_heads_kv) + ")";
+      }
+      return false;
+    }
+
+    if (it->shape.size() != 2 || it->shape[0] != kv_dim ||
+        it->shape[1] != model_dim || full_dim != model_dim ||
+        head_dim == 0 || kv_dim == 0) {
+      if (err) {
+        *err = "GQA KV expansion failed for " + name +
+               ": expected shape [" + std::to_string(kv_dim) + "," +
+               std::to_string(model_dim) + "] with head_dim=" +
+               std::to_string(head_dim) + ", got [" +
+               (it->shape.size() > 0 ? std::to_string(it->shape[0]) : "?") +
+               "," +
+               (it->shape.size() > 1 ? std::to_string(it->shape[1]) : "?") +
+               "]";
+      }
+      return false;
+    }
+
+    const uint32_t group = num_heads / num_heads_kv;
+    std::vector<uint16_t> expanded((size_t)full_dim * (size_t)model_dim, 0);
+    for (uint32_t kv_head = 0; kv_head < num_heads_kv; ++kv_head) {
+      for (uint32_t g = 0; g < group; ++g) {
+        uint32_t out_head = kv_head * group + g;
+        for (uint32_t r = 0; r < head_dim; ++r) {
+          size_t src_row = (size_t)kv_head * head_dim + r;
+          size_t dst_row = (size_t)out_head * head_dim + r;
+          std::memcpy(&expanded[dst_row * model_dim],
+                      &fp16[src_row * model_dim],
+                      (size_t)model_dim * sizeof(uint16_t));
+        }
+      }
+    }
+    fp16.swap(expanded);
+    n_elem = fp16.size();
+    std::cout << "[GRETA_LOAD] Expanded " << name << " KV heads "
+              << num_heads_kv << " -> " << num_heads
+              << " (repeat per group)" << std::endl;
+  }
+
   size_t ups = n_elem * 2;
   if (!buffer.allocate(ups, gcore::rt::hip::BufferUsage::DeviceOnly,
                        gcore::rt::GretaDataType::FP16, err))
