@@ -136,6 +136,70 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
+static bool validate_trace_shapes(const ModelConfig &config, std::string *err) {
+  auto fail = [&](const std::string &msg) {
+    if (err)
+      *err = msg;
+    std::cerr << "[GRETA_TRACE_SHAPE] " << msg << std::endl;
+    return false;
+  };
+
+  if (config.vocab_size == 0)
+    return fail("vocab_size=0");
+  if (config.dim == 0)
+    return fail("dim=0");
+  if (config.num_layers == 0)
+    return fail("num_layers=0");
+  if (config.num_heads == 0)
+    return fail("num_heads=0");
+  if (config.num_heads_kv == 0)
+    return fail("num_heads_kv=0");
+  if (config.head_dim == 0)
+    return fail("head_dim=0");
+
+  if (config.dim % config.num_heads != 0) {
+    return fail("dim not divisible by num_heads: dim=" +
+                std::to_string(config.dim) +
+                " num_heads=" + std::to_string(config.num_heads));
+  }
+  const uint32_t expected_head_dim = config.dim / config.num_heads;
+  if (config.head_dim != expected_head_dim) {
+    return fail("head_dim mismatch: head_dim=" +
+                std::to_string(config.head_dim) +
+                " expected=" + std::to_string(expected_head_dim));
+  }
+  if (config.num_heads_kv > config.num_heads) {
+    return fail("num_heads_kv greater than num_heads: num_heads_kv=" +
+                std::to_string(config.num_heads_kv) +
+                " num_heads=" + std::to_string(config.num_heads));
+  }
+  if (config.num_heads % config.num_heads_kv != 0) {
+    return fail("num_heads not divisible by num_heads_kv: num_heads=" +
+                std::to_string(config.num_heads) +
+                " num_heads_kv=" + std::to_string(config.num_heads_kv));
+  }
+
+  return true;
+}
+
+static void log_d2h_trace(bool enabled, const char *tensor_name, int step,
+                          int layer, const gcore::rt::hip::Buffer &buffer,
+                          size_t offset_bytes, size_t size_bytes) {
+  if (!enabled)
+    return;
+  std::ostringstream oss;
+  oss << "[GRETA_TRACE_D2H]"
+      << " tensor=" << (tensor_name ? tensor_name : "unknown")
+      << " step=" << step
+      << " layer=" << layer
+      << " src_ptr=0x" << std::hex
+      << reinterpret_cast<uintptr_t>(buffer.data()) << std::dec
+      << " alloc_bytes=" << buffer.size()
+      << " offset_bytes=" << offset_bytes
+      << " size_bytes=" << size_bytes;
+  std::cerr << oss.str() << std::endl;
+}
+
 Generator::Generator() = default;
 
 Generator::~Generator() = default;
@@ -254,10 +318,17 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
+  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape;
 
   std::vector<float> hidden_host;
   if (trace_readout || trace_prefill_decode)
     hidden_host.resize(config_.dim);
+
+  if (trace_any) {
+    if (!validate_trace_shapes(config_, err)) {
+      return output;
+    }
+  }
 
   // 1. Prefill: Process all prompt tokens at once
   if (!scheduler_->forward(prompt_tokens.data(), 0, prompt_tokens.size(),
@@ -268,6 +339,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   // Sample first generated token from the last set of logits in the prefill
   size_t last_token_offset =
       (prompt_tokens.size() - 1) * config_.vocab_size * sizeof(float);
+  const auto &logits_buf = scheduler_->get_logits();
+  log_d2h_trace(trace_any, "logits", 0, -1, logits_buf, last_token_offset,
+                config_.vocab_size * sizeof(float));
   if (!scheduler_->get_logits().copy_to_host_offset(
           logits_host.data(), last_token_offset,
           config_.vocab_size * sizeof(float), err)) {
@@ -277,6 +351,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   if (trace_readout || trace_prefill_decode) {
     const size_t token_index = prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
     const size_t hidden_offset = token_index * config_.dim * sizeof(float);
+    const auto &hidden_buf = scheduler_->get_hidden_state();
+    log_d2h_trace(trace_any, "hidden", 0, -1, hidden_buf, hidden_offset,
+                  config_.dim * sizeof(float));
     if (!scheduler_->get_hidden_state().copy_to_host_offset(
             hidden_host.data(), hidden_offset,
             config_.dim * sizeof(float), err)) {
@@ -368,14 +445,20 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (params.greedy && !align_callback && !need_logits_host) {
       next_token = scheduler_->sample_greedy_gpu(err);
     } else {
+      const auto &logits_buf = scheduler_->get_logits();
+      log_d2h_trace(trace_any, "logits", i, -1, logits_buf, 0,
+                    config_.vocab_size * sizeof(float));
       if (!scheduler_->get_logits().copy_to_host(
               logits_host.data(), config_.vocab_size * sizeof(float), err)) {
         break;
       }
 
       if (trace_readout || trace_prefill_decode) {
-        const size_t token_index = 0;
+        const size_t token_index = output.size() - 1;
         const size_t hidden_offset = 0;
+        const auto &hidden_buf = scheduler_->get_hidden_state();
+        log_d2h_trace(trace_any, "hidden", i, -1, hidden_buf, hidden_offset,
+                      config_.dim * sizeof(float));
         if (!scheduler_->get_hidden_state().copy_to_host_offset(
                 hidden_host.data(), hidden_offset,
                 config_.dim * sizeof(float), err)) {

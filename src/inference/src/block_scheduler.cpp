@@ -24,6 +24,44 @@
 
 namespace gcore::inference {
 
+static bool env_flag(const char *k) {
+  const char *v = std::getenv(k);
+  return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
+}
+
+static bool trace_kernel_sync_enabled() {
+  static const bool enabled =
+      env_flag("GRETA_TRACE_READOUT") || env_flag("GRETA_TRACE_PREFILL_DECODE") ||
+      env_flag("GRETA_TRACE_LANDSCAPE");
+  return enabled;
+}
+
+static bool trace_hip_sync(const char *name, std::string *err) {
+  if (!trace_kernel_sync_enabled())
+    return true;
+  hipError_t res = hipDeviceSynchronize();
+  if (res != hipSuccess) {
+    if (err)
+      *err = std::string(name) +
+             " hipDeviceSynchronize failed: " + hipGetErrorString(res);
+    return false;
+  }
+  return true;
+}
+
+static bool trace_hip_check_and_sync(const char *name, std::string *err) {
+  if (!trace_kernel_sync_enabled())
+    return true;
+  hipError_t err_code = hipGetLastError();
+  if (err_code != hipSuccess) {
+    if (err)
+      *err =
+          std::string(name) + " hipGetLastError: " + hipGetErrorString(err_code);
+    return false;
+  }
+  return trace_hip_sync(name, err);
+}
+
 BlockScheduler::BlockScheduler() = default;
 
 BlockScheduler::~BlockScheduler() {
@@ -301,6 +339,8 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
                " launch failed: " + hipGetErrorString(err_code);               \
       return false;                                                            \
     }                                                                          \
+    if (!trace_hip_sync(name, err))                                            \
+      return false;                                                            \
   } while (0)
 
 #define CHECK_GRETA(cmd, name)                                                 \
@@ -310,6 +350,8 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
         *err = std::string(name) + " failed";                                  \
       return false;                                                            \
     }                                                                          \
+    if (!trace_hip_check_and_sync(name, err))                                  \
+      return false;                                                            \
   } while (0)
 
 bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
@@ -484,9 +526,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     ev_rope_start->record(stream_);
 
   if (use_fused_attn) {
-    (void)gcore::rt::hip::kernels::launch_fused_rope_kv_update_decode(
-        hip_stream, q, k, v, cache_k, cache_v, d_pos, config_.max_seq_len, H,
-        Dh, config_.rope_base);
+    CHECK_HIP_KERNEL(launch_fused_rope_kv_update_decode(
+                         hip_stream, q, k, v, cache_k, cache_v, d_pos,
+                         config_.max_seq_len, H, Dh, config_.rope_base),
+                     "Fused RoPE+KV Update");
   } else {
     if (S == 1) {
       CHECK_HIP_KERNEL(
@@ -538,8 +581,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                     scale, config_.rope_base),
                 "Attention Core");
   } else {
-    launch_flash_attention_prefill(hip_stream, q, k, v, attn_out, S, H, Dh,
-                                   scale, true);
+    CHECK_HIP_KERNEL(launch_flash_attention_prefill(hip_stream, q, k, v,
+                                                    attn_out, S, H, Dh, scale,
+                                                    true),
+                     "Flash Attention Prefill");
   }
 
   if (profile_attn)
