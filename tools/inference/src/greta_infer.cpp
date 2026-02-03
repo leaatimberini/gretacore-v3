@@ -163,6 +163,10 @@ int main(int argc, char *argv[]) {
   if (force_demo_tokenizer) {
     std::cout << "[TOKENIZER] Forced ASCII fallback (--demo-tokenizer)\n";
     tokenizer.use_ascii_fallback();
+  } else if (!config.vocabulary.empty()) {
+    tokenizer.set_vocabulary(config.vocabulary);
+    std::cout << "[TOKENIZER] Loaded GGUF vocab: "
+              << config.vocabulary.size() << "\n";
   } else {
     // Try to find .model file near the GGUF model
     std::string tokenizer_path = "tokenizer.model";
@@ -180,7 +184,8 @@ int main(int argc, char *argv[]) {
   }
   std::cout << "[TOKENIZER] Mode: "
             << (tokenizer.is_using_sentencepiece() ? "SentencePiece"
-                                                   : "ASCII Fallback")
+                : (tokenizer.vocab_size() > 0 ? "GGUF vocab"
+                                             : "ASCII Fallback"))
             << "\n";
 
   // Initialize generator
