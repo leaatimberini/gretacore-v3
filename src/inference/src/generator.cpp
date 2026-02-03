@@ -133,7 +133,7 @@ static void log_landscape(const char *path, int step,
 
 static bool env_flag(const char *k) {
   const char *v = std::getenv(k);
-  return v && (v[0] == 1 || v[0] == y || v[0] == Y);
+  return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
 Generator::Generator() = default;
