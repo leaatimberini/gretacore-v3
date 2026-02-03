@@ -1,0 +1,1560 @@
+╔══════════════════════════════════════════════════════════╗
+║           GRETA CORE - LLM Inference Engine              ║
+║                    Phase 3 Preview                       ║
+╚══════════════════════════════════════════════════════════╝
+
+Configuration:
+  Model: /root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
+  Prompt: "Write one short sentence about Buenos Aires."
+  Max tokens: 32
+  Temperature: 1
+  Top-K: 50
+  Greedy: yes
+
+[GRETA_RT] Initializing HIP Context...
+[GRETA_RT] Found 1 HIP device(s). Selecting device 0...
+[GRETA_RT] Context initialized successfully
+Model config: layers=32, dim=4096, heads=32, hidden=14336, vocab=128256, params=8.8353B
+[GRETA_MAIN] Initializing scheduler...
+[GRETA_SCHED] Creating stream...
+[GRETA_RT] Calling hipStreamCreate...
+[GRETA_RT] hipStreamCreate success
+[GRETA_SCHED] Stream created successfully
+[GRETA_MAIN] Initialized scheduler for 32 layers
+Allocating buffers...
+[GRETA_MAIN] GRETA_MAX_SEQ_LEN=256
+Buffers allocated
+
+Loading weights from: /root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
+[GRETA_SCHED] Starting weight load (INT8: OFF, INT4: ON)
+[GRETA_SCHED] Loading layer 0/32...
+[GRETA_LOAD] Loading tensor (INT4): blk.0.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.0.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.0.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.0.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.0.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.0.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.0.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.0.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.0.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.1.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.1.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.1.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.1.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.1.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.1.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.1.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.1.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.1.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.2.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.2.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.2.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.2.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.2.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.2.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 200000/524288
+  - Group 400000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.2.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1400000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.2.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 1000000/1835008
+  - Group 800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.2.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 1000000/1835008
+  - Group 800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.3.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.3.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.3.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.3.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.3.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.3.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.3.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.3.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.3.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.4.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.4.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.4.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.4.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.4.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.4.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.4.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.4.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.4.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 200000/1835008
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.5.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.5.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.5.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.5.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.5.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.5.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.5.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.5.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.5.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.6.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.6.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.6.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.6.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.6.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.6.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.6.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1400000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.6.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.6.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.7.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.7.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.7.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.7.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.7.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.7.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.7.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.7.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.7.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_SCHED] Loading layer 8/32...
+[GRETA_LOAD] Loading tensor (INT4): blk.8.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.8.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.8.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.8.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.8.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.8.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.8.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.8.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.8.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.9.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.9.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.9.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.9.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.9.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.9.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.9.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1600000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.9.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.9.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.10.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.10.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.10.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.10.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.10.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.10.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.10.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 200000/1835008
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.10.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.10.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.11.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.11.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.11.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.11.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.11.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.11.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.11.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.11.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.11.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.12.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.12.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.12.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.12.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.12.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.12.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.12.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 200000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.12.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1600000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.12.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.13.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.13.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.13.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.13.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.13.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.13.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.13.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.13.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.13.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.14.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.14.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.14.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.14.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.14.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.14.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.14.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.14.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.14.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+  - Group 1600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.15.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.15.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.15.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.15.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.15.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.15.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.15.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 200000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.15.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.15.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_SCHED] Loading layer 16/32...
+[GRETA_LOAD] Loading tensor (INT4): blk.16.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 200000/524288
+  - Group 400000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.16.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.16.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.16.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.16.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.16.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.16.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.16.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.16.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 200000/1835008
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.17.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.17.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.17.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.17.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.17.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.17.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.17.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.17.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.17.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.18.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.18.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.18.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.18.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.18.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.18.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.18.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.18.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.18.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 1600000/1835008
+  - Group 400000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.19.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.19.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.19.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.19.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.19.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.19.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.19.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.19.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.19.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.20.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.20.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.20.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.20.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.20.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.20.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.20.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.20.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.20.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.21.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.21.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.21.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.21.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.21.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.21.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.21.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 200000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.21.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.21.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.22.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.22.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.22.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.22.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.22.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.22.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.22.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.22.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.22.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.23.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.23.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.23.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.23.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.23.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.23.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.23.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.23.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.23.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_SCHED] Loading layer 24/32...
+[GRETA_LOAD] Loading tensor (INT4): blk.24.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.24.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.24.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.24.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.24.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.24.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.24.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1400000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.24.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1400000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.24.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.25.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.25.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.25.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.25.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.25.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.25.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.25.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.25.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.25.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.26.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.26.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.26.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.26.attn_v.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.26.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.26.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.26.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.26.ffn_down.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+  - Group 800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.26.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.27.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.27.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.27.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.27.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.27.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.27.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.27.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.27.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.27.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 400000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.28.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.28.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.28.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.28.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.28.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.28.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 200000/524288
+  - Group 400000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.28.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.28.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.28.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.29.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.29.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.29.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.29.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.29.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.29.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.29.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 1800000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.29.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 200000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.29.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 200000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.30.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.30.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.30.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.30.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.30.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.30.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.30.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 200000/1835008
+  - Group 1600000/1835008
+  - Group 400000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.30.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.30.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 1600000/1835008
+  - Group 1800000/1835008
+  - Group 400000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+  - Group 600000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.31.attn_q.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.31.attn_k.weight (Type: Q4_K, Size: 2359296 bytes)
+[GRETA_LOAD] Transposed blk.31.attn_k.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.31.attn_v.weight (Type: Q6_K, Size: 3440640 bytes)
+[GRETA_LOAD] Transposed blk.31.attn_v.weight from [D, KV] to [KV, D]
+[GRETA_LOAD] Quantizing 4194304 elements to INT4...
+[GRETA_LOAD] Loading tensor (INT4): blk.31.attn_output.weight (Type: Q4_K, Size: 9437184 bytes)
+[GRETA_LOAD] Quantizing 16777216 elements to INT4...
+  - Group 400000/524288
+  - Group 200000/524288
+[GRETA_LOAD] Loading tensor (INT4): blk.31.ffn_gate.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 1200000/1835008
+  - Group 200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.31.ffn_down.weight (Type: Q6_K, Size: 48168960 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 200000/1835008
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+[GRETA_LOAD] Loading tensor (INT4): blk.31.ffn_up.weight (Type: Q4_K, Size: 33030144 bytes)
+[GRETA_LOAD] Quantizing 58720256 elements to INT4...
+  - Group 200000/1835008
+  - Group 1200000/1835008
+  - Group 1400000/1835008
+  - Group 400000/1835008
+  - Group 1600000/1835008
+  - Group 600000/1835008
+  - Group 1800000/1835008
+  - Group 800000/1835008
+  - Group 1000000/1835008
+Weights loaded (vocab size: 128256)
+[TOKENIZER] Loaded GGUF vocab: 128256
+[TOKENIZER] Mode: GGUF vocab
+Generator initialized
+
+═══════════════════════════════════════════════════════════
+Generating...
+
+[GRETA_TRACE_EMBED_VERIFY] token=46 seq_idx=44 mae_row=0 mae_col=0.0112426 max_row=0 max_col=0.053379 layout_used=row layout_probe_best=row_major_match
+[SAMPLE DEBUG] Logits stats: min=-13.4885 max=11.9995 avg=-0.582036 NaNs=0
+  Top tokens: 79(11.9995) 18(11.0066) 95(10.7475) 64938(10.7399) 59036(9.78043) 
+Prompt: Write one short sentence about Buenos Aires.
+Generated: O
+
+═══════════════════════════════════════════════════════════
+Statistics:
+  Prompt tokens: 45
+  Generated tokens: 32
+  Total time: 624.579 ms
+  Time to first token: 259.15 ms
+  Tokens/second: 51.2345
+
+STATUS=OK

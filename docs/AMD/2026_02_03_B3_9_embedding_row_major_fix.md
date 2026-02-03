@@ -35,6 +35,25 @@ $BIN --model "$MODEL" --prompt "Write one short sentence about Buenos Aires." --
 - `top1` deja de ser constante 96965 al menos en steps 0..3 para algún prompt simple.
 
 ## Resultados (pendiente)
-Se completará tras el run MI300X B3.9.
+Run MI300X completado con `GRETA_EMBED_LAYOUT=row`.
+
+Extracto (probe):
+```
+[GRETA_TRACE_EMBED_VERIFY] token=105 seq_idx=2 mae_row=0 mae_col=0.0129823 max_row=0 max_col=0.063498 layout_used=row layout_probe_best=row_major_match
+```
+
+Top tokens (Prompt 1: "Hi"):
+```
+Top tokens: 96965(13.3429) 198(11.8958) 99668(11.4639) 52263(11.2216) 86537(10.4427)
+```
+
+Top tokens (Prompt 2: "Write one short sentence about Buenos Aires."):
+```
+Top tokens: 79(11.9995) 18(11.0066) 95(10.7475) 64938(10.7399) 59036(9.78043)
+```
+
+Conclusión: **PARTIAL**. El probe confirma `row_major_match`, pero el prompt corto aún muestra top1=96965 y no hay evidencia multi-step de variación. Se requiere un run con trazas multi-step para confirmar la desaparición total del attractor.
+
+Next B3.10 (propuesto): ejecutar un run con trazas multi-step de top1 (o landscape JSONL) en prompts variados para confirmar que top1 cambia en steps 0..3; si persiste, enfocar RMSNorm/LM head.
 
 L.E.T / Leandro Emanuel Timberini
