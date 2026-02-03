@@ -215,9 +215,15 @@ static bool trace_lmhead_w_verify_once(
   const size_t dim = config.dim;
   const size_t vocab = config.vocab_size;
   const size_t elem_size = sizeof(__half);
+  const size_t total_bytes = weights.size();
+  const size_t total_elems = elem_size > 0 ? (total_bytes / elem_size) : 0;
 
   auto copy_elem = [&](size_t offset_elems, __half *out) -> bool {
-    return weights.copy_to_host_offset(out, offset_elems * elem_size, elem_size, err);
+    const size_t offset_bytes = offset_elems * elem_size;
+    if (offset_bytes + elem_size > total_bytes) {
+      return false;
+    }
+    return weights.copy_to_host_offset(out, offset_bytes, elem_size, err);
   };
 
   for (int token_id : token_ids) {
@@ -226,14 +232,41 @@ static bool trace_lmhead_w_verify_once(
 
     std::vector<__half> row_dim(dim);
     size_t row_offset = static_cast<size_t>(token_id) * dim * elem_size;
+    if (row_offset + dim * elem_size > total_bytes) {
+      std::ostringstream oss;
+      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"row_oob\",\"token_id\":" << token_id
+          << ",\"row_offset_bytes\":" << row_offset
+          << ",\"total_bytes\":" << total_bytes << "}";
+      append_line(out_path, oss.str());
+      continue;
+    }
     if (!weights.copy_to_host_offset(row_dim.data(), row_offset, dim * elem_size, err))
       return false;
 
     std::vector<__half> col_dim(dim);
-    for (size_t d = 0; d < dim; ++d) {
-      size_t col_offset = (d * vocab + static_cast<size_t>(token_id)) * elem_size;
-      if (!copy_elem(col_offset, &col_dim[d]))
+    size_t max_d = 0;
+    if (vocab > 0 && static_cast<size_t>(token_id) < vocab && total_elems > static_cast<size_t>(token_id)) {
+      max_d = (total_elems - static_cast<size_t>(token_id) - 1) / vocab;
+    }
+    const size_t d_limit = (max_d + 1 < dim) ? (max_d + 1) : dim;
+    if (d_limit < dim) {
+      std::ostringstream oss;
+      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_truncated\",\"token_id\":" << token_id
+          << ",\"d_limit\":" << d_limit
+          << ",\"dim\":" << dim << "}";
+      append_line(out_path, oss.str());
+    }
+    for (size_t d = 0; d < d_limit; ++d) {
+      size_t col_offset = (d * vocab + static_cast<size_t>(token_id));
+      if (!copy_elem(col_offset, &col_dim[d])) {
+        std::ostringstream oss;
+        oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_oob\",\"token_id\":" << token_id
+            << ",\"d\":" << d
+            << ",\"col_offset_elems\":" << col_offset
+            << ",\"total_elems\":" << total_elems << "}";
+        append_line(out_path, oss.str());
         return false;
+      }
     }
 
     auto dot_half = [&](const std::vector<__half> &w) -> float {
