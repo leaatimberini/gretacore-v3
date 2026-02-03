@@ -94,11 +94,49 @@ Durante carga de pesos (si aplica GQA):
 ## Estado VRAM MI300X (observado)
 - `rocm-smi` reportó VRAM total ~205.8GB, usada ~196.8GB (quedan ~9GB). Esto puede forzar el uso de `GRETA_INT4_WEIGHTS=1` para evitar OOM durante carga de pesos.
 
+## Incidente: saturación VRAM MI300X (evidencia + mitigación)
+### Evidencia (rocm-smi --showmemuse --showpids)
+Antes del reclaim (2026-02-03):
+```
+GPU[0] : GPU Memory Allocated (VRAM%): 37
+KFD process information:
+PID    PROCESS NAME     GPU(s)  VRAM USED
+248944 python           1       77420392448
+248342 vllm             0       0
+248879 VLLM::EngineCor  0       0
+```
+Después de reclaim:
+```
+GPU[0] : GPU Memory Allocated (VRAM%): 0
+KFD process information:
+No KFD PIDs currently running
+```
+
+### Impacto (ES)
+- La corrida full de B3.6 en MI300X sigue fallando por OOM en el `Embedding Lookup` aun con VRAM liberada y `GRETA_MAX_SEQ_LEN=256`.
+- No se generaron JSONL (`b3_6_readout.jsonl`, `b3_6_prefill_decode.jsonl`, `b3_6_landscape.jsonl`).
+
+### Impact (EN)
+- The full B3.6 run on MI300X still fails with OOM at `Embedding Lookup` even after reclaim and `GRETA_MAX_SEQ_LEN=256`.
+- JSONL artifacts were not produced (`b3_6_readout.jsonl`, `b3_6_prefill_decode.jsonl`, `b3_6_landscape.jsonl`).
+
+### Mitigación / Mitigation
+- Reclaim VRAM (kill vLLM / python VRAM holders) before running.
+- Use `GRETA_INT4_WEIGHTS=1` and `GRETA_MAX_SEQ_LEN=256` to minimize footprint.
+- Intento de Plan Mini con modelo pequeño no fue posible: `tinyllama.gguf` no existe; `dummy_v1.gguf` no es GGUF; `greta-v1.gguf` es equivalente a 8B y reproduce el OOM en `Embedding Lookup`.
+
+### Próximo paso / Next step
+- Ejecutar B3.6 en una instancia MI300X con VRAM libre y sin servicios vLLM/Open-WebUI, o provisionar un modelo GGUF realmente pequeño para validar el pipeline de trazas.
+
 ## Resultados (MI300X)
-- Run con `GRETA_INT4_WEIGHTS=1` y `GRETA_MAX_SEQ_LEN=256`:
-  - Carga de pesos avanzó hasta capa ~8 y falló con `HIP allocation failed: out of memory`.
+- Run con `GRETA_INT4_WEIGHTS=1` y `GRETA_MAX_SEQ_LEN=256` (Llama3 8B Q4):
+  - Carga de pesos completó, pero falló en `Embedding Lookup launch failed: out of memory`.
   - No se generaron JSONL (`b3_6_readout.jsonl`, `b3_6_prefill_decode.jsonl`, `b3_6_landscape.jsonl`).
-  - `b3_6_run.log` contiene el detalle de la carga y el punto de fallo.
-- Próximo paso requerido: liberar VRAM en la instancia o ejecutar en un MI300X con memoria disponible suficiente para completar la carga.
+  - `b3_6_run.log` contiene el detalle del error.
+- Plan Mini:
+  - `tinyllama.gguf` no existe en `/root/gretacore/models`.
+  - `dummy_v1.gguf` no es GGUF (falla con `Failed to open model: Not GGUF`).
+  - `greta-v1.gguf` reproduce el mismo OOM en `Embedding Lookup`.
+- Próximo paso requerido: instancia MI300X con VRAM libre estable o modelo GGUF pequeño disponible.
 
 L.E.T / Leandro Emanuel Timberini
