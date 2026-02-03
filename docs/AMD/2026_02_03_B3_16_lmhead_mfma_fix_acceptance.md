@@ -23,22 +23,22 @@ Tabla prefill_last vs decode0 (top1/top2/gap):
 
 | Prompt | prefill_last top1 | decode0 top1 | cpu_probe_agrees (prefill/decode) |
 |---|---:|---:|---|
-| p4_sys | TBD | TBD | TBD/TBD |
-| p5_ba  | TBD | TBD | TBD/TBD |
+| p4_sys | 127158 | 96965 | true/true |
+| p5_ba  | 127158 | 96965 | true/true |
 
 ## Results (EN)
 Prefill_last vs decode0 table:
 
 | Prompt | prefill_last top1 | decode0 top1 | cpu_probe_agrees (prefill/decode) |
 |---|---:|---:|---|
-| p4_sys | TBD | TBD | TBD/TBD |
-| p5_ba  | TBD | TBD | TBD/TBD |
+| p4_sys | 127158 | 96965 | true/true |
+| p5_ba  | 127158 | 96965 | true/true |
 
 ## Conclusión (ES)
-TBD según aceptación (prefill_last == decode0 o mejora significativa).
+Prefill ahora es coherente (cpu_probe_agrees=true) pero decode0 sigue colapsando a 96965; la igualdad prefill_last==decode0 no se cumple.
 
 ## Conclusion (EN)
-TBD based on acceptance (prefill_last == decode0 or significant improvement).
+Prefill is now coherent (cpu_probe_agrees=true) but decode0 still collapses to 96965; prefill_last==decode0 is not achieved.
 
 ---
 L.E.T / Leandro Emanuel Timberini
