@@ -115,8 +115,22 @@ int main(int argc, char *argv[]) {
 
   // Initialize model config
   auto config = gcore::inference::ModelConfig::llama2_7b();
-  std::cout << "Model: Llama-2-7B (" << config.param_count() / 1e9
-            << "B params)\n";
+  std::unique_ptr<gcore::inference::WeightLoader> loader;
+  if (!model_path.empty()) {
+    loader = gcore::inference::create_weight_loader(model_path, &err);
+    if (!loader) {
+      std::cerr << "Failed to open model: " << err << "\n";
+      return 1;
+    }
+    config = loader->get_config();
+  }
+
+  std::cout << "Model config: layers=" << config.num_layers
+            << ", dim=" << config.dim
+            << ", heads=" << config.num_heads
+            << ", hidden=" << config.hidden_dim
+            << ", vocab=" << config.vocab_size
+            << ", params=" << (config.param_count() / 1e9) << "B\n";
 
   // Initialize scheduler
   std::cout << "[GRETA_MAIN] Initializing scheduler..." << std::endl;
@@ -144,7 +158,6 @@ int main(int argc, char *argv[]) {
   // Load weights from model file if provided
   if (!model_path.empty()) {
     std::cout << "\nLoading weights from: " << model_path << "\n";
-    auto loader = gcore::inference::create_weight_loader(model_path, &err);
     if (!loader) {
       std::cerr << "Failed to open model: " << err << "\n";
       return 1;
@@ -153,8 +166,7 @@ int main(int argc, char *argv[]) {
       std::cerr << "Weight loading failed: " << err << "\n";
       return 1;
     }
-    config = loader->get_config();
-    std::cout << "Weights loaded and config updated (vocab size: "
+    std::cout << "Weights loaded (vocab size: "
               << config.vocab_size << ")\n";
   }
 
