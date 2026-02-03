@@ -7,15 +7,133 @@
 #include <algorithm>
 #include <cstdlib>
 #include <chrono>
+#include <cstdint>
 #include <cmath>
+#include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <random>
 
 namespace gcore::inference {
 
+
+struct F32Stats {
+  float min = 0.0f;
+  float max = 0.0f;
+  float mean = 0.0f;
+};
+
+static F32Stats stats_f32(const float *p, size_t n) {
+  F32Stats s{};
+  if (n == 0)
+    return s;
+  s.min = p[0];
+  s.max = p[0];
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    float v = p[i];
+    if (v < s.min)
+      s.min = v;
+    if (v > s.max)
+      s.max = v;
+    sum += v;
+  }
+  s.mean = static_cast<float>(sum / n);
+  return s;
+}
+
+static uint64_t hash_f32(const float *p, size_t n) {
+  const size_t count = (n < 256) ? n : 256;
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < count; ++i) {
+    uint32_t v;
+    std::memcpy(&v, &p[i], sizeof(uint32_t));
+    h ^= static_cast<uint64_t>(v);
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+static void append_line(const char *path, const std::string &line) {
+  if (!path || !*path)
+    return;
+  std::ofstream f(path, std::ios::out | std::ios::app);
+  if (!f.is_open())
+    return;
+  f << line << "\n";
+}
+
+static void log_readout(const char *path, const char *phase, int step,
+                        size_t token_index, size_t hidden_offset_bytes,
+                        uintptr_t hidden_ptr, const F32Stats &hstats,
+                        uint64_t hhash, size_t logits_offset_bytes,
+                        uintptr_t logits_ptr, const F32Stats &lstats,
+                        uint64_t lhash, size_t vocab) {
+  std::ostringstream oss;
+  oss << "{\"phase\":\"" << phase << "\""
+      << ",\"step\":" << step
+      << ",\"token_index\":" << token_index
+      << ",\"hidden_offset\":" << hidden_offset_bytes
+      << ",\"hidden_ptr\":" << hidden_ptr
+      << ",\"hidden_hash\":" << hhash
+      << ",\"hidden_min\":" << hstats.min
+      << ",\"hidden_max\":" << hstats.max
+      << ",\"hidden_mean\":" << hstats.mean
+      << ",\"logits_offset\":" << logits_offset_bytes
+      << ",\"logits_ptr\":" << logits_ptr
+      << ",\"logits_hash\":" << lhash
+      << ",\"logits_min\":" << lstats.min
+      << ",\"logits_max\":" << lstats.max
+      << ",\"logits_mean\":" << lstats.mean
+      << ",\"vocab\":" << vocab
+      << "}";
+  append_line(path, oss.str());
+}
+
+static void log_landscape(const char *path, int step,
+                          const std::vector<float> &logits, int topk) {
+  if (!path || !*path)
+    return;
+  std::vector<std::pair<float, int>> v;
+  v.reserve(logits.size());
+  for (size_t i = 0; i < logits.size(); ++i)
+    v.push_back({logits[i], (int)i});
+  std::sort(v.rbegin(), v.rend());
+  const int k = std::min<int>(topk, (int)v.size());
+  const float top1 = v[0].first;
+  const float top2 = v[1].first;
+  const float gap = top1 - top2;
+
+  float max_logit = v[0].first;
+  double sum = 0.0;
+  for (int i = 0; i < k; ++i)
+    sum += std::exp(v[i].first - max_logit);
+  double entropy = 0.0;
+  for (int i = 0; i < k; ++i) {
+    double p = std::exp(v[i].first - max_logit) / sum;
+    entropy += -p * std::log(p + 1e-12);
+  }
+
+  std::ostringstream oss;
+  oss << "{\"step\":" << step
+      << ",\"top1\":{\"id\":" << v[0].second << ",\"logit\":" << v[0].first
+      << "},\"top2\":{\"id\":" << v[1].second << ",\"logit\":" << v[1].first
+      << "},\"gap\":" << gap
+      << ",\"entropy_topk\":" << entropy
+      << ",\"top5\":[";
+  for (int i = 0; i < 5 && i < (int)v.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << "{\"id\":" << v[i].second << ",\"logit\":" << v[i].first << "}";
+  }
+  oss << "]}";
+  append_line(path, oss.str());
+}
+
 static bool env_flag(const char *k) {
   const char *v = std::getenv(k);
-  return v && v[0] == 1;
+  return v && (v[0] == 1 || v[0] == y || v[0] == Y);
 }
 
 Generator::Generator() = default;
@@ -129,6 +247,18 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
 
   std::vector<float> logits_host(config_.vocab_size);
 
+  const bool trace_readout = env_flag("GRETA_TRACE_READOUT");
+  const char *trace_readout_out = std::getenv("GRETA_TRACE_READOUT_OUT");
+  const bool trace_prefill_decode = env_flag("GRETA_TRACE_PREFILL_DECODE");
+  const char *trace_prefill_decode_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+  const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
+  const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
+  const int landscape_topk = 64;
+
+  std::vector<float> hidden_host;
+  if (trace_readout || trace_prefill_decode)
+    hidden_host.resize(config_.dim);
+
   // 1. Prefill: Process all prompt tokens at once
   if (!scheduler_->forward(prompt_tokens.data(), 0, prompt_tokens.size(),
                            err)) {
@@ -142,6 +272,35 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           logits_host.data(), last_token_offset,
           config_.vocab_size * sizeof(float), err)) {
     return output;
+  }
+
+  if (trace_readout || trace_prefill_decode) {
+    const size_t token_index = prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
+    const size_t hidden_offset = token_index * config_.dim * sizeof(float);
+    if (!scheduler_->get_hidden_state().copy_to_host_offset(
+            hidden_host.data(), hidden_offset,
+            config_.dim * sizeof(float), err)) {
+      return output;
+    }
+    const F32Stats hstats = stats_f32(hidden_host.data(), config_.dim);
+    const uint64_t hhash = hash_f32(hidden_host.data(), config_.dim);
+    const F32Stats lstats = stats_f32(logits_host.data(), config_.vocab_size);
+    const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
+    const uintptr_t hidden_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_hidden_state().data());
+    const uintptr_t logits_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_logits().data());
+    if (trace_readout && trace_readout_out) {
+      log_readout(trace_readout_out, "prefill", 0, token_index, hidden_offset,
+                  hidden_ptr, hstats, hhash, last_token_offset, logits_ptr,
+                  lstats, lhash, config_.vocab_size);
+    }
+    if (trace_prefill_decode && trace_prefill_decode_out) {
+      log_readout(trace_prefill_decode_out, "prefill", 0, token_index, hidden_offset,
+                  hidden_ptr, hstats, hhash, last_token_offset, logits_ptr,
+                  lstats, lhash, config_.vocab_size);
+    }
+  }
+  if (trace_landscape && trace_landscape_out) {
+    log_landscape(trace_landscape_out, 0, logits_host, landscape_topk);
   }
 
   int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
@@ -205,14 +364,45 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (!scheduler_->forward(&last_token_id, output.size() - 1, 1, err)) {
       break;
     }
-
-    if (params.greedy && !align_callback) {
+    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode;
+    if (params.greedy && !align_callback && !need_logits_host) {
       next_token = scheduler_->sample_greedy_gpu(err);
     } else {
       if (!scheduler_->get_logits().copy_to_host(
               logits_host.data(), config_.vocab_size * sizeof(float), err)) {
         break;
       }
+
+      if (trace_readout || trace_prefill_decode) {
+        const size_t token_index = 0;
+        const size_t hidden_offset = 0;
+        if (!scheduler_->get_hidden_state().copy_to_host_offset(
+                hidden_host.data(), hidden_offset,
+                config_.dim * sizeof(float), err)) {
+          break;
+        }
+        const F32Stats hstats = stats_f32(hidden_host.data(), config_.dim);
+        const uint64_t hhash = hash_f32(hidden_host.data(), config_.dim);
+        const F32Stats lstats = stats_f32(logits_host.data(), config_.vocab_size);
+        const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
+        const uintptr_t hidden_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_hidden_state().data());
+        const uintptr_t logits_ptr = reinterpret_cast<uintptr_t>(scheduler_->get_logits().data());
+        if (trace_readout && trace_readout_out) {
+          log_readout(trace_readout_out, "decode", i, token_index, hidden_offset,
+                      hidden_ptr, hstats, hhash, 0, logits_ptr,
+                      lstats, lhash, config_.vocab_size);
+        }
+        if (trace_prefill_decode && trace_prefill_decode_out) {
+          log_readout(trace_prefill_decode_out, "decode", i, token_index, hidden_offset,
+                      hidden_ptr, hstats, hhash, 0, logits_ptr,
+                      lstats, lhash, config_.vocab_size);
+        }
+      }
+
+      if (trace_landscape && trace_landscape_out) {
+        log_landscape(trace_landscape_out, i, logits_host, landscape_topk);
+      }
+
       next_token = sample(logits_host.data(), config_.vocab_size, params);
 
       if (align_callback) {
