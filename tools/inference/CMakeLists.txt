@@ -32,8 +32,10 @@ set(INFERENCE_SOURCES
     ${INFERENCE_DIR}/src/block_scheduler.cpp
     ${INFERENCE_DIR}/src/tokenizer.cpp
     ${INFERENCE_DIR}/src/generator.cpp
+    ${INFERENCE_DIR}/src/layer_trace.cpp
     ${RT_HIP_DIR}/src/buffer.cpp
     ${RT_HIP_DIR}/src/greta_runtime_hip.cpp
+    ${RT_HIP_DIR}/src/arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/compute/src/greta_compute_hip.cpp
 )
 
@@ -91,3 +93,4 @@ target_compile_definitions(test_l0 PRIVATE
 )
 target_link_directories(test_l0 PRIVATE ${ROCM_PATH}/lib)
 target_link_libraries(test_l0 PRIVATE amdhip64)
+#TEST

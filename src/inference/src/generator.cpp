@@ -1,6 +1,8 @@
 #include "gcore/inference/generator.hpp"
 #include "gcore/inference/block_scheduler.hpp"
 #include "gcore/inference/tokenizer.hpp"
+#include "gcore/inference/trace.hpp"
+#include "gcore/inference/layer_trace.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -139,6 +141,15 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   int32_t next_token = sample(logits_host.data(), config_.vocab_size, params);
   output.push_back(next_token);
 
+  if (env_flag("GRETA_TRACE_LAYER")) {
+    const size_t pos_id = prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
+    const size_t seq_len = prompt_tokens.size();
+    const size_t tokens_total = output.size();
+    const int32_t token_in = prompt_tokens.empty() ? -1 : prompt_tokens.back();
+    layer_trace_emit_step_header(0, pos_id, seq_len, tokens_total, token_in,
+                                 next_token, config_);
+  }
+
   if (align_callback) {
     AlignmentStep step;
     step.step = 0;
@@ -233,6 +244,15 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         align_callback(step);
       }
     }
+    if (env_flag("GRETA_TRACE_LAYER")) {
+      const size_t pos_id = output.size() - 1;
+      const size_t seq_len = 1;
+      const size_t tokens_total = output.size();
+      const int32_t token_in = last_token_id;
+      layer_trace_emit_step_header(i, pos_id, seq_len, tokens_total, token_in,
+                                   next_token, config_);
+    }
+
     output.push_back(next_token);
   }
 

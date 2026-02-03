@@ -21,6 +21,7 @@ set(INFERENCE_SOURCES
     src/block_scheduler.cpp
     src/tokenizer.cpp
     src/generator.cpp
+    src/layer_trace.cpp
 )
 
 # Build as static library

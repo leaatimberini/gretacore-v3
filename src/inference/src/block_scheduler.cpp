@@ -46,6 +46,8 @@ bool BlockScheduler::init(const ModelConfig &config, std::string *err) {
   std::cout << "[GRETA_SCHED] Stream created successfully" << std::endl;
 
   tracer_.init_from_env();
+  layer_tracer_.init_from_env(config_);
+
   initialized_ = true;
   return true;
 }
@@ -321,6 +323,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   const uint32_t n_x = S * D;
   const uint32_t n_mlp = S * hidden_dim;
+  const uint32_t n_kv = S * H * Dh;
 
   using namespace gcore::rt::hip::kernels;
   float *x = static_cast<float *>(activations_.x.data());
@@ -347,6 +350,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   hipStream_t hip_stream =
       static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
+
+  const bool trace_layer = GRETA_UNLIKELY(layer_tracer_.enabled());
+  if (trace_layer) {
+    layer_tracer_.trace_tensor("x", trace_step_, static_cast<int>(layer_idx),
+                               hip_stream, x, n_x);
+  }
 
   gcore::rt::GretaEvent *start = nullptr, *stop = nullptr;
   if (PROFILE_ON()) {
@@ -391,10 +400,28 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                          static_cast<const __half *>(b.wv.data()), q, k, v, D,
                          config_.rms_eps),
                      "Fused RMSNorm+QKV");
+
+    if (trace_layer) {
+      layer_tracer_.trace_tensor("q", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 q, n_x);
+      layer_tracer_.trace_tensor_f16("k", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(k), n_kv);
+      layer_tracer_.trace_tensor_f16("v", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(v), n_kv);
+    }
   } else {
     CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, attn_norm, norm_out, S,
                                           D, config_.rms_eps),
                      "RMSNorm (Attn)");
+
+    if (trace_layer) {
+      layer_tracer_.trace_tensor("norm_out", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 norm_out, n_x);
+    }
 
     if (TRACE_ON(layer_idx)) {
       launch_debug_tensor_stats(hip_stream, "L.attn_rmsnorm.norm_out", norm_out,
@@ -427,6 +454,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         "GEMM V");
     if (profile_attn)
       ev_v_end->record(stream_);
+
+    if (trace_layer) {
+      layer_tracer_.trace_tensor("q", trace_step_,
+                                 static_cast<int>(layer_idx), hip_stream,
+                                 q, n_x);
+      layer_tracer_.trace_tensor_f16("k", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(k), n_kv);
+      layer_tracer_.trace_tensor_f16("v", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(v), n_kv);
+    }
   }
 
   if (TRACE_ON(layer_idx)) {
@@ -533,6 +572,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     delete ev_core_end;
   }
 
+  if (trace_layer) {
+    layer_tracer_.trace_tensor_f16("attn_out", trace_step_,
+                                   static_cast<int>(layer_idx), hip_stream,
+                                   reinterpret_cast<const __half *>(attn_out), n_x);
+  }
+
   if (TRACE_ON(layer_idx)) {
     launch_debug_tensor_stats(hip_stream, "L.attn.attn_out", attn_out, n_x);
   }
@@ -549,6 +594,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                            static_cast<const float *>(b.ffn_norm.data()),
                            norm_out, S, D, config_.rms_eps),
       "RMSNorm (FFN)");
+
+  if (trace_layer) {
+    layer_tracer_.trace_tensor("ffn_norm", trace_step_,
+                               static_cast<int>(layer_idx), hip_stream,
+                               norm_out, n_x);
+  }
 
   if (TRACE_ON(layer_idx)) {
     launch_debug_tensor_stats(hip_stream, "L.ffn_rmsnorm.norm_out", norm_out,
@@ -575,6 +626,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                     &activations_.mlp_up, S, hidden_dim, D),
                 "GEMM W3");
 
+    if (trace_layer) {
+      layer_tracer_.trace_tensor_f16("mlp_gate", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(mlp_gate), n_mlp);
+      layer_tracer_.trace_tensor_f16("mlp_up", trace_step_,
+                                     static_cast<int>(layer_idx), hip_stream,
+                                     reinterpret_cast<const __half *>(mlp_up), n_mlp);
+    }
+
     if (TRACE_ON(layer_idx)) {
       launch_debug_tensor_stats(hip_stream, "L.ffn.gate.nonfused", mlp_gate,
                                 n_mlp);
@@ -598,12 +658,32 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                   S, D, hidden_dim),
               "GEMM W2");
 
+  if (trace_layer) {
+    layer_tracer_.trace_tensor_f16("mlp_out", trace_step_,
+                                   static_cast<int>(layer_idx), hip_stream,
+                                   reinterpret_cast<const __half *>(mlp_out), n_x);
+  }
+
   if (TRACE_ON(layer_idx)) {
     launch_debug_tensor_stats(hip_stream, "L.ffn.out", mlp_out, n_x);
   }
 
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (FFN)");
+
+  if (PROFILE_ON()) {
+    stop->record(stream_);
+    stream_->synchronize();
+    float ms = stop->elapsed_time_since(start);
+    printf("[PROFILE] Layer %zu total: %.3f ms\n", layer_idx, ms);
+    delete start;
+    delete stop;
+  }
+  if (trace_layer) {
+    layer_tracer_.trace_tensor("x_out", trace_step_,
+                               static_cast<int>(layer_idx), hip_stream,
+                               x, n_x);
+  }
 
   if (PROFILE_ON()) {
     stop->record(stream_);

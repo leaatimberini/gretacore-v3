@@ -2,6 +2,7 @@
 
 #include "gcore/inference/model_config.hpp"
 #include "gcore/inference/trace.hpp"
+#include "gcore/inference/layer_trace.hpp"
 #include "gcore/rt/greta_runtime.hpp"
 #include "gcore/rt/hip/buffer.hpp"
 #include <hip/hip_runtime.h>
@@ -122,6 +123,7 @@ private:
   size_t current_seq_pos_ = 0;
 
   gcore::inference::Tracer tracer_;
+  gcore::inference::LayerTracer layer_tracer_;
   int trace_step_ = 0;
 
   // GRETA Graph
