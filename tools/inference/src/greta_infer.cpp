@@ -4,6 +4,7 @@
 #include "gcore/inference/tokenizer.hpp"
 #include "gcore/inference/weight_loader.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -152,8 +153,18 @@ int main(int argc, char *argv[]) {
     std::cerr << "Weight allocation failed: " << err << "\n";
     return 1;
   }
-  if (!scheduler.allocate_activations(
-          batch_size, 2048, &err)) { // Support up to 2k context for bench
+  size_t max_seq_len = 2048; // Default context for bench
+  if (const char *max_seq_env = std::getenv("GRETA_MAX_SEQ_LEN")) {
+    char *end = nullptr;
+    long v = std::strtol(max_seq_env, &end, 10);
+    if (end != max_seq_env && v > 0) {
+      max_seq_len = static_cast<size_t>(v);
+      std::cout << "[GRETA_MAIN] GRETA_MAX_SEQ_LEN=" << max_seq_len
+                << std::endl;
+    }
+  }
+  if (!scheduler.allocate_activations(batch_size, max_seq_len,
+                                      &err)) { // Configurable max_seq_len
     std::cerr << "Activation allocation failed: " << err << "\n";
     return 1;
   }

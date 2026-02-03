@@ -49,6 +49,7 @@ export GRETA_TRACE_PREFILL_DECODE_OUT=$OUTDIR/b3_6_prefill_decode.jsonl
 export GRETA_TRACE_LANDSCAPE=1
 export GRETA_TRACE_LANDSCAPE_OUT=$OUTDIR/b3_6_landscape.jsonl
 export GRETA_INT4_WEIGHTS=1   # usar int4 si VRAM disponible es baja
+export GRETA_MAX_SEQ_LEN=256  # reduce KV-cache/activations si VRAM está saturada
 MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 cd /root/gretacore/tools/inference/build
 ./greta_infer --model "$MODEL" --prompt "Hi" --max-tokens 16 --greedy --debug-decode 16 \
