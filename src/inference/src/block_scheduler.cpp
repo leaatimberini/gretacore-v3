@@ -8,8 +8,10 @@
 #include "gcore/rt/hip/kernels/fused_attention_kernels.hpp"
 #include "gcore/rt/hip/kernels/fused_compute_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
+#include <cmath>
 #include <iostream>
 #include <unordered_map>
+#include <vector>
 
 #if defined(__GNUC__)
 #define GRETA_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -60,6 +62,83 @@ static bool trace_hip_check_and_sync(const char *name, std::string *err) {
     return false;
   }
   return trace_hip_sync(name, err);
+}
+
+static bool trace_embed_verify_enabled() {
+  static const bool enabled = env_flag("GRETA_TRACE_EMBED_VERIFY");
+  return enabled;
+}
+
+static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
+                                    uint32_t dim, uint32_t vocab_size,
+                                    const gcore::rt::hip::Buffer &token_embd,
+                                    const gcore::rt::hip::Buffer &x,
+                                    std::string *err) {
+  static bool done = false;
+  if (!trace_embed_verify_enabled() || done)
+    return true;
+  done = true;
+
+  if (seq_len == 0 || dim == 0 || vocab_size == 0)
+    return true;
+
+  size_t s = seq_len - 1;
+  int32_t token = tokens[s];
+  if (token < 0 || token >= static_cast<int32_t>(vocab_size)) {
+    std::cout << "[GRETA_TRACE_EMBED_VERIFY] token out of range: " << token
+              << std::endl;
+    return true;
+  }
+
+  if (!trace_hip_sync("Embedding Verify", err))
+    return false;
+
+  std::vector<float> out(dim);
+  size_t out_offset = s * static_cast<size_t>(dim) * sizeof(float);
+  if (!x.copy_to_host_offset(out.data(), out_offset,
+                             static_cast<size_t>(dim) * sizeof(float), err))
+    return false;
+
+  std::vector<float> row(dim);
+  size_t row_offset = static_cast<size_t>(token) * dim * sizeof(float);
+  if (!token_embd.copy_to_host_offset(
+          row.data(), row_offset, static_cast<size_t>(dim) * sizeof(float), err))
+    return false;
+
+  std::vector<float> col(dim);
+  for (uint32_t d = 0; d < dim; ++d) {
+    size_t col_offset =
+        (static_cast<size_t>(d) * vocab_size + static_cast<size_t>(token)) *
+        sizeof(float);
+    if (!token_embd.copy_to_host_offset(&col[d], col_offset, sizeof(float), err))
+      return false;
+  }
+
+  double mae_row = 0.0;
+  double mae_col = 0.0;
+  double max_row = 0.0;
+  double max_col = 0.0;
+  for (uint32_t d = 0; d < dim; ++d) {
+    double dr = std::fabs(static_cast<double>(out[d]) - row[d]);
+    double dc = std::fabs(static_cast<double>(out[d]) - col[d]);
+    mae_row += dr;
+    mae_col += dc;
+    if (dr > max_row)
+      max_row = dr;
+    if (dc > max_col)
+      max_col = dc;
+  }
+  mae_row /= static_cast<double>(dim);
+  mae_col /= static_cast<double>(dim);
+
+  const char *layout =
+      (mae_row <= mae_col) ? "row_major_match" : "col_major_match";
+  std::cout << "[GRETA_TRACE_EMBED_VERIFY] token=" << token
+            << " seq_idx=" << s << " mae_row=" << mae_row
+            << " mae_col=" << mae_col << " max_row=" << max_row
+            << " max_col=" << max_col << " layout=" << layout << std::endl;
+
+  return true;
 }
 
 BlockScheduler::BlockScheduler() = default;
@@ -781,6 +860,9 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   CHECK_HIP_KERNEL(launch_embedding_lookup(hip_stream, d_tokens, embd_w, x, S,
                                            D, config_.vocab_size),
                    "Embedding Lookup");
+  if (!trace_embed_verify_once(tokens, seq_len, D, V, token_embd_,
+                               activations_.x, err))
+    return false;
 
   uint32_t pos = static_cast<uint32_t>(seq_start);
   activations_.d_pos.copy_to_device(&pos, sizeof(uint32_t), err);
