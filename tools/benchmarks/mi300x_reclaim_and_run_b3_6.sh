@@ -16,11 +16,11 @@ echo "=== TOP GPU PROCS ===";
 #   - vLLM/open-webui, servidores python, restos de greta_infer
 ssh root@"$IP" 'set -e;
 echo "=== KILL CANDIDATES ===";
-pkill -f "vllm" || true
-pkill -f "open-webui" || true
-pkill -f "python.*vllm" || true
-pkill -f "greta_infer" || true
-pkill -f "greta_server" || true
+pkill -f "[v]llm" || true
+pkill -f "[o]pen-webui" || true
+pkill -f "[p]ython.*vllm" || true
+pkill -f "[g]reta_infer" || true
+pkill -f "[g]reta_server" || true
 sleep 2
 echo "=== AFTER KILL ROCM-SMI ===";
 command -v rocm-smi >/dev/null && rocm-smi --showmemuse --showuse --showpids || true;
