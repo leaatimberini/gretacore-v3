@@ -635,23 +635,42 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
       return false;
     }
 
-    if (it->shape.size() != 2 || it->shape[0] != kv_dim ||
-        it->shape[1] != model_dim || full_dim != model_dim ||
-        head_dim == 0 || kv_dim == 0) {
+    if (it->shape.size() != 2 || full_dim != model_dim || head_dim == 0 ||
+        kv_dim == 0) {
       if (err) {
         *err = "GQA KV expansion failed for " + name +
-               ": expected shape [" + std::to_string(kv_dim) + "," +
-               std::to_string(model_dim) + "] with head_dim=" +
-               std::to_string(head_dim) + ", got [" +
+               ": unexpected shape dims or config mismatch. got [" +
                (it->shape.size() > 0 ? std::to_string(it->shape[0]) : "?") +
                "," +
                (it->shape.size() > 1 ? std::to_string(it->shape[1]) : "?") +
-               "]";
+               "], expected [" + std::to_string(kv_dim) + "," +
+               std::to_string(model_dim) + "] or [" +
+               std::to_string(model_dim) + "," +
+               std::to_string(kv_dim) + "]";
       }
       return false;
     }
 
     const uint32_t group = num_heads / num_heads_kv;
+    std::vector<uint16_t> kv_matrix((size_t)kv_dim * (size_t)model_dim, 0);
+    if (it->shape[0] == kv_dim && it->shape[1] == model_dim) {
+      kv_matrix = fp16;
+    } else if (it->shape[0] == model_dim && it->shape[1] == kv_dim) {
+      for (uint32_t r = 0; r < kv_dim; ++r) {
+        for (uint32_t c = 0; c < model_dim; ++c) {
+          kv_matrix[(size_t)r * model_dim + c] =
+              fp16[(size_t)c * kv_dim + r];
+        }
+      }
+    } else {
+      if (err) {
+        *err = "GQA KV expansion failed for " + name +
+               ": unsupported shape [" + std::to_string(it->shape[0]) + "," +
+               std::to_string(it->shape[1]) + "]";
+      }
+      return false;
+    }
+
     std::vector<uint16_t> expanded((size_t)full_dim * (size_t)model_dim, 0);
     for (uint32_t kv_head = 0; kv_head < num_heads_kv; ++kv_head) {
       for (uint32_t g = 0; g < group; ++g) {
@@ -660,7 +679,7 @@ bool GGUFLoader::load_tensor_fp16(const std::string &name,
           size_t src_row = (size_t)kv_head * head_dim + r;
           size_t dst_row = (size_t)out_head * head_dim + r;
           std::memcpy(&expanded[dst_row * model_dim],
-                      &fp16[src_row * model_dim],
+                      &kv_matrix[src_row * model_dim],
                       (size_t)model_dim * sizeof(uint16_t));
         }
       }
