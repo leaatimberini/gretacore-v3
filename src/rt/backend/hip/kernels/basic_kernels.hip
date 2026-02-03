@@ -169,7 +169,8 @@ void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
 __global__ void embedding_lookup_kernel(const int32_t *tokens,
                                         const float *embeddings, float *output,
                                         uint32_t seq_len, uint32_t dim,
-                                        uint32_t vocab_size) {
+                                        uint32_t vocab_size,
+                                        uint8_t layout_row_major) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   uint32_t total = seq_len * dim;
   if (idx >= total)
@@ -180,7 +181,13 @@ __global__ void embedding_lookup_kernel(const int32_t *tokens,
   int32_t token = tokens[s];
 
   if (token >= 0 && token < (int32_t)vocab_size) {
-    output[idx] = embeddings[d * vocab_size + token];
+    if (layout_row_major) {
+      output[idx] =
+          embeddings[static_cast<uint32_t>(token) * dim + d];
+    } else {
+      output[idx] =
+          embeddings[d * vocab_size + static_cast<uint32_t>(token)];
+    }
   } else {
     output[idx] = 0.0f;
   }
@@ -189,12 +196,13 @@ __global__ void embedding_lookup_kernel(const int32_t *tokens,
 void launch_embedding_lookup(hipStream_t stream, const int32_t *tokens,
                              const float *embeddings, float *output,
                              uint32_t seq_len, uint32_t dim,
-                             uint32_t vocab_size) {
+                             uint32_t vocab_size, bool row_major) {
   uint32_t total = seq_len * dim;
   int block_size = 256;
   int grid_size = (total + block_size - 1) / block_size;
   embedding_lookup_kernel<<<grid_size, block_size, 0, stream>>>(
-      tokens, embeddings, output, seq_len, dim, vocab_size);
+      tokens, embeddings, output, seq_len, dim, vocab_size,
+      row_major ? 1 : 0);
 }
 
 // Debug instrumentation

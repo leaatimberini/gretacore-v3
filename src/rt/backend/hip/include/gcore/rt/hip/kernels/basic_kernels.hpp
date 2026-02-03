@@ -26,7 +26,7 @@ void launch_mul(hipStream_t stream, const float *a, const float *b, float *c,
 void launch_embedding_lookup(hipStream_t stream, const int32_t *tokens,
                              const float *embeddings, float *output,
                              uint32_t seq_len, uint32_t dim,
-                             uint32_t vocab_size);
+                             uint32_t vocab_size, bool row_major);
 
 struct DebugStats {
   uint64_t nan_count;

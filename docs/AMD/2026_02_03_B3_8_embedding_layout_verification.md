@@ -26,7 +26,7 @@ MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
   --greedy \
   --debug-decode 16
 ```
-Nota: `tools/inference/greta_infer` no era ejecutable (Permission denied), se utilizó el binario de `tools/inference/build/greta_infer`.
+Nota: usar `tools/inference/build/greta_infer`. El wrapper `tools/inference/greta_infer` no era ejecutable (Permission denied) en MI300X.
 
 ## Evidencia (extracto log, 1 línea)
 ```

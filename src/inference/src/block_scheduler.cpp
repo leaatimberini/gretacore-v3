@@ -69,11 +69,29 @@ static bool trace_embed_verify_enabled() {
   return enabled;
 }
 
+static bool embed_layout_row_major() {
+  static bool cached = false;
+  static bool row_major = true;
+  if (cached)
+    return row_major;
+  cached = true;
+  const char *v = std::getenv("GRETA_EMBED_LAYOUT");
+  if (!v)
+    return row_major;
+  std::string val(v);
+  if (val == "col" || val == "COL" || val == "col_major") {
+    row_major = false;
+  } else {
+    row_major = true;
+  }
+  return row_major;
+}
+
 static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
                                     uint32_t dim, uint32_t vocab_size,
                                     const gcore::rt::hip::Buffer &token_embd,
                                     const gcore::rt::hip::Buffer &x,
-                                    std::string *err) {
+                                    bool layout_row_major, std::string *err) {
   static bool done = false;
   if (!trace_embed_verify_enabled() || done)
     return true;
@@ -131,12 +149,14 @@ static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
   mae_row /= static_cast<double>(dim);
   mae_col /= static_cast<double>(dim);
 
-  const char *layout =
+  const char *layout_probe_best =
       (mae_row <= mae_col) ? "row_major_match" : "col_major_match";
+  const char *layout_used = layout_row_major ? "row" : "col";
   std::cout << "[GRETA_TRACE_EMBED_VERIFY] token=" << token
             << " seq_idx=" << s << " mae_row=" << mae_row
             << " mae_col=" << mae_col << " max_row=" << max_row
-            << " max_col=" << max_col << " layout=" << layout << std::endl;
+            << " max_col=" << max_col << " layout_used=" << layout_used
+            << " layout_probe_best=" << layout_probe_best << std::endl;
 
   return true;
 }
@@ -853,15 +873,17 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   const float *embd_w = static_cast<const float *>(token_embd_.data());
   const int32_t *d_tokens =
       static_cast<const int32_t *>(activations_.tokens.data());
+  const bool embed_row_major = embed_layout_row_major();
 
   hipStream_t hip_stream =
       static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
 
   CHECK_HIP_KERNEL(launch_embedding_lookup(hip_stream, d_tokens, embd_w, x, S,
-                                           D, config_.vocab_size),
+                                           D, config_.vocab_size,
+                                           embed_row_major),
                    "Embedding Lookup");
   if (!trace_embed_verify_once(tokens, seq_len, D, V, token_embd_,
-                               activations_.x, err))
+                               activations_.x, embed_row_major, err))
     return false;
 
   uint32_t pos = static_cast<uint32_t>(seq_start);

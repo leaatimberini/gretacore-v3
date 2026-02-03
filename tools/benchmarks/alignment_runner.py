@@ -10,7 +10,7 @@ def run_infer(model, prompt, max_tokens, perhead=True):
     env["GRETA_PERHEAD_QKV"] = "1" if perhead else "0"
     
     cmd = [
-        "tools/inference/greta_infer",
+        "tools/inference/build/greta_infer",
         "--model", model,
         "--prompt", prompt,
         "--max-tokens", str(max_tokens),

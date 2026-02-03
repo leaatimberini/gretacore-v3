@@ -11,7 +11,7 @@ def run_bench(model_path, prompt, max_tokens=128, perhead=True):
     env["GRETA_PERHEAD_QKV"] = "1" if perhead else "0"
     
     cmd = [
-        "tools/inference/greta_infer",
+        "tools/inference/build/greta_infer",
         "--model", model_path,
         "--prompt", prompt,
         "--max-tokens", str(max_tokens),
