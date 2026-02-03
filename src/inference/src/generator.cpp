@@ -15,6 +15,7 @@
 #include <iostream>
 #include <sstream>
 #include <random>
+#include <hip/hip_fp16.h>
 
 namespace gcore::inference {
 
@@ -187,6 +188,109 @@ static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
 
   out_top1_id = best_id;
   return best_id >= 0;
+}
+
+static void append_line(const char *path, const std::string &line);
+
+static bool trace_lmhead_w_verify_once(
+    const gcore::rt::hip::Buffer &weights, const std::vector<float> &rms_host,
+    const std::vector<float> &logits_host, const ModelConfig &config,
+    const char *out_path, std::string *err) {
+  static bool done = false;
+  if (done)
+    return true;
+  if (!out_path || !*out_path)
+    return true;
+  done = true;
+
+  if (weights.data_type() != gcore::rt::GretaDataType::FP16) {
+    std::ostringstream oss;
+    oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"unsupported_dtype\",\"dtype\":\""
+        << dtype_name(weights.data_type()) << "\"}";
+    append_line(out_path, oss.str());
+    return true;
+  }
+
+  const std::vector<int> token_ids = {79, 96965, 12345};
+  const size_t dim = config.dim;
+  const size_t vocab = config.vocab_size;
+  const size_t elem_size = sizeof(__half);
+
+  auto copy_elem = [&](size_t offset_elems, __half *out) -> bool {
+    return weights.copy_to_host_offset(out, offset_elems * elem_size, elem_size, err);
+  };
+
+  for (int token_id : token_ids) {
+    if (token_id < 0 || static_cast<size_t>(token_id) >= vocab)
+      continue;
+
+    std::vector<__half> row_dim(dim);
+    size_t row_offset = static_cast<size_t>(token_id) * dim * elem_size;
+    if (!weights.copy_to_host_offset(row_dim.data(), row_offset, dim * elem_size, err))
+      return false;
+
+    std::vector<__half> col_dim(dim);
+    for (size_t d = 0; d < dim; ++d) {
+      size_t col_offset = (d * vocab + static_cast<size_t>(token_id)) * elem_size;
+      if (!copy_elem(col_offset, &col_dim[d]))
+        return false;
+    }
+
+    auto dot_half = [&](const std::vector<__half> &w) -> float {
+      float sum = 0.0f;
+      for (size_t d = 0; d < dim; ++d) {
+        sum += fp16_to_fp32(w[d]) * rms_host[d];
+      }
+      return sum;
+    };
+
+    float row_logit = dot_half(row_dim);
+    float col_logit = dot_half(col_dim);
+    float gpu_logit = logits_host[static_cast<size_t>(token_id)];
+    float abs_err_row = std::fabs(row_logit - gpu_logit);
+    float abs_err_col = std::fabs(col_logit - gpu_logit);
+    const char *best_layout = (abs_err_row <= abs_err_col) ? "row_major_match" : "col_major_match";
+
+    std::vector<float> row_win;
+    std::vector<float> col_win;
+    row_win.reserve(16);
+    col_win.reserve(16);
+    for (size_t i = 0; i < 16 && i < dim; ++i) {
+      row_win.push_back(fp16_to_fp32(row_dim[i]));
+      col_win.push_back(fp16_to_fp32(col_dim[i]));
+    }
+    uint64_t row_hash = hash_f32(row_win.data(), row_win.size());
+    uint64_t col_hash = hash_f32(col_win.data(), col_win.size());
+
+    std::ostringstream oss;
+    oss << "{\"event\":\"lmhead_w_verify\",\"token_id\":" << token_id
+        << ",\"vocab\":" << vocab
+        << ",\"dim\":" << dim
+        << ",\"gpu_logit\":" << gpu_logit
+        << ",\"row_logit\":" << row_logit
+        << ",\"col_logit\":" << col_logit
+        << ",\"abs_err_row\":" << abs_err_row
+        << ",\"abs_err_col\":" << abs_err_col
+        << ",\"best_layout\":\"" << best_layout << "\""
+        << ",\"row_hash\":" << row_hash
+        << ",\"col_hash\":" << col_hash
+        << ",\"row_window\":[";
+    for (size_t i = 0; i < row_win.size(); ++i) {
+      if (i)
+        oss << ",";
+      oss << row_win[i];
+    }
+    oss << "],\"col_window\":[";
+    for (size_t i = 0; i < col_win.size(); ++i) {
+      if (i)
+        oss << ",";
+      oss << col_win[i];
+    }
+    oss << "]}";
+    append_line(out_path, oss.str());
+  }
+
+  return true;
 }
 
 
@@ -623,14 +727,16 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const char *trace_delta_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
   const bool trace_rms_verify = env_flag("GRETA_TRACE_RMS_VERIFY");
   const bool trace_cpu_probe = env_flag("GRETA_TRACE_LMHEAD_CPU_PROBE");
+  const bool trace_lmhead_w_verify = env_flag("GRETA_TRACE_LMHEAD_W_VERIFY");
+  const char *trace_lmhead_w_out = std::getenv("GRETA_TRACE_LMHEAD_W_OUT");
   const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
-  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape || trace_delta;
+  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape || trace_delta || trace_lmhead_w_verify;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode || trace_delta) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
@@ -670,7 +776,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     return output;
   }
 
-  if (trace_readout || trace_prefill_decode || trace_delta) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
     const size_t tokens_total = prompt_tokens.size();
     const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
     const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
@@ -824,6 +930,13 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         prefill_delta_written = true;
       }
     }
+    if (trace_lmhead_w_verify && trace_lmhead_w_out) {
+      const auto &lm_head_w = scheduler_->get_output_weight();
+      if (!trace_lmhead_w_verify_once(lm_head_w, rms_host, logits_host,
+                                      config_, trace_lmhead_w_out, err)) {
+        return output;
+      }
+    }
   }
 
   if (trace_landscape && trace_landscape_out) {
@@ -906,7 +1019,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         break;
       }
 
-      if (trace_readout || trace_prefill_decode || trace_delta) {
+      if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
