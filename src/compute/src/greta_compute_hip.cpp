@@ -14,6 +14,17 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
+static bool prefill_force_wq_row() {
+  return env_flag("GRETA_PREFILL_FORCE_WQ_ROW");
+}
+
+static const char *prefill_qkv_layout_env() {
+  const char *v = std::getenv("GRETA_PREFILL_QKV_LAYOUT");
+  if (!v || !*v)
+    return nullptr;
+  return v;
+}
+
 static bool trace_lmhead_enabled() {
   static const bool enabled =
       env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA") ||
@@ -39,6 +50,10 @@ static bool is_lm_head_decode_label(const std::string &label) {
 static bool is_attn_decode_label(const std::string &label) {
   return label.rfind("attn_", 0) == 0 &&
          label.find("_decode") != std::string::npos;
+}
+
+static bool is_attn_q_prefill_label(const std::string &label) {
+  return label == "attn_q_prefill";
 }
 
 static gcore::compute::GemmAuditInfo &last_gemm_audit() {
@@ -250,6 +265,16 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
     auto qinfo = B->quant_info();
     uint32_t num_heads = qinfo.num_heads;
     uint32_t head_dim = (num_heads > 0) ? (N / num_heads) : 0;
+    bool force_gemv = false;
+    if (is_attn_q_prefill_label(op_label)) {
+      if (prefill_force_wq_row())
+        force_gemv = true;
+      const char *layout = prefill_qkv_layout_env();
+      if (layout && (std::strcmp(layout, "row") == 0 ||
+                     std::strcmp(layout, "ROW") == 0)) {
+        force_gemv = true;
+      }
+    }
     launch_gemm_mfma_int4_wt_fp32_acc32(
         s->handle(), A->data(), static_cast<const int8_t *>(B->data()),
         static_cast<float *>(C->data()),
@@ -257,7 +282,7 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
         perhead_enabled ? static_cast<const float *>(qinfo.head_scales)
                         : nullptr,
         M, N, K, lda, ldb, ldc, qinfo.group_size, head_dim,
-        A->data_type() == GretaDataType::FP16);
+        A->data_type() == GretaDataType::FP16, force_gemv);
   } else if (!use_mfma) {
     launch_gemm_mixed_f16f32(s->handle(), static_cast<const float *>(A->data()),
                              static_cast<const __half *>(B->data()),

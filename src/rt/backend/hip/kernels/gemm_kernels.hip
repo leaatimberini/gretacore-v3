@@ -911,10 +911,10 @@ void launch_gemm_mfma_int4_wt_fp32_acc32(
     hipStream_t stream, const void *a, const int8_t *b, float *c,
     const float *scales, const float *head_scales, uint32_t M, uint32_t N,
     uint32_t K, uint32_t lda, uint32_t ldb, uint32_t ldc, uint32_t group_size,
-    uint32_t head_dim, bool is_fp16_a) {
+    uint32_t head_dim, bool is_fp16_a, bool force_gemv) {
   if (M == 0 || N == 0 || K == 0)
     return;
-  if (M <= 32) {
+  if (force_gemv || M <= 32) {
     dim3 block(256);
     dim3 grid(N, M);
     if (is_fp16_a) {
