@@ -123,6 +123,10 @@ StageTraceConfig stage_trace_config() {
     cfg.layers = parse_layers(std::getenv("GRETA_TRACE_STAGE_LAYERS"));
     cfg.points = split_csv(std::getenv("GRETA_TRACE_STAGE_POINTS"));
     cfg.phases = split_csv(std::getenv("GRETA_TRACE_STAGE_PHASES"));
+    cfg.debug_input = false;
+    const char *dbg = std::getenv("GRETA_TRACE_STAGE_DEBUG_INPUT");
+    if (dbg && (dbg[0] == '1' || dbg[0] == 'y' || dbg[0] == 'Y'))
+      cfg.debug_input = true;
     const char *s = std::getenv("GRETA_TRACE_STAGE_SAMPLE");
     if (s && *s) {
       char *e = nullptr;
@@ -182,12 +186,14 @@ uint32_t stage_trace_sample() { return stage_trace_config().sample; }
 
 const char *stage_trace_out_path() { return stage_trace_config().out_path; }
 
+bool stage_trace_debug_input() { return stage_trace_config().debug_input; }
+
 void stage_trace_tensor(const char *point, const char *phase,
                         const char *prompt_id, size_t layer, uint32_t step,
                         uint32_t pos_id, uint32_t seq_len,
                         uint32_t tokens_total, const float *base,
                         size_t stride_elems, size_t token_index,
-                        hipStream_t stream) {
+                        hipStream_t stream, const StageInputMeta *input_meta) {
   const auto cfg = stage_trace_config();
   if (!cfg.enabled || !cfg.out_path || !*cfg.out_path || !point || !phase)
     return;
@@ -234,7 +240,21 @@ void stage_trace_tensor(const char *point, const char *phase,
       oss << ",";
     oss << host[i];
   }
-  oss << "]}";
+  oss << "]";
+
+  if (cfg.debug_input && input_meta && std::strcmp(point, "x_in") == 0) {
+    const char *kind = input_meta->src_kind ? input_meta->src_kind : "";
+    oss << ",\"x_in_src_kind\":\"" << kind << "\""
+        << ",\"x_in_token_index_used\":" << input_meta->token_index_used
+        << ",\"x_in_offset_bytes\":" << input_meta->offset_bytes
+        << ",\"x_in_ptr\":" << input_meta->ptr
+        << ",\"x_in_alloc_bytes\":" << input_meta->alloc_bytes
+        << ",\"prompt_tokens\":" << input_meta->prompt_tokens
+        << ",\"kv_pos\":" << input_meta->kv_pos
+        << ",\"decode_step\":" << input_meta->decode_step;
+  }
+
+  oss << "}";
   append_line(cfg.out_path, oss.str());
 }
 

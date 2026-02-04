@@ -1134,10 +1134,32 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
 
   if (stage_layer) {
+    const size_t x_stride_elems = D;
+    const size_t x_offset_bytes =
+        static_cast<size_t>(stage_token_index) * x_stride_elems * sizeof(float);
+    const uint32_t prompt_tokens =
+        (seq_start == 0) ? static_cast<uint32_t>(seq_len)
+                         : static_cast<uint32_t>(seq_start);
+    const char *src_kind =
+        (seq_len > 1) ? "prefill_hidden_buffer" : "decode_hidden_buffer";
+    const bool debug_input = stage_trace_debug_input();
+    if (debug_input && stage_phase && std::strcmp(stage_phase, "decode0") == 0) {
+      src_kind = "decode0_input_override";
+    }
+    StageInputMeta input_meta{};
+    input_meta.src_kind = src_kind;
+    input_meta.token_index_used = stage_token_index;
+    input_meta.offset_bytes = x_offset_bytes;
+    input_meta.ptr = reinterpret_cast<uintptr_t>(x);
+    input_meta.alloc_bytes = activations_.x.size();
+    input_meta.prompt_tokens = prompt_tokens;
+    input_meta.kv_pos = stage_pos_id;
+    input_meta.decode_step = static_cast<uint32_t>(trace_step_);
+
     stage_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total, x,
-                       D, stage_token_index, hip_stream);
+                       D, stage_token_index, hip_stream, &input_meta);
   }
   if (trace_layer) {
     layer_tracer_.trace_tensor("x", trace_step_, static_cast<int>(layer_idx),
