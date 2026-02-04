@@ -1302,6 +1302,29 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           k_read_offset_elems * sizeof(float);
       const size_t v_read_offset_bytes =
           v_read_offset_elems * sizeof(float);
+      bool kv_invariant_ok = true;
+      std::string kv_error;
+      if (env_flag("GRETA_TRACE_KV_INVARIANTS")) {
+        if (kv_pos != pos_id_used) {
+          kv_invariant_ok = false;
+          kv_error = "kv_pos_mismatch";
+        } else if (kv_pos >= max_seq_len) {
+          kv_invariant_ok = false;
+          kv_error = "kv_pos_oob";
+        } else if (k_read_offset_bytes + Dh * sizeof(float) >
+                   kv_layer_stride_bytes) {
+          kv_invariant_ok = false;
+          kv_error = "k_offset_oob";
+        } else if (v_read_offset_bytes + Dh * sizeof(float) >
+                   kv_layer_stride_bytes) {
+          kv_invariant_ok = false;
+          kv_error = "v_offset_oob";
+        }
+        if (activations_.kv_cache_k.data() == activations_.kv_cache_v.data()) {
+          kv_invariant_ok = false;
+          kv_error = kv_error.empty() ? "kv_overlap" : kv_error;
+        }
+      }
 
       std::ostringstream oss;
       oss << "{\"event\":\"attn_decode_verify\""
@@ -1351,6 +1374,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           << ",\"v_read_offset_bytes\":" << v_read_offset_bytes
           << ",\"k_write_offset_bytes\":" << k_read_offset_bytes
           << ",\"v_write_offset_bytes\":" << v_read_offset_bytes
+          << ",\"kv_invariant_ok\":" << (kv_invariant_ok ? "true" : "false")
+          << ",\"kv_error\":\"" << kv_error << "\""
           << "}";
       append_line(out, oss.str());
     }
