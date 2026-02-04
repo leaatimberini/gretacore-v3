@@ -379,6 +379,112 @@ void launch_flash_attention_decode(hipStream_t stream,
       scale, accum_mode);
 }
 
+__global__ void attn_softmax_trace_kernel(
+    const float *__restrict__ Q, const float *__restrict__ K_cache,
+    uint32_t num_heads, uint32_t num_heads_kv, uint32_t head_dim,
+    uint32_t seq_len, uint32_t max_seq_len, uint32_t head,
+    uint32_t window_start, uint32_t window_len, float scale,
+    float *__restrict__ qk_out, float *__restrict__ softmax_out,
+    float *__restrict__ stats_out) {
+  if (blockIdx.x != 0 || threadIdx.x != 0)
+    return;
+  if (!Q || !K_cache || !qk_out || !softmax_out || !stats_out)
+    return;
+  if (num_heads == 0 || head_dim == 0 || seq_len == 0)
+    return;
+  if (num_heads_kv == 0)
+    return;
+
+  const uint32_t group = num_heads / num_heads_kv;
+  const uint32_t kv_head = (group > 0) ? (head / group) : 0;
+  if (head >= num_heads || kv_head >= num_heads_kv)
+    return;
+
+  const float *q_ptr = Q + head * head_dim;
+  const float *k_ptr = K_cache + kv_head * max_seq_len * head_dim;
+
+  float max_qk = -INFINITY;
+  float second_qk = -INFINITY;
+  for (uint32_t t = 0; t < seq_len; ++t) {
+    const float *k_t = k_ptr + t * head_dim;
+    float dot = 0.0f;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      dot = fmaf(q_ptr[d], k_t[d], dot);
+    }
+    float qk = dot * scale;
+    if (qk > max_qk) {
+      second_qk = max_qk;
+      max_qk = qk;
+    } else if (qk > second_qk) {
+      second_qk = qk;
+    }
+  }
+
+  double sumexp = 0.0;
+  double sumexp_log = 0.0;
+  for (uint32_t t = 0; t < seq_len; ++t) {
+    const float *k_t = k_ptr + t * head_dim;
+    float dot = 0.0f;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      dot = fmaf(q_ptr[d], k_t[d], dot);
+    }
+    float qk = dot * scale;
+    float e = expf(qk - max_qk);
+    sumexp += static_cast<double>(e);
+    sumexp_log += static_cast<double>(e) * static_cast<double>(qk - max_qk);
+  }
+
+  float sumexp_f = static_cast<float>(sumexp);
+  float inv_sum = (sumexp > 0.0) ? static_cast<float>(1.0 / sumexp) : 0.0f;
+  float top1_prob = inv_sum;
+  float top2_prob =
+      (sumexp > 0.0 && isfinite(second_qk))
+          ? expf(second_qk - max_qk) * inv_sum
+          : 0.0f;
+  float entropy =
+      (sumexp > 0.0)
+          ? static_cast<float>(log(sumexp) - sumexp_log / sumexp)
+          : 0.0f;
+
+  for (uint32_t i = 0; i < window_len; ++i) {
+    uint32_t t = window_start + i;
+    if (t >= seq_len) {
+      qk_out[i] = 0.0f;
+      softmax_out[i] = 0.0f;
+      continue;
+    }
+    const float *k_t = k_ptr + t * head_dim;
+    float dot = 0.0f;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      dot = fmaf(q_ptr[d], k_t[d], dot);
+    }
+    float qk = dot * scale;
+    qk_out[i] = qk;
+    softmax_out[i] = (sumexp > 0.0) ? expf(qk - max_qk) * inv_sum : 0.0f;
+  }
+
+  stats_out[0] = max_qk;
+  stats_out[1] = sumexp_f;
+  stats_out[2] = top1_prob;
+  stats_out[3] = top2_prob;
+  stats_out[4] = entropy;
+}
+
+void launch_attn_softmax_trace(hipStream_t stream, const float *Q,
+                               const float *K_cache, uint32_t num_heads,
+                               uint32_t num_heads_kv, uint32_t head_dim,
+                               uint32_t seq_len, uint32_t max_seq_len,
+                               uint32_t head, uint32_t window_start,
+                               uint32_t window_len, float scale,
+                               float *qk_out, float *softmax_out,
+                               float *stats_out) {
+  dim3 grid(1);
+  dim3 block(1);
+  attn_softmax_trace_kernel<<<grid, block, 0, stream>>>(
+      Q, K_cache, num_heads, num_heads_kv, head_dim, seq_len, max_seq_len, head,
+      window_start, window_len, scale, qk_out, softmax_out, stats_out);
+}
+
 
 
 __global__ void flash_attention_prefill_kernel(

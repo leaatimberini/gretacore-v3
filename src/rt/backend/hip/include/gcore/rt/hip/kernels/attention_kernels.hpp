@@ -87,6 +87,15 @@ void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    uint32_t max_seq_len, uint32_t head_dim,
                                    float scale, int accum_mode = 0);
 
+void launch_attn_softmax_trace(hipStream_t stream, const float *Q,
+                               const float *K_cache, uint32_t num_heads,
+                               uint32_t num_heads_kv, uint32_t head_dim,
+                               uint32_t seq_len, uint32_t max_seq_len,
+                               uint32_t head, uint32_t window_start,
+                               uint32_t window_len, float scale,
+                               float *qk_out, float *softmax_out,
+                               float *stats_out);
+
 /**
  * @brief FlashAttention v2 for prefill mode (multiple queries).
  *

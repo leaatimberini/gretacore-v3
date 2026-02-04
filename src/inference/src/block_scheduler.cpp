@@ -172,6 +172,50 @@ static const char *attn_ref_out_path() {
   return nullptr;
 }
 
+static bool trace_attn_softmax_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_SOFTMAX");
+}
+
+static const char *attn_softmax_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_ATTN_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
+static bool attn_softmax_layer_selected(size_t layer_idx, size_t num_layers) {
+  const char *v = std::getenv("GRETA_TRACE_ATTN_LAYER");
+  if (v && *v) {
+    char *e = nullptr;
+    int val = std::strtol(v, &e, 10);
+    if (e != v)
+      return static_cast<int>(layer_idx) == val;
+  }
+  return attn_trace_layer_selected(layer_idx, num_layers);
+}
+
+static uint32_t attn_softmax_head() {
+  const char *v = std::getenv("GRETA_TRACE_ATTN_HEAD");
+  if (!v || !*v)
+    return 0;
+  char *e = nullptr;
+  long val = std::strtol(v, &e, 10);
+  if (e == v || val < 0)
+    return 0;
+  return static_cast<uint32_t>(val);
+}
+
+static uint32_t attn_softmax_window() {
+  const char *v = std::getenv("GRETA_TRACE_ATTN_KEYS_WINDOW");
+  if (!v || !*v)
+    return 64;
+  char *e = nullptr;
+  long val = std::strtol(v, &e, 10);
+  if (e == v || val <= 0)
+    return 64;
+  return static_cast<uint32_t>(val);
+}
+
 static bool attn_mfma_shadow_enabled() {
   return env_flag("GRETA_ATTN_DECODE_MFMA_SHADOW");
 }
@@ -1599,12 +1643,19 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   const bool trace_attn_verify = trace_attn_decode_verify_enabled();
   const bool trace_attn_ref = trace_attn_ref_enabled();
-  if ((trace_attn_verify || trace_attn_ref) && seq_len == 1 &&
-      trace_step_ == 1 &&
-      attn_trace_layer_selected(layer_idx, config_.num_layers)) {
+  const bool trace_attn_softmax = trace_attn_softmax_enabled();
+  const bool trace_attn_layer =
+      attn_trace_layer_selected(layer_idx, config_.num_layers);
+  const bool trace_softmax_layer =
+      attn_softmax_layer_selected(layer_idx, config_.num_layers);
+  if ((trace_attn_verify || trace_attn_ref || trace_attn_softmax) &&
+      seq_len == 1 && trace_step_ == 1 &&
+      (trace_attn_layer || trace_softmax_layer)) {
     const char *out = attn_trace_out_path();
     const char *out_ref = attn_ref_out_path();
-    if ((trace_attn_verify && out && *out) || trace_attn_ref) {
+    const char *out_softmax = attn_softmax_out_path();
+    if ((trace_attn_verify && out && *out) || trace_attn_ref ||
+        trace_attn_softmax) {
       const uint32_t point_mask =
           attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
       const uint32_t seq_len_used =
@@ -1616,7 +1667,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       std::vector<float> q_host;
       std::vector<float> attn_out_host;
       std::vector<float> x_out_host;
-      if (point_mask & static_cast<uint32_t>(AttnTracePoint::Q)) {
+      if (trace_attn_softmax ||
+          (point_mask & static_cast<uint32_t>(AttnTracePoint::Q))) {
         q_host.resize(D);
         hipMemcpy(q_host.data(), q, D * sizeof(float),
                   hipMemcpyDeviceToHost);
@@ -1647,7 +1699,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
       std::vector<float> k_cache_host;
       std::vector<float> v_cache_host;
-      bool need_kv = attn_decode_ref_enabled() ||
+      bool need_kv = attn_decode_ref_enabled() || trace_attn_softmax ||
                      (point_mask & static_cast<uint32_t>(AttnTracePoint::K)) ||
                      (point_mask & static_cast<uint32_t>(AttnTracePoint::V));
       if (need_kv) {
@@ -1745,7 +1797,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         }
       }
 
-      if (trace_attn_verify && out && *out) {
+      if (trace_attn_verify && trace_attn_layer && out && *out) {
         std::ostringstream oss;
         oss << "{\"event\":\"attn_decode_verify\""
             << ",\"phase\":\"decode0\""
@@ -1801,7 +1853,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         append_line(out, oss.str());
       }
 
-      if (trace_attn_ref && out_ref && *out_ref && !q_host.empty() &&
+      if (trace_attn_ref && trace_attn_layer && out_ref && *out_ref &&
+          !q_host.empty() &&
           !k_cache_host.empty() && !v_cache_host.empty() &&
           !attn_out_host.empty()) {
         const double scale_d = 1.0 / std::sqrt(static_cast<double>(Dh));
@@ -1871,6 +1924,233 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         oss << "]";
         oss << "}";
         append_line(out_ref, oss.str());
+      }
+
+      if (trace_attn_softmax && out_softmax && *out_softmax &&
+          attn_softmax_layer_selected(layer_idx, config_.num_layers) &&
+          !q_host.empty() && !k_cache_host.empty()) {
+        const uint32_t head = attn_softmax_head();
+        if (head < Hq) {
+          const uint32_t window = attn_softmax_window();
+          const uint32_t pos_id = pos_id_used;
+          const uint32_t seq_len_trace = seq_len_used;
+          const uint32_t window_start =
+              (seq_len_trace > window) ? (seq_len_trace - window) : 0;
+          const uint32_t window_len =
+              seq_len_trace > window_start ? (seq_len_trace - window_start)
+                                           : 0;
+
+          if (window_len > 0) {
+            using Usage = gcore::rt::hip::BufferUsage;
+            gcore::rt::hip::Buffer qk_dev;
+            gcore::rt::hip::Buffer softmax_dev;
+            gcore::rt::hip::Buffer stats_dev;
+            std::string err;
+            bool alloc_ok =
+                qk_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
+                                gcore::rt::GretaDataType::FP32, &err) &&
+                softmax_dev.allocate(window_len * sizeof(float),
+                                     Usage::DeviceOnly,
+                                     gcore::rt::GretaDataType::FP32, &err) &&
+                stats_dev.allocate(5 * sizeof(float), Usage::DeviceOnly,
+                                   gcore::rt::GretaDataType::FP32, &err);
+            if (!alloc_ok) {
+              std::cerr << "[ATTN_SOFTMAX] alloc failed: " << err << "\n";
+            } else {
+              const size_t kv_layer_stride_elems =
+                  static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
+              const size_t kv_layer_offset_elems =
+                  static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
+              const float *k_cache_layer =
+                  static_cast<const float *>(activations_.kv_cache_k.data()) +
+                  kv_layer_offset_elems;
+
+              const float scale =
+                  1.0f / std::sqrt(static_cast<float>(Dh));
+
+              gcore::rt::hip::kernels::launch_attn_softmax_trace(
+                  hip_stream, q, k_cache_layer, Hq, Hkv, Dh, seq_len_trace,
+                  static_cast<uint32_t>(config_.max_seq_len), head, window_start,
+                  window_len, scale, static_cast<float *>(qk_dev.data()),
+                  static_cast<float *>(softmax_dev.data()),
+                  static_cast<float *>(stats_dev.data()));
+
+              hipStreamSynchronize(hip_stream);
+
+              std::vector<float> qk_gpu(window_len);
+              std::vector<float> softmax_gpu(window_len);
+              std::vector<float> stats_gpu(5, 0.0f);
+              hipMemcpy(qk_gpu.data(), qk_dev.data(),
+                        window_len * sizeof(float), hipMemcpyDeviceToHost);
+              hipMemcpy(softmax_gpu.data(), softmax_dev.data(),
+                        window_len * sizeof(float), hipMemcpyDeviceToHost);
+              hipMemcpy(stats_gpu.data(), stats_dev.data(),
+                        stats_gpu.size() * sizeof(float),
+                        hipMemcpyDeviceToHost);
+
+              const uint32_t group =
+                  (Hkv > 0) ? (Hq / Hkv) : 0;
+              const uint32_t kv_head =
+                  (group > 0) ? (head / group) : 0;
+              const float *q_head = q_host.data() + head * Dh;
+              const float *k_head =
+                  k_cache_host.data() +
+                  static_cast<size_t>(kv_head) * config_.max_seq_len * Dh;
+              const float *k_pos = k_head + pos_id * Dh;
+
+              uint64_t q_hash = hash_f32(q_head, Dh);
+              uint64_t k_hash = hash_f32(k_pos, Dh);
+
+              std::vector<float> q_sample;
+              std::vector<float> k_sample;
+              const uint32_t sample_n = std::min<uint32_t>(8, Dh);
+              q_sample.assign(q_head, q_head + sample_n);
+              k_sample.assign(k_pos, k_pos + sample_n);
+
+              std::vector<double> qk_full(seq_len_trace, 0.0);
+              double max_qk = -INFINITY;
+              double second_qk = -INFINITY;
+              for (uint32_t t = 0; t < seq_len_trace; ++t) {
+                const float *k_t = k_head + t * Dh;
+                double dot = 0.0;
+                for (uint32_t d = 0; d < Dh; ++d) {
+                  dot += static_cast<double>(q_head[d]) *
+                         static_cast<double>(k_t[d]);
+                }
+                double qk = dot * static_cast<double>(scale);
+                qk_full[t] = qk;
+                if (qk > max_qk) {
+                  second_qk = max_qk;
+                  max_qk = qk;
+                } else if (qk > second_qk) {
+                  second_qk = qk;
+                }
+              }
+
+              double sumexp = 0.0;
+              double sumexp_log = 0.0;
+              for (uint32_t t = 0; t < seq_len_trace; ++t) {
+                double e = std::exp(qk_full[t] - max_qk);
+                sumexp += e;
+                sumexp_log += e * (qk_full[t] - max_qk);
+              }
+              double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
+              double top1_prob = inv_sum;
+              double top2_prob =
+                  (sumexp > 0.0 && std::isfinite(second_qk))
+                      ? std::exp(second_qk - max_qk) * inv_sum
+                      : 0.0;
+              double entropy =
+                  (sumexp > 0.0) ? (std::log(sumexp) - sumexp_log / sumexp)
+                                 : 0.0;
+
+              std::vector<double> qk_cpu(window_len, 0.0);
+              std::vector<double> softmax_cpu(window_len, 0.0);
+              for (uint32_t i = 0; i < window_len; ++i) {
+                uint32_t t = window_start + i;
+                if (t >= seq_len_trace)
+                  break;
+                double qk = qk_full[t];
+                qk_cpu[i] = qk;
+                double p = (sumexp > 0.0)
+                               ? std::exp(qk - max_qk) * inv_sum
+                               : 0.0;
+                softmax_cpu[i] = p;
+              }
+
+              double qk_mae = 0.0;
+              double qk_max_diff = 0.0;
+              double soft_mae = 0.0;
+              double soft_max_diff = 0.0;
+              for (uint32_t i = 0; i < window_len; ++i) {
+                double dq =
+                    std::abs(static_cast<double>(qk_gpu[i]) - qk_cpu[i]);
+                qk_mae += dq;
+                if (dq > qk_max_diff)
+                  qk_max_diff = dq;
+                double ds = std::abs(static_cast<double>(softmax_gpu[i]) -
+                                     softmax_cpu[i]);
+                soft_mae += ds;
+                if (ds > soft_max_diff)
+                  soft_max_diff = ds;
+              }
+              qk_mae = (window_len > 0) ? (qk_mae / window_len) : 0.0;
+              soft_mae = (window_len > 0) ? (soft_mae / window_len) : 0.0;
+
+              const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+              std::ostringstream oss;
+              oss << "{\"event\":\"attn_softmax_trace\"";
+              if (prompt_id && *prompt_id) {
+                oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+              }
+              oss << ",\"phase\":\"decode0\""
+                  << ",\"phase\":\"decode0\""
+                  << ",\"layer\":" << layer_idx
+                  << ",\"head\":" << head
+                  << ",\"pos_id\":" << pos_id
+                  << ",\"seq_len\":" << seq_len_trace
+                  << ",\"kv_heads\":" << Hkv
+                  << ",\"head_dim\":" << Dh
+                  << ",\"scale_used\":" << scale
+                  << ",\"q_hash\":" << q_hash
+                  << ",\"k_hash\":" << k_hash
+                  << ",\"q_sample\":[";
+              for (size_t i = 0; i < q_sample.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << q_sample[i];
+              }
+              oss << "],\"k_sample\":[";
+              for (size_t i = 0; i < k_sample.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << k_sample[i];
+              }
+              oss << "],\"qk_window_gpu\":[";
+              for (size_t i = 0; i < qk_gpu.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << qk_gpu[i];
+              }
+              oss << "],\"qk_window_cpu_fp64\":[";
+              for (size_t i = 0; i < qk_cpu.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << qk_cpu[i];
+              }
+              oss << "],\"qk_mae\":" << qk_mae
+                  << ",\"qk_max_diff\":" << qk_max_diff
+                  << ",\"softmax_gpu_stats\":{"
+                  << "\"max\":" << stats_gpu[0]
+                  << ",\"sumexp\":" << stats_gpu[1]
+                  << ",\"top1_prob\":" << stats_gpu[2]
+                  << ",\"top2_prob\":" << stats_gpu[3]
+                  << ",\"entropy\":" << stats_gpu[4] << "}"
+                  << ",\"softmax_cpu_stats\":{"
+                  << "\"max\":" << max_qk
+                  << ",\"sumexp\":" << sumexp
+                  << ",\"top1_prob\":" << top1_prob
+                  << ",\"top2_prob\":" << top2_prob
+                  << ",\"entropy\":" << entropy << "}"
+                  << ",\"softmax_window_gpu\":[";
+              for (size_t i = 0; i < softmax_gpu.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << softmax_gpu[i];
+              }
+              oss << "],\"softmax_window_cpu\":[";
+              for (size_t i = 0; i < softmax_cpu.size(); ++i) {
+                if (i)
+                  oss << ",";
+                oss << softmax_cpu[i];
+              }
+              oss << "],\"softmax_mae\":" << soft_mae
+                  << ",\"softmax_max_diff\":" << soft_max_diff
+                  << "}";
+              append_line(out_softmax, oss.str());
+            }
+          }
+        }
       }
     }
   }
