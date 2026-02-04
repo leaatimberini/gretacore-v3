@@ -232,6 +232,10 @@ static bool trace_attn_l0_pipe_enabled() {
   return env_flag("GRETA_TRACE_ATTN_L0_PIPE");
 }
 
+static bool trace_attn_l0_norm_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_L0_NORM");
+}
+
 static const char *attn_l0_pipe_out_path() {
   const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
   if (out && *out)
@@ -1697,7 +1701,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     }
   }
 
-  if (trace_attn_l0_pipe_enabled() && layer_idx == 0) {
+  if ((trace_attn_l0_pipe_enabled() || trace_attn_l0_norm_enabled()) &&
+      layer_idx == 0) {
     const char *out = attn_l0_pipe_out_path();
     const char *phase = nullptr;
     if (seq_len > 1 && trace_step_ == 0) {
@@ -1731,6 +1736,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             q + static_cast<size_t>(token_index_used) * D;
         const float *q_head = q_token + head * Dh;
 
+        const uint32_t norm_sample =
+            std::min<uint32_t>(stage_trace_sample(), D);
+        std::vector<float> norm_in_host;
+        std::vector<float> norm_out_host;
+        bool norm_out_valid = false;
+
         const size_t kv_head_stride_elems =
             static_cast<size_t>(max_seq_len) * Dh;
         const size_t kv_layer_stride_elems =
@@ -1750,6 +1761,24 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         std::vector<float> k_host(seq_len_used * Dh);
         std::vector<float> v_host(seq_len_used * Dh);
         std::vector<float> attn_host(Dh);
+
+        if (trace_attn_l0_norm_enabled() && norm_sample > 0) {
+          norm_in_host.assign(norm_sample, 0.0f);
+          const float *x_token =
+              x + static_cast<size_t>(token_index_used) * D;
+          hipMemcpyAsync(norm_in_host.data(), x_token,
+                         norm_sample * sizeof(float),
+                         hipMemcpyDeviceToHost, hip_stream);
+          if (!use_fused) {
+            norm_out_valid = true;
+            norm_out_host.assign(norm_sample, 0.0f);
+            const float *norm_token =
+                norm_out + static_cast<size_t>(token_index_used) * D;
+            hipMemcpyAsync(norm_out_host.data(), norm_token,
+                           norm_sample * sizeof(float),
+                           hipMemcpyDeviceToHost, hip_stream);
+          }
+        }
 
         hipMemcpyAsync(q_host.data(), q_head, Dh * sizeof(float),
                        hipMemcpyDeviceToHost, hip_stream);
@@ -1781,6 +1810,21 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         const uint64_t k_hash = hash_f32(k_vec, Dh);
         const uint64_t v_hash = hash_f32(v_vec, Dh);
         const uint64_t attn_hash = hash_f32(attn_host.data(), attn_host.size());
+
+        F32Stats norm_in_stats{};
+        F32Stats norm_out_stats{};
+        uint64_t norm_in_hash = 0;
+        uint64_t norm_out_hash = 0;
+        if (!norm_in_host.empty()) {
+          norm_in_stats = stats_f32(norm_in_host.data(), norm_in_host.size());
+          norm_in_hash = hash_f32(norm_in_host.data(), norm_in_host.size());
+        }
+        if (norm_out_valid && !norm_out_host.empty()) {
+          norm_out_stats =
+              stats_f32(norm_out_host.data(), norm_out_host.size());
+          norm_out_hash =
+              hash_f32(norm_out_host.data(), norm_out_host.size());
+        }
 
         const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
         std::vector<float> qk_row(seq_len_used, 0.0f);
@@ -1870,6 +1914,16 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"qkv_force_route\":\""
             << (qkv_force_route ? qkv_force_route : "auto") << "\""
             << ",\"qkv_force_gemm\":" << (qkv_force_gemm ? "true" : "false")
+            << ",\"attn_norm_in_hash\":" << norm_in_hash
+            << ",\"attn_norm_in_min\":" << norm_in_stats.min
+            << ",\"attn_norm_in_max\":" << norm_in_stats.max
+            << ",\"attn_norm_in_mean\":" << norm_in_stats.mean
+            << ",\"attn_norm_out_valid\":" << (norm_out_valid ? "true" : "false")
+            << ",\"attn_norm_out_hash\":" << norm_out_hash
+            << ",\"attn_norm_out_min\":" << norm_out_stats.min
+            << ",\"attn_norm_out_max\":" << norm_out_stats.max
+            << ",\"attn_norm_out_mean\":" << norm_out_stats.mean
+            << ",\"attn_norm_sample_n\":" << norm_sample
             << ",\"q_hash\":" << q_hash
             << ",\"q_min\":" << q_stats.min
             << ",\"q_max\":" << q_stats.max
@@ -1925,6 +1979,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"kv_head_stride_bytes\":" << kv_head_stride_bytes
             << ",\"kv_pos_stride_bytes\":" << kv_pos_stride_bytes;
 
+        if (!norm_in_host.empty()) {
+          oss << append_span("attn_norm_in", norm_in_host.data(),
+                             norm_in_host.size());
+        } else {
+          oss << ",\"attn_norm_in\":[]";
+        }
+        if (norm_out_valid && !norm_out_host.empty()) {
+          oss << append_span("attn_norm_out", norm_out_host.data(),
+                             norm_out_host.size());
+        } else {
+          oss << ",\"attn_norm_out\":[]";
+        }
         oss << append_span("q", q_host.data(), q_host.size());
         oss << append_span("k", k_vec, Dh);
         oss << append_span("v", v_vec, Dh);
