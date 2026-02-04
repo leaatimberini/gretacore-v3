@@ -236,6 +236,10 @@ static bool trace_attn_l0_norm_enabled() {
   return env_flag("GRETA_TRACE_ATTN_L0_NORM");
 }
 
+static bool trace_qkv_w_verify_enabled() {
+  return env_flag("GRETA_TRACE_QKV_W_VERIFY");
+}
+
 static const char *attn_l0_pipe_out_path() {
   const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
   if (out && *out)
@@ -334,6 +338,132 @@ static void mae_max_f32(const float *a, const float *b, size_t n, double *mae,
   }
   *mae = sum / static_cast<double>(n);
   *max_diff = maxd;
+}
+
+static float fp16_to_fp32_local(uint16_t h) {
+  uint32_t sign = (h >> 15) & 0x1;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+  if (exp == 0) {
+    if (mant == 0)
+      return sign ? -0.0f : 0.0f;
+    exp = 1;
+    while ((mant & 0x400) == 0) {
+      mant <<= 1;
+      exp--;
+    }
+    mant &= ~0x400;
+  } else if (exp == 31) {
+    return sign ? -INFINITY : INFINITY;
+  }
+  uint32_t f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+  float result;
+  std::memcpy(&result, &f, 4);
+  return result;
+}
+
+static const char *dtype_label(gcore::rt::GretaDataType type) {
+  switch (type) {
+  case gcore::rt::GretaDataType::INT4:
+    return "INT4";
+  case gcore::rt::GretaDataType::INT8:
+    return "INT8";
+  case gcore::rt::GretaDataType::FP16:
+    return "FP16";
+  case gcore::rt::GretaDataType::FP32:
+    return "FP32";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+struct QkvWeightHostCache {
+  bool ready = false;
+  gcore::rt::GretaDataType type = gcore::rt::GretaDataType::FP32;
+  size_t bytes = 0;
+  size_t elems = 0;
+  uint32_t group_size = 0;
+  std::vector<uint8_t> raw;
+  std::vector<float> scales;
+  std::vector<float> head_scales;
+};
+
+static bool ensure_qkv_weight_cache(const gcore::rt::hip::Buffer &w,
+                                    const gcore::rt::hip::Buffer &scales,
+                                    const gcore::rt::hip::Buffer &head_scales,
+                                    size_t elems, QkvWeightHostCache *cache) {
+  if (!cache)
+    return false;
+  if (cache->ready && cache->bytes == w.size() && cache->elems == elems &&
+      cache->type == w.data_type())
+    return true;
+
+  cache->ready = false;
+  cache->type = w.data_type();
+  cache->bytes = w.size();
+  cache->elems = elems;
+  cache->group_size = w.quant_info().group_size;
+  cache->raw.assign(cache->bytes, 0);
+  if (cache->bytes > 0 &&
+      !w.copy_to_host(cache->raw.data(), cache->bytes, nullptr)) {
+    return false;
+  }
+
+  cache->scales.clear();
+  if (scales.size() > 0) {
+    size_t count = scales.size() / sizeof(float);
+    cache->scales.assign(count, 0.0f);
+    if (!scales.copy_to_host(cache->scales.data(), scales.size(), nullptr)) {
+      return false;
+    }
+  }
+
+  cache->head_scales.clear();
+  if (head_scales.size() > 0) {
+    size_t count = head_scales.size() / sizeof(float);
+    cache->head_scales.assign(count, 0.0f);
+    if (!head_scales.copy_to_host(cache->head_scales.data(),
+                                  head_scales.size(), nullptr)) {
+      return false;
+    }
+  }
+
+  cache->ready = true;
+  return true;
+}
+
+static float read_weight_value(const QkvWeightHostCache &cache, size_t idx) {
+  if (idx >= cache.elems)
+    return 0.0f;
+  if (cache.type == gcore::rt::GretaDataType::INT4) {
+    size_t byte_idx = idx / 2;
+    uint8_t packed = cache.raw[byte_idx];
+    int8_t v = (idx % 2 == 0) ? (packed & 0x0F) : (packed >> 4);
+    if (v & 0x08)
+      v |= 0xF0;
+    float scale = 1.0f;
+    if (!cache.scales.empty() && cache.group_size > 0) {
+      scale = cache.scales[idx / cache.group_size];
+    }
+    return static_cast<float>(v) * scale;
+  }
+  if (cache.type == gcore::rt::GretaDataType::INT8) {
+    const int8_t *w = reinterpret_cast<const int8_t *>(cache.raw.data());
+    float scale = 1.0f;
+    if (!cache.scales.empty() && cache.group_size > 0) {
+      scale = cache.scales[idx / cache.group_size];
+    }
+    return static_cast<float>(w[idx]) * scale;
+  }
+  if (cache.type == gcore::rt::GretaDataType::FP16) {
+    const uint16_t *w = reinterpret_cast<const uint16_t *>(cache.raw.data());
+    return fp16_to_fp32_local(w[idx]);
+  }
+  if (cache.type == gcore::rt::GretaDataType::FP32) {
+    const float *w = reinterpret_cast<const float *>(cache.raw.data());
+    return w[idx];
+  }
+  return 0.0f;
 }
 
 struct EnvOverride {
@@ -1267,6 +1397,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (is_decode_step && qkv_force_gemm) {
     use_fused = false;
   }
+  if (layer_idx == 0 && trace_qkv_w_verify_enabled()) {
+    use_fused = false;
+  }
 
   std::string q_route_used = "unknown";
   std::string k_route_used = "unknown";
@@ -1701,7 +1834,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     }
   }
 
-  if ((trace_attn_l0_pipe_enabled() || trace_attn_l0_norm_enabled()) &&
+  if ((trace_attn_l0_pipe_enabled() || trace_attn_l0_norm_enabled() ||
+       trace_qkv_w_verify_enabled()) &&
       layer_idx == 0) {
     const char *out = attn_l0_pipe_out_path();
     const char *phase = nullptr;
@@ -1711,6 +1845,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       phase = "decode0";
     }
     if (out && *out && phase) {
+      const bool qkv_w_verify = trace_qkv_w_verify_enabled();
       const uint32_t head = 0;
       const uint32_t max_seq_len =
           static_cast<uint32_t>(config_.max_seq_len);
@@ -1736,8 +1871,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             q + static_cast<size_t>(token_index_used) * D;
         const float *q_head = q_token + head * Dh;
 
+        const bool want_norm = trace_attn_l0_norm_enabled() || qkv_w_verify;
         const uint32_t norm_sample =
-            std::min<uint32_t>(stage_trace_sample(), D);
+            want_norm
+                ? (qkv_w_verify ? D
+                                : std::min<uint32_t>(stage_trace_sample(), D))
+                : 0;
         std::vector<float> norm_in_host;
         std::vector<float> norm_out_host;
         bool norm_out_valid = false;
@@ -1762,7 +1901,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         std::vector<float> v_host(seq_len_used * Dh);
         std::vector<float> attn_host(Dh);
 
-        if (trace_attn_l0_norm_enabled() && norm_sample > 0) {
+        if (want_norm && norm_sample > 0) {
           norm_in_host.assign(norm_sample, 0.0f);
           const float *x_token =
               x + static_cast<size_t>(token_index_used) * D;
@@ -1880,6 +2019,63 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         mae_max_f32(pv_row.data(), attn_host.data(), pv_row.size(),
                     &pv_attn_mae, &pv_attn_max);
 
+        std::string q_weight_layout =
+            qkv_w_verify ? std::string("unavailable") : std::string("disabled");
+        double q_weight_mae_row = 0.0;
+        double q_weight_mae_col = 0.0;
+        float q_weight_max_row = 0.0f;
+        float q_weight_max_col = 0.0f;
+        uint32_t q_weight_sample = 0;
+        if (qkv_w_verify && norm_out_valid &&
+            norm_out_host.size() >= static_cast<size_t>(D)) {
+          q_weight_sample = std::min<uint32_t>(
+              attn_vacc_dims_sample(), static_cast<uint32_t>(Dh));
+          if (q_weight_sample > 0) {
+            static QkvWeightHostCache wq_cache;
+            const size_t wq_elems = static_cast<size_t>(D) * D;
+            if (ensure_qkv_weight_cache(b.wq, b.s_wq, b.sh_wq, wq_elems,
+                                        &wq_cache)) {
+              std::vector<float> q_row(q_weight_sample, 0.0f);
+              std::vector<float> q_col(q_weight_sample, 0.0f);
+              const float *x_vec = norm_out_host.data();
+              for (uint32_t j = 0; j < q_weight_sample; ++j) {
+                double sum_row = 0.0;
+                double sum_col = 0.0;
+                for (uint32_t i = 0; i < D; ++i) {
+                  const float x_i = x_vec[i];
+                  const size_t idx_row =
+                      static_cast<size_t>(j) * D + i;
+                  const size_t idx_col =
+                      static_cast<size_t>(i) * D + j;
+                  sum_row += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wq_cache,
+                                                                  idx_row));
+                  sum_col += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wq_cache,
+                                                                  idx_col));
+                }
+                float h_scale = 1.0f;
+                if (!wq_cache.head_scales.empty() && Dh > 0) {
+                  const size_t h_idx = j / Dh;
+                  if (h_idx < wq_cache.head_scales.size()) {
+                    h_scale = wq_cache.head_scales[h_idx];
+                  }
+                }
+                q_row[j] = static_cast<float>(sum_row * h_scale);
+                q_col[j] = static_cast<float>(sum_col * h_scale);
+              }
+              mae_max_f32(q_row.data(), q_host.data(), q_weight_sample,
+                          &q_weight_mae_row, &q_weight_max_row);
+              mae_max_f32(q_col.data(), q_host.data(), q_weight_sample,
+                          &q_weight_mae_col, &q_weight_max_col);
+              q_weight_layout =
+                  (q_weight_mae_row <= q_weight_mae_col) ? "row" : "col";
+            } else {
+              q_weight_layout = "error";
+            }
+          }
+        }
+
         auto append_span = [&](const char *name, const float *data,
                                size_t n) {
           std::ostringstream tmp;
@@ -1954,6 +2150,19 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"attn_out_mean\":" << attn_stats.mean
             << ",\"pv_attn_mae\":" << pv_attn_mae
             << ",\"pv_attn_max_diff\":" << pv_attn_max
+            << ",\"q_weight\":\"Q\""
+            << ",\"q_weight_layout_best\":\"" << q_weight_layout << "\""
+            << ",\"q_weight_mae_row\":" << q_weight_mae_row
+            << ",\"q_weight_mae_col\":" << q_weight_mae_col
+            << ",\"q_weight_max_row\":" << q_weight_max_row
+            << ",\"q_weight_max_col\":" << q_weight_max_col
+            << ",\"q_weight_dtype\":\"" << dtype_label(b.wq.data_type()) << "\""
+            << ",\"q_weight_quant_mode\":\""
+            << dtype_label(b.wq.data_type()) << "\""
+            << ",\"q_weight_stride_used\":" << D
+            << ",\"q_weight_head_dim\":" << Dh
+            << ",\"q_weight_kv_heads\":" << Hkv
+            << ",\"q_weight_sample_dims\":" << q_weight_sample
             << ",\"k_layout_used\":\"row_major\""
             << ",\"v_layout_used\":\"row_major\""
             << ",\"q_ptr\":" << reinterpret_cast<uintptr_t>(q)
