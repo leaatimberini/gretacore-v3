@@ -14,6 +14,7 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 # Local build (best-effort)
+cmake -S tools/inference -B tools/inference/build || echo "WARN: local cmake configure failed"
 cmake --build tools/inference/build -j"$(nproc)" || echo "WARN: local build failed"
 
 # Push latest HEAD before remote run
@@ -29,6 +30,7 @@ git checkout main
 git pull --rebase
 git rev-parse HEAD
 
+cmake -S /root/gretacore/tools/inference -B /root/gretacore/tools/inference/build
 cd /root/gretacore/tools/inference/build
 make -B -j$(nproc)
 
