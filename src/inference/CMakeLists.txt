@@ -22,6 +22,7 @@ set(INFERENCE_SOURCES
     src/tokenizer.cpp
     src/generator.cpp
     src/layer_trace.cpp
+    src/stage_trace.cpp
 )
 
 # Build as static library

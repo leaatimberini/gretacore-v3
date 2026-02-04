@@ -1,5 +1,6 @@
 #include "gcore/inference/block_scheduler.hpp"
 #include "gcore/compute/greta_compute.hpp"
+#include "gcore/inference/stage_trace.hpp"
 #include "gcore/inference/weight_loader.hpp"
 #include "gcore/rt/greta_runtime.hpp"
 #include "gcore/rt/hip/greta_runtime_hip.hpp"
@@ -1111,6 +1112,33 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
 
   const bool trace_layer = GRETA_UNLIKELY(layer_tracer_.enabled());
+  const bool stage_enabled = stage_trace_enabled();
+  const char *stage_phase = nullptr;
+  if (stage_enabled) {
+    if (seq_len > 1 && trace_step_ == 0) {
+      stage_phase = "prefill_last";
+    } else if (seq_len == 1 && trace_step_ == 1) {
+      stage_phase = "decode0";
+    }
+  }
+  const bool stage_layer =
+      stage_enabled && stage_phase &&
+      stage_trace_layer_selected(layer_idx, config_.num_layers) &&
+      stage_trace_phase_enabled(stage_phase);
+  const uint32_t stage_tokens_total =
+      static_cast<uint32_t>(seq_start + seq_len);
+  const uint32_t stage_token_index =
+      seq_len > 0 ? static_cast<uint32_t>(seq_len - 1) : 0;
+  const uint32_t stage_pos_id =
+      static_cast<uint32_t>(seq_start + stage_token_index);
+  const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+
+  if (stage_layer) {
+    stage_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                       D, stage_token_index, hip_stream);
+  }
   if (trace_layer) {
     layer_tracer_.trace_tensor("x", trace_step_, static_cast<int>(layer_idx),
                                hip_stream, x, n_x);
@@ -1556,6 +1584,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     launch_debug_tensor_stats(hip_stream, "L.attn.attn_out", attn_out, n_x);
   }
 
+  if (stage_layer) {
+    stage_trace_tensor("attn_out", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total,
+                       attn_out, D, stage_token_index, hip_stream);
+  }
+
   gcore::compute::GretaCompute::set_op_label(
       is_decode_step ? "attn_o_decode" : "attn_o_prefill");
   CHECK_GRETA(
@@ -1565,6 +1600,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   gcore::compute::GretaCompute::set_op_label(nullptr);
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (Attn)");
+
+  if (stage_layer) {
+    stage_trace_tensor("x_after_attn", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                       D, stage_token_index, hip_stream);
+  }
 
   CHECK_HIP_KERNEL(
       launch_rmsnorm_naive(hip_stream, x,
@@ -1645,8 +1687,22 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     launch_debug_tensor_stats(hip_stream, "L.ffn.out", mlp_out, n_x);
   }
 
+  if (stage_layer) {
+    stage_trace_tensor("mlp_out", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total,
+                       mlp_out, D, stage_token_index, hip_stream);
+  }
+
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (FFN)");
+
+  if (stage_layer) {
+    stage_trace_tensor("x_after_mlp", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                       D, stage_token_index, hip_stream);
+  }
 
   if (PROFILE_ON()) {
     stop->record(stream_);
@@ -2770,6 +2826,42 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
     CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, onorm_w, norm_out, S,
                                           D, config_.rms_eps),
                      "Final RMSNorm");
+
+    const bool stage_enabled = stage_trace_enabled();
+    const char *stage_phase = nullptr;
+    if (stage_enabled) {
+      if (seq_len > 1 && trace_step_ == 0) {
+        stage_phase = "prefill_last";
+      } else if (seq_len == 1 && trace_step_ == 1) {
+        stage_phase = "decode0";
+      }
+    }
+    if (stage_phase && stage_trace_phase_enabled(stage_phase)) {
+      const uint32_t stage_tokens_total =
+          static_cast<uint32_t>(seq_start + seq_len);
+      const uint32_t stage_token_index =
+          seq_len > 0 ? static_cast<uint32_t>(seq_len - 1) : 0;
+      const uint32_t stage_pos_id =
+          static_cast<uint32_t>(seq_start + stage_token_index);
+      const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+      const size_t stride_elems = D;
+      const size_t final_layer = config_.num_layers;
+
+      if (stage_trace_point_enabled("final_norm")) {
+        stage_trace_tensor("final_norm", stage_phase, stage_prompt_id,
+                           final_layer, static_cast<uint32_t>(trace_step_),
+                           stage_pos_id, static_cast<uint32_t>(seq_len),
+                           stage_tokens_total, norm_out, stride_elems,
+                           stage_token_index, hip_stream);
+      }
+      if (stage_trace_point_enabled("lm_head_in")) {
+        stage_trace_tensor("lm_head_in", stage_phase, stage_prompt_id,
+                           final_layer, static_cast<uint32_t>(trace_step_),
+                           stage_pos_id, static_cast<uint32_t>(seq_len),
+                           stage_tokens_total, norm_out, stride_elems,
+                           stage_token_index, hip_stream);
+      }
+    }
 
     size_t logits_offset_bytes =
         static_cast<size_t>(seq_start) * static_cast<size_t>(V) * sizeof(float);

@@ -1,4 +1,5 @@
 #include "gcore/inference/generator.hpp"
+#include "gcore/inference/stage_trace.hpp"
 #include "gcore/inference/block_scheduler.hpp"
 #include "gcore/inference/tokenizer.hpp"
 #include "gcore/inference/trace.hpp"
@@ -810,8 +811,10 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
+  const bool trace_stage = stage_trace_enabled();
   const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape ||
-                         trace_delta || trace_lmhead_w_verify || trace_hidden_equiv;
+                         trace_delta || trace_lmhead_w_verify || trace_hidden_equiv ||
+                         trace_stage;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
@@ -855,7 +858,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     return output;
   }
 
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_stage) {
     const size_t tokens_total = prompt_tokens.size();
     const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
     const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
@@ -893,6 +896,27 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         reinterpret_cast<uintptr_t>(rms_buf.data());
     const uintptr_t logits_ptr =
         reinterpret_cast<uintptr_t>(logits_buf.data());
+    const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+
+    if (trace_stage && stage_trace_phase_enabled("prefill_last")) {
+      StageLogitsStats stage_stats{};
+      stage_stats.hash = lhash;
+      stage_stats.min = lstats.min;
+      stage_stats.max = lstats.max;
+      stage_stats.mean = lstats.mean;
+      stage_stats.top1_id = top2.top1_id;
+      stage_stats.top1_logit = top2.top1_logit;
+      stage_stats.top2_id = top2.top2_id;
+      stage_stats.top2_logit = top2.top2_logit;
+      stage_stats.gap = gap;
+      stage_stats.logits_ptr = logits_ptr;
+      stage_stats.logits_offset_bytes = last_token_offset;
+      stage_stats.vocab = config_.vocab_size;
+      stage_trace_logits("prefill_last", stage_prompt_id, 0,
+                         static_cast<uint32_t>(pos_id),
+                         static_cast<uint32_t>(seq_len),
+                         static_cast<uint32_t>(tokens_total), stage_stats);
+    }
 
     const bool readout_is_single_token = false;
     const bool readout_mismatch =
@@ -1087,7 +1111,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (!scheduler_->forward(&last_token_id, output.size() - 1, 1, err)) {
       break;
     }
-    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode || trace_delta;
+    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode || trace_delta || trace_stage;
     const size_t decode_logits_offset =
         (output.size() - 1) * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
@@ -1102,7 +1126,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         break;
       }
 
-      if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
+      if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_stage) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
@@ -1144,6 +1168,28 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             reinterpret_cast<uintptr_t>(rms_buf.data());
         const uintptr_t logits_ptr =
             reinterpret_cast<uintptr_t>(logits_buf.data());
+        const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+
+        if (trace_stage && i == 1 && stage_trace_phase_enabled("decode0")) {
+          StageLogitsStats stage_stats{};
+          stage_stats.hash = lhash;
+          stage_stats.min = lstats.min;
+          stage_stats.max = lstats.max;
+          stage_stats.mean = lstats.mean;
+          stage_stats.top1_id = top2.top1_id;
+          stage_stats.top1_logit = top2.top1_logit;
+          stage_stats.top2_id = top2.top2_id;
+          stage_stats.top2_logit = top2.top2_logit;
+          stage_stats.gap = gap;
+          stage_stats.logits_ptr = logits_ptr;
+          stage_stats.logits_offset_bytes = decode_logits_offset;
+          stage_stats.vocab = config_.vocab_size;
+          stage_trace_logits("decode0", stage_prompt_id,
+                             static_cast<uint32_t>(i),
+                             static_cast<uint32_t>(pos_id),
+                             static_cast<uint32_t>(seq_len),
+                             static_cast<uint32_t>(tokens_total), stage_stats);
+        }
 
         const bool readout_is_single_token = true;
         const bool readout_mismatch =
