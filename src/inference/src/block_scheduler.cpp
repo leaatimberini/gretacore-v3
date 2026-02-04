@@ -1307,12 +1307,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     ev_core_start->record(stream_);
 
   if (S == 1) {
-    CHECK_GRETA(gcore::compute::GretaCompute::attention_decode(
-                    stream_, &activations_.q, &activations_.kv_cache_k,
-                    &activations_.kv_cache_v, &activations_.d_pos,
-                    &activations_.attn_out, Hq, Hkv, Dh, S,
-                    config_.max_seq_len, scale, config_.rope_base),
-                "Attention Core");
+    const int accum_mode =
+        (attn_accum_mode() == AttnAccumMode::Fp16) ? 1 : 0;
+    CHECK_HIP_KERNEL(
+        launch_flash_attention_decode(
+            hip_stream, q, cache_k, cache_v, attn_out, Hq, Hkv, d_pos,
+            static_cast<uint32_t>(config_.max_seq_len), Dh, scale, accum_mode),
+        "Attention Core (Decode)");
   } else {
     CHECK_HIP_KERNEL(launch_flash_attention_prefill(hip_stream, q, k, v,
                                                     attn_out, S, Hq, Hkv, Dh,
