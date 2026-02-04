@@ -2010,15 +2010,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       bool softmax_window_ok = false;
       uint32_t window_start = 0;
       uint32_t window_len = 0;
+      uint32_t seq_len_trace = 0;
       std::vector<float> qk_gpu;
       std::vector<float> softmax_gpu;
       std::vector<float> stats_gpu;
       std::vector<double> qk_cpu;
       std::vector<double> softmax_cpu;
+      std::vector<double> qk_full;
       std::vector<float> q_sample;
       std::vector<float> k_sample;
       double max_qk = -INFINITY;
       double sumexp = 0.0;
+      double inv_sum = 0.0;
       double top1_prob = 0.0;
       double top2_prob = 0.0;
       double entropy = 0.0;
@@ -2028,6 +2031,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       double soft_max_diff = 0.0;
       uint64_t q_head_hash = 0;
       uint64_t k_head_hash = 0;
+      bool qk_full_ok = false;
 
       const bool need_softmax_window =
           ((trace_attn_softmax && out_softmax && *out_softmax) ||
@@ -2049,7 +2053,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       if (need_softmax_window && q_head && k_head) {
         const uint32_t window = attn_softmax_window();
         const uint32_t pos_id = pos_id_used;
-        const uint32_t seq_len_trace = seq_len_used;
+        seq_len_trace = seq_len_used;
         window_start = (seq_len_trace > window) ? (seq_len_trace - window) : 0;
         window_len =
             seq_len_trace > window_start ? (seq_len_trace - window_start) : 0;
@@ -2106,7 +2110,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             q_sample.assign(q_head, q_head + sample_n);
             k_sample.assign(k_pos, k_pos + sample_n);
 
-            std::vector<double> qk_full(seq_len_trace, 0.0);
+            qk_full.assign(seq_len_trace, 0.0);
             double second_qk = -INFINITY;
             for (uint32_t t = 0; t < seq_len_trace; ++t) {
               const float *k_t = k_head + t * Dh;
@@ -2131,7 +2135,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               sumexp += e;
               sumexp_log += e * (qk_full[t] - max_qk);
             }
-            double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
+            inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
             top1_prob = inv_sum;
             top2_prob = (sumexp > 0.0 && std::isfinite(second_qk))
                             ? std::exp(second_qk - max_qk) * inv_sum
@@ -2169,6 +2173,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             qk_mae = (window_len > 0) ? (qk_mae / window_len) : 0.0;
             soft_mae = (window_len > 0) ? (soft_mae / window_len) : 0.0;
             softmax_window_ok = true;
+            qk_full_ok = true;
           }
         }
       }
@@ -2293,13 +2298,38 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
             std::vector<double> pv_row(dims_sample, 0.0);
             std::vector<double> pv_col(dims_sample, 0.0);
-            for (uint32_t i = 0; i < window_len; ++i) {
-              double p = (i < softmax_cpu.size()) ? softmax_cpu[i] : 0.0;
-              for (uint32_t d = 0; d < dims_sample; ++d) {
-                const float v_r = v_row[i * dims_sample + d];
-                const float v_c = v_col[i * dims_sample + d];
-                pv_row[d] += p * static_cast<double>(v_r);
-                pv_col[d] += p * static_cast<double>(v_c);
+            const float *v_head_host = nullptr;
+            if (!v_cache_host.empty() && trace_kv_head < Hkv) {
+              v_head_host = kv_head_only
+                                ? v_cache_host.data()
+                                : v_cache_host.data() +
+                                      static_cast<size_t>(trace_kv_head) *
+                                          kv_head_stride_elems;
+            }
+            bool pv_full = false;
+            if (qk_full_ok && v_head_host && inv_sum > 0.0 &&
+                seq_len_trace > 0) {
+              pv_full = true;
+              for (uint32_t t = 0; t < seq_len_trace; ++t) {
+                double p = std::exp(qk_full[t] - max_qk) * inv_sum;
+                const float *v_row_t =
+                    v_head_host + static_cast<size_t>(t) * Dh;
+                for (uint32_t d = 0; d < dims_sample; ++d) {
+                  const float v_r = v_row_t[d];
+                  const float v_c = v_head_host[d * max_seq_len + t];
+                  pv_row[d] += p * static_cast<double>(v_r);
+                  pv_col[d] += p * static_cast<double>(v_c);
+                }
+              }
+            } else {
+              for (uint32_t i = 0; i < window_len; ++i) {
+                double p = (i < softmax_cpu.size()) ? softmax_cpu[i] : 0.0;
+                for (uint32_t d = 0; d < dims_sample; ++d) {
+                  const float v_r = v_row[i * dims_sample + d];
+                  const float v_c = v_col[i * dims_sample + d];
+                  pv_row[d] += p * static_cast<double>(v_r);
+                  pv_col[d] += p * static_cast<double>(v_c);
+                }
               }
             }
 
@@ -2393,6 +2423,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             }
             oss << "],\"pv_mae\":" << pv_mae
                 << ",\"pv_max_diff\":" << pv_max_diff
+                << ",\"pv_scope\":\"" << (pv_full ? "full" : "window") << "\""
                 << ",\"attn_out_scope\":\"per_head_concat\""
                 << ",\"attn_out_gpu_sample\":[";
             for (uint32_t d = 0; d < dims_sample; ++d) {
