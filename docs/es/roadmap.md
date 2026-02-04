@@ -37,7 +37,7 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 - B3.33: verificación layout Wq: prefill_last=col, decode0=row en prompts con contexto.
 - B3.34: corregir layout de Wq en prefill (GEMM) para alinear con decode (row).
 - B3.35: corregir layout de Wk en prefill (GEMM) para alinear con decode (row).
-- B3.36: **en curso** — corregir layout de Wv en prefill (GEMM) para alinear con decode (row).
+- B3.36: corregir layout de Wv en prefill (GEMM) para alinear con decode (row).
 - Validación MI300X en curso; evidencia en `docs/AMD/`.
 
 ## Fase 0 – Fundaciones

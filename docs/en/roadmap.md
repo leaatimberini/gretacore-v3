@@ -37,7 +37,7 @@ It is optimized for correctness, performance, and sustainability.
 - B3.33: Wq layout verification: prefill_last=col, decode0=row for context prompts.
 - B3.34: fix prefill Wq layout (GEMM) to align with decode (row).
 - B3.35: fix prefill Wk layout (GEMM) to align with decode (row).
-- B3.36: **in progress** — fix prefill Wv layout (GEMM) to align with decode (row).
+- B3.36: fix prefill Wv layout (GEMM) to align with decode (row).
 - MI300X validation ongoing; evidence under `docs/AMD/`.
 
 ## Phase 0 – Foundations
