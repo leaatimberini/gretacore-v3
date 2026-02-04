@@ -2030,15 +2030,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             norm_out_host.size() >= static_cast<size_t>(D)) {
           q_weight_sample = std::min<uint32_t>(
               attn_vacc_dims_sample(), static_cast<uint32_t>(Dh));
-          if (q_weight_sample > 0) {
+          if (q_weight_sample > 0 && Dh > 0) {
             static QkvWeightHostCache wq_cache;
             const size_t wq_elems = static_cast<size_t>(D) * D;
             if (ensure_qkv_weight_cache(b.wq, b.s_wq, b.sh_wq, wq_elems,
                                         &wq_cache)) {
-              std::vector<float> q_row(q_weight_sample, 0.0f);
-              std::vector<float> q_col(q_weight_sample, 0.0f);
+              std::vector<float> q_row(static_cast<size_t>(Dh), 0.0f);
+              std::vector<float> q_col(static_cast<size_t>(Dh), 0.0f);
               const float *x_vec = norm_out_host.data();
-              for (uint32_t j = 0; j < q_weight_sample; ++j) {
+              for (uint32_t j = 0; j < Dh; ++j) {
                 double sum_row = 0.0;
                 double sum_col = 0.0;
                 for (uint32_t i = 0; i < D; ++i) {
@@ -2063,6 +2063,31 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 }
                 q_row[j] = static_cast<float>(sum_row * h_scale);
                 q_col[j] = static_cast<float>(sum_col * h_scale);
+              }
+              if (Dh % 2 == 0) {
+                for (uint32_t pair = 0; pair < Dh / 2; ++pair) {
+                  const float base = static_cast<float>(config_.rope_base);
+                  const float theta = static_cast<float>(pos_id_used) *
+                                      std::pow(base, -2.0f *
+                                                         (static_cast<float>(pair) /
+                                                          static_cast<float>(Dh)));
+                  const float cos_val = std::cos(theta);
+                  const float sin_val = std::sin(theta);
+
+                  float v0 = q_row[pair];
+                  float v1 = q_row[pair + Dh / 2];
+                  float out0 = v0 * cos_val - v1 * sin_val;
+                  float out1 = v0 * sin_val + v1 * cos_val;
+                  q_row[pair] = out0;
+                  q_row[pair + Dh / 2] = out1;
+
+                  v0 = q_col[pair];
+                  v1 = q_col[pair + Dh / 2];
+                  out0 = v0 * cos_val - v1 * sin_val;
+                  out1 = v0 * sin_val + v1 * cos_val;
+                  q_col[pair] = out0;
+                  q_col[pair + Dh / 2] = out1;
+                }
               }
               mae_max_f32(q_row.data(), q_host.data(), q_weight_sample,
                           &q_weight_mae_row, &q_weight_max_row);
