@@ -33,6 +33,7 @@ git rev-parse HEAD
 echo "=== ROCM-SMI PRE ==="
 command -v rocm-smi >/dev/null && rocm-smi --showmemuse --showuse --showpids || true
 echo "=== KILL CANDIDATES ==="
+docker stop rocm-gpt-oss open-webui >/dev/null 2>&1 || true
 pkill -f "vllm" || true
 pkill -f "open-webui" || true
 pkill -f "python.*vllm" || true
