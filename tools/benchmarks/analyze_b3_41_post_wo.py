@@ -37,6 +37,16 @@ STAGES = [
     "ffn_norm",
     "mlp_out",
     "x_after_mlp",
+    "x_out",
+    "final_rms",
+    "lm_head_in",
+]
+
+POST_WO_STAGES = [
+    "ffn_norm",
+    "mlp_out",
+    "x_after_mlp",
+    "x_out",
     "final_rms",
     "lm_head_in",
 ]
@@ -77,7 +87,7 @@ def analyze_file(path: Path):
 
 
 def first_mismatch(stage_mae: Dict[str, Optional[float]], threshold: float) -> str:
-    for stage in STAGES:
+    for stage in POST_WO_STAGES:
         val = stage_mae.get(stage)
         if val is not None and val > threshold:
             return stage
@@ -96,7 +106,7 @@ def main():
     lines = []
     lines.append(f"B3.41 post-WO analysis: {base}")
     lines.append(
-        "prompt\texp\tfirst_mismatch_stage\tffn_norm_mae\tmlp_out_mae\tx_after_mlp_mae\tfinal_rms_mae\tlogits_mean_delta\tprefill_last_top1\tdecode0_top1\tcollapse_96965"
+        "prompt\texp\tfirst_mismatch_stage\tffn_norm_mae\tmlp_out_mae\tx_after_mlp_mae\tx_out_mae\tfinal_rms_mae\tlm_head_in_mae\tlogits_mean_delta\tprefill_last_top1\tdecode0_top1\tcollapse_96965"
     )
 
     for path in files:
@@ -120,7 +130,7 @@ def main():
             logits_mean_delta = abs(lp.get("logits_mean", 0.0) - ld.get("logits_mean", 0.0))
 
         lines.append(
-            f"{prompt}\t{exp}\t{first}\t{stage_mae.get('ffn_norm')}\t{stage_mae.get('mlp_out')}\t{stage_mae.get('x_after_mlp')}\t{stage_mae.get('final_rms')}\t{logits_mean_delta}\t{pre_top1}\t{dec_top1}\t{str(collapse).lower()}"
+            f"{prompt}\t{exp}\t{first}\t{stage_mae.get('ffn_norm')}\t{stage_mae.get('mlp_out')}\t{stage_mae.get('x_after_mlp')}\t{stage_mae.get('x_out')}\t{stage_mae.get('final_rms')}\t{stage_mae.get('lm_head_in')}\t{logits_mean_delta}\t{pre_top1}\t{dec_top1}\t{str(collapse).lower()}"
         )
 
     output = "\n".join(lines)
