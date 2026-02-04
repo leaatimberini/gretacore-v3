@@ -33,6 +33,7 @@ set(INFERENCE_SOURCES
     ${INFERENCE_DIR}/src/tokenizer.cpp
     ${INFERENCE_DIR}/src/generator.cpp
     ${INFERENCE_DIR}/src/layer_trace.cpp
+    ${INFERENCE_DIR}/src/stage_trace.cpp
     ${RT_HIP_DIR}/src/buffer.cpp
     ${RT_HIP_DIR}/src/greta_runtime_hip.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/compute/src/greta_compute_hip.cpp
