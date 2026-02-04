@@ -1,10 +1,14 @@
 # B3.19 — Decode Collapse Fix (Attention Decode seq_len)
 
 ## Resumen Ejecutivo (ES)
-Se aplicó un fix mínimo en el **decode attention**: el kernel ahora usa `seq_len = pos + 1` (no `pos`) para incluir el token actual en la atención causal. El objetivo es evitar el colapso inmediato en `decode0` (top1=96965) y alinear `prefill_last_top1` con `decode0_top1`.
+Se aplicó un fix mínimo en el **decode attention**: el kernel ahora usa `seq_len = pos + 1` (no `pos`) para incluir el token actual en la atención causal. La aceptación se ejecutó en p4_sys y p5_ba.
+
+**Resultado:** el colapso **persiste** (`decode0_top1=96965`). El CPU probe concuerda con GPU en decode, por lo que el LM head no es la causa principal. El problema sigue en la ruta de decode antes del LM head (atención/KV/estado).
 
 ## Executive Summary (EN)
-We applied a minimal fix in **decode attention**: the kernel now uses `seq_len = pos + 1` (not `pos`) to include the current token in causal attention. The goal is to prevent immediate collapse at `decode0` (top1=96965) and align `prefill_last_top1` with `decode0_top1`.
+We applied a minimal fix in **decode attention**: the kernel now uses `seq_len = pos + 1` (not `pos`) to include the current token in causal attention. Acceptance ran on p4_sys and p5_ba.
+
+**Result:** collapse **persists** (`decode0_top1=96965`). CPU probe agrees with GPU in decode, so the LM head is not the primary cause. The issue remains in the decode path before the LM head (attention/KV/state).
 
 ## Cambio Implementado (ES)
 - `flash_attention_decode_kernel_p`: `seq_len = *pos_ptr + 1`.
@@ -27,16 +31,39 @@ We applied a minimal fix in **decode attention**: the kernel now uses `seq_len =
   - `p5_ba`
 
 ## Resultados (ES)
-Pendiente de ejecución en MI300X (acceptance p4/p5). Se completará con:
-- Tabla `prefill_last_top1` vs `decode0_top1`
-- `readout_mismatch` y `cpu_probe_agrees_gpu`
-- Evidencia JSONL/logs
+Tabla (prefill_last vs decode0):
+
+| Prompt | prefill_last top1 | decode0 top1 | cpu_probe prefill | cpu_probe decode0 |
+|---|---:|---:|---|---|
+| p4_sys | 127158 | 96965 | true | true |
+| p5_ba  | 127158 | 96965 | true | true |
+
+Hidden equivalence (prefill_hash → decode_hash):
+
+| Prompt | prefill_hash | decode_hash |
+|---|---:|---:|
+| p4_sys | 14305319198029099000 | 4459200984117844040 |
+| p5_ba  | 16785816201846341193 | 17322585814358657131 |
 
 ## Results (EN)
-Pending MI300X execution (acceptance p4/p5). Will be completed with:
-- `prefill_last_top1` vs `decode0_top1` table
-- `readout_mismatch` and `cpu_probe_agrees_gpu`
-- JSONL/log evidence
+Table (prefill_last vs decode0):
+
+| Prompt | prefill_last top1 | decode0 top1 | cpu_probe prefill | cpu_probe decode0 |
+|---|---:|---:|---|---|
+| p4_sys | 127158 | 96965 | true | true |
+| p5_ba  | 127158 | 96965 | true | true |
+
+Hidden equivalence (prefill_hash → decode_hash):
+
+| Prompt | prefill_hash | decode_hash |
+|---|---:|---:|
+| p4_sys | 14305319198029099000 | 4459200984117844040 |
+| p5_ba  | 16785816201846341193 | 17322585814358657131 |
+
+## Conclusión / Conclusion
+**FIX FAIL.** El ajuste de `seq_len = pos + 1` no elimina el colapso. La evidencia sugiere un problema en el pipeline de decode antes del LM head, probablemente en atención decode o KV cache/estado.
+
+**Next Step (B3.20):** auditar `attention_decode` y `kv_cache` con comparación directa prefill vs decode (mismatches de Q/K/V y escala), o forzar una ruta de atención alternativa validada.
 
 ---
 L.E.T / Leandro Emanuel Timberini

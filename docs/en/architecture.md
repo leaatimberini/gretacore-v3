@@ -1,8 +1,8 @@
 # GRETA CORE – Architecture
 
-Version: 1.0  
-Status: Foundational  
-Project Phase: Phase 1 – Runtime Core (active)  
+Version: 1.1  
+Status: Active  
+Project Phase: Phase 3 – LLM Inference Pipeline (active)  
 Language: English
 
 ---
@@ -16,6 +16,15 @@ and interaction rules between layers.
 The goal of this architecture is not flexibility for all use cases,
 but maximal control, performance, and long-term maintainability for
 LLM workloads on AMD hardware.
+
+---
+
+## Current Status (B3.x)
+
+- The LLM inference pipeline is in a correctness + deep tracing phase.
+- LM head routing was isolated (MFMA/VALU) and decode instrumentation added.
+- Decode collapse persists; investigation focuses on attention/KV and state.
+- MI300X validation is ongoing with evidence in `docs/AMD/`.
 
 ---
 

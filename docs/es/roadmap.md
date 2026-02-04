@@ -19,11 +19,15 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 
 ---
 
-## Estado Actual (2026-01-31)
+## Estado Actual (2026-02-04)
 
 - Fase 1 (Runtime Core): **completada**.
 - Fase 2 (Dominio de Kernels): **completada** (13 TFLOPS GEMM, 2.1ms Llama Block).
-- Fase 3 (Pipeline de Inferencia LLM): **activa**.
+- Fase 3 (Pipeline de Inferencia LLM): **activa** (B3.x).
+- B3.14–B3.16: aislación de LM head; MFMA deshabilitado en LM head; prefill coherente con VALU.
+- B3.17–B3.18: trazas de decode (LM head force route, hidden equivalence, layer delta).
+- B3.19: fix de `seq_len = pos + 1` en attention decode no resolvió el colapso.
+- Validación MI300X en curso; evidencia en `docs/AMD/`.
 
 ## Fase 0 – Fundaciones
 

@@ -52,13 +52,16 @@ performance-driven compute stack.
 
 ## Project Status
 
-**Phase 1 – Runtime Core (active)**
-**Phase 2 – Kernel Dominance (early prototypes)**
+**Phase 3 – LLM Inference Pipeline (B3.x active)**
 
-- Vulkan backend is implemented and exercised by benches.
-- FP16 input / FP32 accumulation GEMM kernels exist (FP16 gated).
-- Autotuning with persistent cache is active.
-- Smoke/bench tooling is available for safety gating.
+- B3.14–B3.16: LM head route isolation; MFMA disabled by default for LM head; VALU coherent in prefill.
+- B3.17–B3.18: Decode LM head isolation, hidden equivalence, and per-layer delta traces for decode.
+- B3.19: Decode attention `seq_len = pos + 1` fix attempted; decode0 collapse persists.
+- Next: B3.20 attention/KV decode audit to eliminate decode collapse.
+- MI300X validation ongoing; AMD reports under `docs/AMD/`.
+
+**Phase 1 – Runtime Core (completed)**
+**Phase 2 – Kernel Dominance (completed)**
 
 ## v0.1 Public Release (Definition of Done)
 
@@ -84,6 +87,7 @@ performance-driven compute stack.
 - Whitepaper: `docs/en/whitepaper.md`
 - Roadmap: `docs/en/roadmap.md`
 - Work plan: `docs/en/workplan.md`
+- Debugging guide: `docs/en/debugging.md`
 - FP16 healthcheck: `docs/en/runtime_fp16_healthcheck.md`
 - Safety profiles: `docs/en/runtime_safety_profiles.md`
 - Validation checklist: `docs/en/runtime_validation_checklist.md`

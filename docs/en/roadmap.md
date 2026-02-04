@@ -19,11 +19,15 @@ It is optimized for correctness, performance, and sustainability.
 
 ---
 
-## Current Status (2026-01-31)
+## Current Status (2026-02-04)
 
 - Phase 1 (Runtime Core): **completed**.
 - Phase 2 (Kernel Dominance): **completed** (13 TFLOPS GEMM, 2.1ms Llama Block).
-- Phase 3 (LLM Inference Pipeline): **active**.
+- Phase 3 (LLM Inference Pipeline): **active** (B3.x).
+- B3.14–B3.16: LM head isolation; MFMA disabled for LM head; prefill coherent with VALU.
+- B3.17–B3.18: decode traces (LM head force route, hidden equivalence, layer delta).
+- B3.19: `seq_len = pos + 1` fix in attention decode did not remove collapse.
+- MI300X validation ongoing; evidence under `docs/AMD/`.
 
 ## Phase 0 – Foundations
 
