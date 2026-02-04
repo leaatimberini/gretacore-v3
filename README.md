@@ -149,6 +149,15 @@ export GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/2026-02-
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
 ```
 
+## Decode QKV Route Forcing (B3.31)
+
+```bash
+# Force projection route for Q/K/V in decode (S=1)
+export GRETA_QKV_FORCE_ROUTE=mfma   # or valu, auto
+# Force GEMM path for decode (disable fused gemv)
+export GRETA_QKV_FORCE_GEMM=1
+```
+
 ---
 
 ## Author

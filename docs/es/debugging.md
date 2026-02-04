@@ -42,6 +42,10 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Traza la tubería de atención en layer0 (Q/K/V/QK/softmax/P·V/attn_out) para `prefill_last` vs `decode0`.
 - `GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/.../b3_30_attn_l0_pipe.jsonl`  
   Path de salida JSONL para la traza de layer0.
+- `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
+  Fuerza la ruta de proyección Q/K/V en **decode** (S=1).
+- `GRETA_QKV_FORCE_GEMM=1`  
+  Fuerza el uso de GEMM en decode (deshabilita el GEMV fused de QKV).
 - `GRETA_TRACE_PROMPT_ID=p4_sys`  
   Etiqueta opcional del prompt para trazas.
 - `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
