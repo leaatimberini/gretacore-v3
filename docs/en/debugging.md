@@ -42,6 +42,8 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Traces the layer0 attention pipeline (Q/K/V/QK/softmax/P·V/attn_out) for `prefill_last` vs `decode0`.
 - `GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/.../b3_30_attn_l0_pipe.jsonl`  
   JSONL output path for layer0 attention pipeline trace.
+- `GRETA_TRACE_ATTN_L0_NORM=1`  
+  Adds `attn_norm_in` and `attn_norm_out` (RMSNorm input/output) to the layer0 trace.
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Forces Q/K/V projection route in **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  
