@@ -818,7 +818,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_hidden_equiv) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_hidden_equiv || trace_stage) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
