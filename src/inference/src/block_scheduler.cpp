@@ -1827,8 +1827,6 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       }
 
       const uint32_t kv_head = 0;
-      const size_t kv_head_stride_elems =
-          static_cast<size_t>(max_seq_len) * Dh;
       const size_t kv_pos = pos_id_used;
       const size_t k_read_offset_elems =
           kv_head * kv_head_stride_elems + kv_pos * Dh;
