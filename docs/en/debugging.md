@@ -28,6 +28,18 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Verifies decode attention with a reference (hash/MAE).
 - `GRETA_ATTN_DECODE_REF=1`  
   Enables recompute reference on decode0.
+- `GRETA_TRACE_ATTN_SOFTMAX=1`  
+  Captures decode0 softmax isolation (QK/softmax window vs FP64).
+- `GRETA_TRACE_ATTN_LAYER=31`  
+  Selects a single layer for softmax isolation (default last).
+- `GRETA_TRACE_ATTN_HEAD=0`  
+  Selects a single head for softmax isolation.
+- `GRETA_TRACE_ATTN_KEYS_WINDOW=64`  
+  Window size on each side of the current position for softmax isolation.
+- `GRETA_TRACE_ATTN_OUT=/root/gretacore/artifacts/alignment/.../b3_23_attn_softmax.jsonl`  
+  JSONL output path for softmax isolation traces.
+- `GRETA_TRACE_PROMPT_ID=p4_sys`  
+  Optional prompt label for trace attribution.
 - `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
   Selects layers for decode attention traces.
 - `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
@@ -43,7 +55,7 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Forces LM head route **decode-only**.
 
-**B3.20 note:** KV invariants held while `attn_out` diverged from ref at layer 31; `fused+mfma` failed at load. Treat decode attention kernel precision/accumulation and fused+mfma stability as primary suspects.
+**B3.23 note:** QK and softmax match FP64 in decode0 (layer 31 head 0, windowed). Divergence is more likely in V accumulation / `attn_out` path.
 
 ## Recommended Debug Flow
 1. **Baseline**: run p4_sys and p5_ba with delta traces.
@@ -57,4 +69,3 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
 - Each block produces an AMD report under `docs/AMD/` with ES/EN, tables, and excerpts.
 
 ---
-L.E.T / Leandro Emanuel Timberini

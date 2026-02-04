@@ -29,7 +29,9 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 - B3.19: fix de `seq_len = pos + 1` en attention decode no resolvió el colapso.
 - B3.20: aislamiento de attention decode (attn verify/ref, invariantes KV, matriz de rutas). KV invariants OK; divergencia attn_out vs ref en layer 31; `fused+mfma` falla en load.
 - B3.21: `fused+mfma` estabilizado (fix de Hkv + guard rails de alignment). MFMA==VALU en decode0, pero persiste la divergencia vs ref en layer 31 y el colapso decode0.
-- B3.22: foco en precisión/acumulación o referencia de attention decode en capas altas.
+- B3.22: auditoría de precisión en capas altas; divergencia vs referencia FP64 persiste en layer 31 independiente del modo de acumulación.
+- B3.23: aislamiento de softmax en decode0 (layer 31 head 0). QK y softmax coinciden con FP64; el foco pasa a acumulado de V / attn_out.
+- Próximo: B3.24 aislar acumulado de V y salida de atención en decode0.
 - Validación MI300X en curso; evidencia en `docs/AMD/`.
 
 ## Fase 0 – Fundaciones

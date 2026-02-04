@@ -28,6 +28,18 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Verifica atención decode con referencia (hash/MAE).
 - `GRETA_ATTN_DECODE_REF=1`  
   Habilita recompute de referencia en decode0.
+- `GRETA_TRACE_ATTN_SOFTMAX=1`  
+  Captura aislamiento de softmax en decode0 (QK/softmax ventana vs FP64).
+- `GRETA_TRACE_ATTN_LAYER=31`  
+  Selecciona una capa para aislamiento de softmax (default last).
+- `GRETA_TRACE_ATTN_HEAD=0`  
+  Selecciona un head para aislamiento de softmax.
+- `GRETA_TRACE_ATTN_KEYS_WINDOW=64`  
+  Tamaño de ventana alrededor de la posición actual.
+- `GRETA_TRACE_ATTN_OUT=/root/gretacore/artifacts/alignment/.../b3_23_attn_softmax.jsonl`  
+  Path de salida JSONL para aislamiento de softmax.
+- `GRETA_TRACE_PROMPT_ID=p4_sys`  
+  Etiqueta opcional del prompt para trazas.
 - `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
   Selecciona layers para trazas de atención decode.
 - `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
@@ -43,7 +55,7 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Fuerza ruta LM head **solo en decode**.
 
-**Nota B3.20:** KV invariants se mantuvo mientras `attn_out` divergió del ref en layer 31; `fused+mfma` falló en load. El foco pasa a precisión/acumulación del kernel de atención decode y estabilidad de `fused+mfma`.
+**Nota B3.23:** QK y softmax coinciden con FP64 en decode0 (layer 31 head 0, ventana). La divergencia es más probable en el acumulado de V / `attn_out`.
 
 ## Flujo Recomendada de Diagnóstico
 1. **Baseline**: ejecutar p4_sys y p5_ba con trazas delta.
@@ -57,4 +69,3 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
 - Cada bloque genera un informe AMD en `docs/AMD/` con ES/EN, tablas y extractos.
 
 ---
-L.E.T / Leandro Emanuel Timberini

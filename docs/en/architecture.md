@@ -26,6 +26,8 @@ LLM workloads on AMD hardware.
 - Decode collapse persists; investigation focuses on attention/KV and state.
 - B3.20 introduces attention decode verification with reference and KV invariant traces. Results show attn_out diverges from the ref at layer 31 while KV invariants hold; fused+mfma fails at load.
 - B3.21 stabilizes `fused+mfma` (Hkv fix + alignment guard rails). MFMA==VALU at decode0, but ref divergence at layer 31 and decode0 collapse persist.
+- B3.22 audits high-layer attention precision; divergence vs FP64 ref persists at layer 31 independent of accumulation mode.
+- B3.23 isolates softmax in decode0 (layer 31 head 0). QK/softmax match FP64; focus shifts to V accumulation / attn_out path.
 - MI300X validation is ongoing with evidence in `docs/AMD/`.
 
 ---

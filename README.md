@@ -59,7 +59,9 @@ performance-driven compute stack.
 - B3.19: Decode attention `seq_len = pos + 1` fix attempted; decode0 collapse persists.
 - B3.20: Attention decode isolation (attn verify/ref, KV invariants, forced kernel/matmul matrix). KV invariants OK; attn_out diverges from ref in layer 31; fused+mfma fails at load.
 - B3.21: Fused+MFMA decode stabilized (Hkv fix + alignment guards). MFMA==VALU under shadow compare, but attn_out vs ref still diverges at layer 31 and decode0 collapse persists.
-- Next: B3.22 focus on high-layer attention precision/reference mismatch and decode state coherence.
+- B3.22: High-layer attention precision audit; divergence vs FP64 ref persists at layer 31 independent of FP16/FP32 accumulation.
+- B3.23: Softmax isolation (decode0, layer 31 head 0) shows QK and softmax match FP64 (MAE ~1e-6 / ~1e-8). Focus shifts to V accumulation / attn_out path.
+- Next: B3.24 isolate V accumulation and attention output path for decode0.
 - MI300X validation ongoing; AMD reports under `docs/AMD/`.
 
 **Phase 1 – Runtime Core (completed)**
@@ -98,20 +100,28 @@ performance-driven compute stack.
 - Framework version matrix: `docs/en/strategy/framework_versions.md`
 - Framework prototypes: `tools/compat/README.md`
 
-## Reproduce B3.21 (MI300X)
+## Reproduce B3.23 (MI300X)
+
+Local-first workflow (required):
+1) Edit locally → `git commit` → `git push`
+2) On MI300X: `git pull --rebase` → build → run
+3) Tar artifacts and `scp` back to local
 
 ```bash
+export GRETA_TRACE_ATTN_SOFTMAX=1
+export GRETA_TRACE_ATTN_LAYER=31
+export GRETA_TRACE_ATTN_HEAD=0
+export GRETA_TRACE_ATTN_KEYS_WINDOW=64
+export GRETA_TRACE_ATTN_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_23_attn_softmax.jsonl
+# Optional: label runs for analysis
+export GRETA_TRACE_PROMPT_ID=p4_sys
+
+# Decode attention context (optional, if also tracing decode verification)
 export GRETA_TRACE_ATTN_DECODE_VERIFY=1
 export GRETA_TRACE_KV_INVARIANTS=1
 export GRETA_TRACE_ATTN_LAYERS="0,1,2,31"
 export GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"
 export GRETA_ATTN_DECODE_REF=1
-export GRETA_ATTN_DECODE_MFMA_SHADOW=1
-export GRETA_ATTN_DECODE_MFMA_SHADOW_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_21_attn_mfma_vs_valu.jsonl
-
-# Optional matrix controls
-export GRETA_FORCE_ATTN_DECODE_KERNEL=fused  # auto|manual|fused
-export GRETA_FORCE_ATTN_DECODE_MATMUL=mfma   # auto|valu|mfma
 ```
 
 ---

@@ -27,6 +27,8 @@ hardware AMD.
 - El colapso en decode persiste; la investigación se centra en atención/KV y estado.
 - B3.20 introduce verificación de attention decode con referencia y trazas de invariantes KV. Resultado: `attn_out` diverge del ref en layer 31 mientras KV invariants se mantiene; `fused+mfma` falla en load.
 - B3.21 estabiliza `fused+mfma` (fix de Hkv + guard rails de alignment). MFMA==VALU en decode0, pero persiste divergencia vs ref en layer 31 y el colapso decode0.
+- B3.22 audita precisión en capas altas; divergencia vs referencia FP64 persiste en layer 31 independiente del modo de acumulación.
+- B3.23 aísla softmax en decode0 (layer 31 head 0). QK/softmax coinciden con FP64; el foco pasa a acumulado de V / attn_out.
 - Validación MI300X en curso con evidencia en `docs/AMD/`.
 
 ---
