@@ -240,6 +240,10 @@ static bool trace_qkv_w_verify_enabled() {
   return env_flag("GRETA_TRACE_QKV_W_VERIFY");
 }
 
+static bool trace_wo_w_verify_enabled() {
+  return env_flag("GRETA_TRACE_WO_W_VERIFY");
+}
+
 static const char *attn_l0_pipe_out_path() {
   const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
   if (out && *out)
@@ -2430,6 +2434,116 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total,
                        mlp_out, D, stage_token_index, hip_stream);
+  }
+
+  if (stage_layer && trace_wo_w_verify_enabled()) {
+    const char *out = stage_trace_out_path();
+    if (out && *out) {
+      const uint32_t wo_weight_sample = std::min<uint32_t>(
+          attn_vacc_dims_sample(), static_cast<uint32_t>(D));
+      std::string wo_weight_layout = "disabled";
+      double wo_weight_mae_row = 0.0;
+      double wo_weight_mae_col = 0.0;
+      float wo_weight_max_row = 0.0f;
+      float wo_weight_max_col = 0.0f;
+
+      std::vector<float> attn_out_host;
+      std::vector<float> wo_out_host;
+      if (wo_weight_sample > 0) {
+        attn_out_host.resize(D);
+        wo_out_host.resize(D);
+        const float *attn_vec = attn_out +
+                                static_cast<size_t>(stage_token_index) * D;
+        const float *wo_vec =
+            mlp_out + static_cast<size_t>(stage_token_index) * D;
+        hipError_t err_a =
+            hipMemcpy(attn_out_host.data(), attn_vec, D * sizeof(float),
+                      hipMemcpyDeviceToHost);
+        hipError_t err_b =
+            hipMemcpy(wo_out_host.data(), wo_vec, D * sizeof(float),
+                      hipMemcpyDeviceToHost);
+        if (err_a != hipSuccess || err_b != hipSuccess) {
+          attn_out_host.clear();
+          wo_out_host.clear();
+        }
+      }
+
+      if (!attn_out_host.empty() && !wo_out_host.empty() &&
+          wo_weight_sample > 0) {
+        static QkvWeightHostCache wo_cache;
+        const size_t wo_elems = static_cast<size_t>(D) * D;
+        if (ensure_qkv_weight_cache(b.wo, b.s_wo, b.sh_wo, wo_elems,
+                                    &wo_cache)) {
+          std::vector<float> wo_row(static_cast<size_t>(wo_weight_sample), 0.0f);
+          std::vector<float> wo_col(static_cast<size_t>(wo_weight_sample), 0.0f);
+          for (uint32_t j = 0; j < wo_weight_sample; ++j) {
+            double sum_row = 0.0;
+            double sum_col = 0.0;
+            for (uint32_t i = 0; i < D; ++i) {
+              const float x_i = attn_out_host[i];
+              const size_t idx_row =
+                  static_cast<size_t>(j) * D + i;
+              const size_t idx_col =
+                  static_cast<size_t>(i) * D + j;
+              sum_row += static_cast<double>(x_i) *
+                         static_cast<double>(read_weight_value(wo_cache,
+                                                              idx_row));
+              sum_col += static_cast<double>(x_i) *
+                         static_cast<double>(read_weight_value(wo_cache,
+                                                              idx_col));
+            }
+            float h_scale = 1.0f;
+            if (!wo_cache.head_scales.empty() && Dh > 0) {
+              const size_t h_idx = j / Dh;
+              if (h_idx < wo_cache.head_scales.size()) {
+                h_scale = wo_cache.head_scales[h_idx];
+              }
+            }
+            wo_row[j] = static_cast<float>(sum_row * h_scale);
+            wo_col[j] = static_cast<float>(sum_col * h_scale);
+          }
+          mae_max_f32(wo_row.data(), wo_out_host.data(), wo_weight_sample,
+                      &wo_weight_mae_row, &wo_weight_max_row);
+          mae_max_f32(wo_col.data(), wo_out_host.data(), wo_weight_sample,
+                      &wo_weight_mae_col, &wo_weight_max_col);
+          wo_weight_layout =
+              (wo_weight_mae_row <= wo_weight_mae_col) ? "row" : "col";
+        } else {
+          wo_weight_layout = "error";
+        }
+      }
+
+      const char *wo_layout_env = std::getenv("GRETA_WO_LAYOUT_FORCE");
+      const char *wo_layout_used =
+          (wo_layout_env && *wo_layout_env) ? wo_layout_env : "auto";
+      std::ostringstream oss;
+      oss << "{\"event\":\"wo_verify\"";
+      if (stage_prompt_id && *stage_prompt_id)
+        oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
+      oss << ",\"phase\":\"" << stage_phase << "\""
+          << ",\"layer\":" << layer_idx
+          << ",\"head\":0"
+          << ",\"seq_len\":" << seq_len
+          << ",\"pos_id\":" << stage_pos_id
+          << ",\"token_index\":" << stage_token_index
+          << ",\"sample_n\":" << wo_weight_sample
+          << ",\"wo_layout_best\":\"" << wo_weight_layout << "\""
+          << ",\"wo_layout_used\":\"" << wo_layout_used << "\""
+          << ",\"wo_mae_row\":" << wo_weight_mae_row
+          << ",\"wo_mae_col\":" << wo_weight_mae_col
+          << ",\"wo_max_row\":" << wo_weight_max_row
+          << ",\"wo_max_col\":" << wo_weight_max_col
+          << ",\"wo_weight_dtype\":\"" << dtype_label(b.wo.data_type()) << "\""
+          << ",\"wo_weight_quant_mode\":\""
+          << dtype_label(b.wo.data_type()) << "\""
+          << ",\"wo_weight_stride_used\":" << D
+          << ",\"wo_weight_head_dim\":" << Dh
+          << ",\"wo_weight_kv_heads\":" << Hkv
+          << ",\"wo_w_ptr\":" << reinterpret_cast<uintptr_t>(b.wo.data())
+          << ",\"wo_w_bytes\":" << b.wo.size()
+          << "}";
+      append_line(out, oss.str());
+    }
   }
 
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
