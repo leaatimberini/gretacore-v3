@@ -8,6 +8,7 @@
 #include "gcore/rt/hip/kernels/fused_attention_kernels.hpp"
 #include "gcore/rt/hip/kernels/fused_compute_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -144,6 +145,13 @@ static const char *attn_trace_out_path() {
   return std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
 }
 
+static const char *attn_shadow_out_path() {
+  const char *out = std::getenv("GRETA_ATTN_DECODE_MFMA_SHADOW_OUT");
+  if (out && *out)
+    return out;
+  return attn_trace_out_path();
+}
+
 static bool trace_attn_decode_verify_enabled() {
   return env_flag("GRETA_TRACE_ATTN_DECODE_VERIFY");
 }
@@ -151,6 +159,53 @@ static bool trace_attn_decode_verify_enabled() {
 static bool attn_decode_ref_enabled() {
   return env_flag("GRETA_ATTN_DECODE_REF");
 }
+
+static bool attn_mfma_shadow_enabled() {
+  return env_flag("GRETA_ATTN_DECODE_MFMA_SHADOW");
+}
+
+static void mae_max_f32(const float *a, const float *b, size_t n, double *mae,
+                        float *max_diff) {
+  if (!mae || !max_diff)
+    return;
+  if (!a || !b || n == 0) {
+    *mae = 0.0;
+    *max_diff = 0.0f;
+    return;
+  }
+  double sum = 0.0;
+  float maxd = 0.0f;
+  for (size_t i = 0; i < n; ++i) {
+    float d = std::abs(a[i] - b[i]);
+    sum += static_cast<double>(d);
+    if (d > maxd)
+      maxd = d;
+  }
+  *mae = sum / static_cast<double>(n);
+  *max_diff = maxd;
+}
+
+struct EnvOverride {
+  std::string key;
+  std::string prev;
+  bool had_prev = false;
+  EnvOverride(const char *k, const char *v) : key(k) {
+    const char *p = std::getenv(k);
+    if (p) {
+      had_prev = true;
+      prev = p;
+    }
+    if (v)
+      setenv(k, v, 1);
+  }
+  ~EnvOverride() {
+    if (had_prev) {
+      setenv(key.c_str(), prev.c_str(), 1);
+    } else {
+      unsetenv(key.c_str());
+    }
+  }
+};
 
 static double mae_f32(const float *a, const float *b, size_t n) {
   if (n == 0)
@@ -983,7 +1038,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (use_fused_attn) {
     CHECK_HIP_KERNEL(launch_fused_rope_kv_update_decode(
                          hip_stream, q, k, v, cache_k, cache_v, d_pos,
-                         config_.max_seq_len, Hq, Dh, config_.rope_base),
+                         config_.max_seq_len, Hkv, Dh, config_.rope_base),
                      "Fused RoPE+KV Update");
     CHECK_HIP_KERNEL(
         launch_rope(hip_stream, q, S, Hq, Dh, config_.rope_base, d_pos),
@@ -1074,6 +1129,190 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     delete ev_kv_end;
     delete ev_core_start;
     delete ev_core_end;
+  }
+
+  if (attn_mfma_shadow_enabled() && seq_len == 1 && trace_step_ == 1 &&
+      attn_trace_layer_selected(layer_idx, config_.num_layers)) {
+    const char *out = attn_shadow_out_path();
+    if (out && *out) {
+      using Usage = gcore::rt::hip::BufferUsage;
+      const size_t q_bytes = D * sizeof(float);
+      const size_t kv_bytes = kv_dim * sizeof(float);
+      const size_t kv_layer_stride_elems =
+          static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
+      const size_t kv_layer_stride_bytes =
+          kv_layer_stride_elems * sizeof(float);
+      const size_t kv_layer_offset_elems =
+          static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
+      const float *k_cache_layer =
+          static_cast<const float *>(activations_.kv_cache_k.data()) +
+          kv_layer_offset_elems;
+      const float *v_cache_layer =
+          static_cast<const float *>(activations_.kv_cache_v.data()) +
+          kv_layer_offset_elems;
+
+      gcore::rt::hip::Buffer q_shadow;
+      gcore::rt::hip::Buffer k_shadow;
+      gcore::rt::hip::Buffer v_shadow;
+      gcore::rt::hip::Buffer attn_out_mfma;
+      gcore::rt::hip::Buffer attn_out_valu;
+      gcore::rt::hip::Buffer kv_shadow_k;
+      gcore::rt::hip::Buffer kv_shadow_v;
+
+      std::string shadow_err;
+      bool alloc_ok =
+          q_shadow.allocate(q_bytes, Usage::DeviceOnly,
+                            gcore::rt::GretaDataType::FP32, &shadow_err) &&
+          k_shadow.allocate(kv_bytes, Usage::DeviceOnly,
+                            gcore::rt::GretaDataType::FP32, &shadow_err) &&
+          v_shadow.allocate(kv_bytes, Usage::DeviceOnly,
+                            gcore::rt::GretaDataType::FP32, &shadow_err) &&
+          attn_out_mfma.allocate(q_bytes, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32,
+                                 &shadow_err) &&
+          attn_out_valu.allocate(q_bytes, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32,
+                                 &shadow_err) &&
+          kv_shadow_k.allocate(kv_layer_stride_bytes, Usage::DeviceOnly,
+                               gcore::rt::GretaDataType::FP32, &shadow_err) &&
+          kv_shadow_v.allocate(kv_layer_stride_bytes, Usage::DeviceOnly,
+                               gcore::rt::GretaDataType::FP32, &shadow_err);
+
+      if (!alloc_ok) {
+        std::cerr << "[ATTN_SHADOW] alloc failed: " << shadow_err << "\n";
+      } else {
+        auto run_route = [&](const char *route,
+                             gcore::rt::hip::Buffer &attn_out_buf,
+                             uint64_t &hash_out, F32Stats &stats_out) -> bool {
+          EnvOverride guard("GRETA_FORCE_ATTN_DECODE_MATMUL", route);
+
+          gcore::compute::GretaCompute::set_op_label("attn_q_decode");
+          if (gcore::compute::GretaCompute::gemm(
+                  stream_, &activations_.norm_out, &b.wq, &q_shadow, S, D, D) !=
+              gcore::compute::GretaResult::SUCCESS) {
+            gcore::compute::GretaCompute::set_op_label(nullptr);
+            return false;
+          }
+          gcore::compute::GretaCompute::set_op_label("attn_k_decode");
+          if (gcore::compute::GretaCompute::gemm(
+                  stream_, &activations_.norm_out, &b.wk, &k_shadow, S, kv_dim,
+                  D) != gcore::compute::GretaResult::SUCCESS) {
+            gcore::compute::GretaCompute::set_op_label(nullptr);
+            return false;
+          }
+          gcore::compute::GretaCompute::set_op_label("attn_v_decode");
+          if (gcore::compute::GretaCompute::gemm(
+                  stream_, &activations_.norm_out, &b.wv, &v_shadow, S, kv_dim,
+                  D) != gcore::compute::GretaResult::SUCCESS) {
+            gcore::compute::GretaCompute::set_op_label(nullptr);
+            return false;
+          }
+          gcore::compute::GretaCompute::set_op_label(nullptr);
+
+          if (use_fused_attn) {
+            CHECK_HIP_KERNEL(launch_fused_rope_kv_update_decode(
+                                 hip_stream,
+                                 static_cast<float *>(q_shadow.data()),
+                                 static_cast<float *>(k_shadow.data()),
+                                 static_cast<float *>(v_shadow.data()),
+                                 static_cast<float *>(kv_shadow_k.data()),
+                                 static_cast<float *>(kv_shadow_v.data()),
+                                 d_pos, config_.max_seq_len, Hkv, Dh,
+                                 config_.rope_base),
+                             "Fused RoPE+KV Update (Shadow)");
+            CHECK_HIP_KERNEL(
+                launch_rope(hip_stream,
+                            static_cast<float *>(q_shadow.data()), S, Hq, Dh,
+                            config_.rope_base, d_pos),
+                "RoPE Q (Shadow)");
+          } else {
+            CHECK_HIP_KERNEL(
+                launch_rope(hip_stream,
+                            static_cast<float *>(q_shadow.data()), S, Hq, Dh,
+                            config_.rope_base, d_pos),
+                "RoPE Q (Shadow)");
+            CHECK_HIP_KERNEL(
+                launch_rope(hip_stream,
+                            static_cast<float *>(k_shadow.data()), S, Hkv, Dh,
+                            config_.rope_base, d_pos),
+                "RoPE K (Shadow)");
+            CHECK_HIP_KERNEL(
+                launch_kv_update(hip_stream,
+                                  static_cast<float *>(kv_shadow_k.data()),
+                                  static_cast<float *>(kv_shadow_v.data()),
+                                  static_cast<float *>(k_shadow.data()),
+                                  static_cast<float *>(v_shadow.data()), d_pos,
+                                  config_.max_seq_len, Hkv, Dh),
+                "KV Update (Shadow)");
+          }
+
+          CHECK_GRETA(gcore::compute::GretaCompute::attention_decode(
+                          stream_, &q_shadow, &kv_shadow_k, &kv_shadow_v,
+                          &activations_.d_pos, &attn_out_buf, Hq, Hkv, Dh, S,
+                          config_.max_seq_len, scale, config_.rope_base),
+                      "Attention Core (Shadow)");
+
+          std::vector<float> host(D);
+          hipMemcpy(host.data(), attn_out_buf.data(), q_bytes,
+                    hipMemcpyDeviceToHost);
+          stats_out = stats_f32(host.data(), host.size());
+          hash_out = hash_f32(host.data(), host.size());
+          return true;
+        };
+
+        uint64_t hash_mfma = 0;
+        uint64_t hash_valu = 0;
+        F32Stats stats_mfma{};
+        F32Stats stats_valu{};
+        bool ok_mfma = false;
+        bool ok_valu = false;
+
+        if (hipMemcpy(kv_shadow_k.data(), k_cache_layer, kv_layer_stride_bytes,
+                      hipMemcpyDeviceToDevice) == hipSuccess &&
+            hipMemcpy(kv_shadow_v.data(), v_cache_layer, kv_layer_stride_bytes,
+                      hipMemcpyDeviceToDevice) == hipSuccess) {
+          ok_mfma = run_route("mfma", attn_out_mfma, hash_mfma, stats_mfma);
+        }
+
+        if (hipMemcpy(kv_shadow_k.data(), k_cache_layer, kv_layer_stride_bytes,
+                      hipMemcpyDeviceToDevice) == hipSuccess &&
+            hipMemcpy(kv_shadow_v.data(), v_cache_layer, kv_layer_stride_bytes,
+                      hipMemcpyDeviceToDevice) == hipSuccess) {
+          ok_valu = run_route("valu", attn_out_valu, hash_valu, stats_valu);
+        }
+
+        std::vector<float> mfma_host;
+        std::vector<float> valu_host;
+        double mae = 0.0;
+        float max_diff = 0.0f;
+        if (ok_mfma && ok_valu) {
+          mfma_host.resize(D);
+          valu_host.resize(D);
+          hipMemcpy(mfma_host.data(), attn_out_mfma.data(), q_bytes,
+                    hipMemcpyDeviceToHost);
+          hipMemcpy(valu_host.data(), attn_out_valu.data(), q_bytes,
+                    hipMemcpyDeviceToHost);
+          mae_max_f32(mfma_host.data(), valu_host.data(), mfma_host.size(),
+                      &mae, &max_diff);
+        }
+
+        std::ofstream ofs(out, std::ios::app);
+        if (ofs) {
+          ofs << "{\"phase\":\"decode0_shadow\",\"step\":" << trace_step_
+              << ",\"layer\":" << layer_idx << ",\"mfma_ok\":"
+              << (ok_mfma ? "true" : "false") << ",\"valu_ok\":"
+              << (ok_valu ? "true" : "false")
+              << ",\"attn_out_mfma_hash\":" << hash_mfma
+              << ",\"attn_out_valu_hash\":" << hash_valu
+              << ",\"attn_out_mae\":" << mae
+              << ",\"attn_out_max_diff\":" << max_diff
+              << ",\"head_dim\":" << Dh << ",\"kv_heads\":" << Hkv
+              << ",\"seq_len\":" << (seq_start + 1)
+              << ",\"use_fused_attn\":" << (use_fused_attn ? "true" : "false")
+              << "}\n";
+        }
+      }
+    }
   }
 
   if (trace_layer) {

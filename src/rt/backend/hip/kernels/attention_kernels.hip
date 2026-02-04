@@ -1,5 +1,26 @@
 #include "gcore/rt/hip/kernels/attention_kernels.hpp"
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+static inline bool attn_align_trace_enabled() {
+  const char *v = std::getenv("GRETA_TRACE_ATTN_ALIGN");
+  if (v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y'))
+    return true;
+  const char *v2 = std::getenv("GRETA_TRACE_ATTN_DECODE_VERIFY");
+  return v2 && (v2[0] == '1' || v2[0] == 'y' || v2[0] == 'Y');
+}
+
+static inline void attn_log_align(const char *tag, const void *ptr,
+                                  size_t align) {
+  if (!ptr)
+    return;
+  if (reinterpret_cast<uintptr_t>(ptr) % align != 0) {
+    std::fprintf(stderr,
+                 "[ATTN_ALIGN] %s ptr=%p not %zub aligned\n", tag, ptr,
+                 align);
+  }
+}
 
 namespace gcore::rt::hip::kernels {
 
@@ -267,6 +288,24 @@ void launch_flash_attention_decode(hipStream_t stream,
                                    uint32_t num_heads_kv, uint32_t seq_len,
                                    uint32_t max_seq_len, uint32_t head_dim,
                                    float scale) {
+  if (head_dim > FLASH_HEAD_DIM) {
+    if (attn_align_trace_enabled()) {
+      std::fprintf(stderr,
+                   "[ATTN_DECODE] head_dim=%u exceeds FLASH_HEAD_DIM=%u\n",
+                   head_dim, FLASH_HEAD_DIM);
+    }
+    return;
+  }
+  if (attn_align_trace_enabled()) {
+    attn_log_align("Q", Q, 16);
+    attn_log_align("K", K, 16);
+    attn_log_align("V", V, 16);
+    attn_log_align("O", O, 16);
+    attn_log_align("Q", Q, 32);
+    attn_log_align("K", K, 32);
+    attn_log_align("V", V, 32);
+    attn_log_align("O", O, 32);
+  }
   dim3 grid(num_heads);
   dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
   flash_attention_decode_kernel<<<grid, block, 0, stream>>>(
@@ -281,6 +320,24 @@ void launch_flash_attention_decode(hipStream_t stream,
                                    const uint32_t *d_pos,
                                    uint32_t max_seq_len, uint32_t head_dim,
                                    float scale) {
+  if (head_dim > FLASH_HEAD_DIM) {
+    if (attn_align_trace_enabled()) {
+      std::fprintf(stderr,
+                   "[ATTN_DECODE] head_dim=%u exceeds FLASH_HEAD_DIM=%u\n",
+                   head_dim, FLASH_HEAD_DIM);
+    }
+    return;
+  }
+  if (attn_align_trace_enabled()) {
+    attn_log_align("Q", Q, 16);
+    attn_log_align("K", K, 16);
+    attn_log_align("V", V, 16);
+    attn_log_align("O", O, 16);
+    attn_log_align("Q", Q, 32);
+    attn_log_align("K", K, 32);
+    attn_log_align("V", V, 32);
+    attn_log_align("O", O, 32);
+  }
   dim3 grid(num_heads);
   dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
   flash_attention_decode_kernel_p<<<grid, block, 0, stream>>>(

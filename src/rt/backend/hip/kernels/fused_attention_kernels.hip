@@ -1,7 +1,27 @@
 #include "gcore/rt/hip/kernels/fused_attention_kernels.hpp"
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+static inline bool attn_align_trace_enabled() {
+    const char *v = std::getenv("GRETA_TRACE_ATTN_ALIGN");
+    if (v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y'))
+        return true;
+    const char *v2 = std::getenv("GRETA_TRACE_ATTN_DECODE_VERIFY");
+    return v2 && (v2[0] == '1' || v2[0] == 'y' || v2[0] == 'Y');
+}
+
+static inline void attn_log_align(const char *tag, const void *ptr, size_t align) {
+    if (!ptr) return;
+    if (reinterpret_cast<uintptr_t>(ptr) % align != 0) {
+        std::fprintf(stderr, "[ATTN_ALIGN] %s ptr=%p not %zub aligned\n", tag, ptr, align);
+    }
+}
 
 namespace gcore::rt::hip::kernels {
+
+#define FLASH_BLOCK_SIZE 64
+#define FLASH_HEAD_DIM 128
 
 __device__ void apply_rope_single(float& v0, float& v1, int pair_idx, int head_dim, int pos, float base) {
     float theta = (float)pos * powf(base, -2.0f * (float)pair_idx / (float)head_dim);
@@ -64,14 +84,28 @@ void launch_fused_rope_kv_update_decode(hipStream_t stream,
                                        float* cache_k, float* cache_v,
                                        const uint32_t* d_pos, uint32_t max_seq_len,
                                        uint32_t num_heads, uint32_t head_dim, float rope_base) {
+    if (attn_align_trace_enabled()) {
+        attn_log_align("Q", q, 16);
+        attn_log_align("K", k, 16);
+        attn_log_align("V", v, 16);
+        attn_log_align("K_cache", cache_k, 16);
+        attn_log_align("V_cache", cache_v, 16);
+        attn_log_align("Q", q, 32);
+        attn_log_align("K", k, 32);
+        attn_log_align("V", v, 32);
+        attn_log_align("K_cache", cache_k, 32);
+        attn_log_align("V_cache", cache_v, 32);
+        if (head_dim > FLASH_HEAD_DIM) {
+            std::fprintf(stderr,
+                         "[ATTN_DECODE] head_dim=%u exceeds FLASH_HEAD_DIM=%u\n",
+                         head_dim, FLASH_HEAD_DIM);
+        }
+    }
     dim3 grid(num_heads);
     dim3 block(head_dim);
     fused_rope_kv_update_decode_kernel_p<<<grid, block, 0, stream>>>(
         q, k, v, cache_k, cache_v, d_pos, max_seq_len, num_heads, head_dim, rope_base);
 }
-
-#define FLASH_BLOCK_SIZE 64
-#define FLASH_HEAD_DIM 128
 
 __device__ void flash_attention_decode_fused_rope_logic(
     const float *__restrict__ Q,      // non-rope
@@ -185,6 +219,24 @@ void launch_flash_attention_decode_fused_rope(hipStream_t stream,
                                               float *O, uint32_t num_heads, const uint32_t *d_pos,
                                               uint32_t max_seq_len, uint32_t head_dim, float scale,
                                               float rope_base) {
+    if (head_dim > FLASH_HEAD_DIM) {
+        if (attn_align_trace_enabled()) {
+            std::fprintf(stderr,
+                         "[ATTN_DECODE] head_dim=%u exceeds FLASH_HEAD_DIM=%u\n",
+                         head_dim, FLASH_HEAD_DIM);
+        }
+        return;
+    }
+    if (attn_align_trace_enabled()) {
+        attn_log_align("Q", Q, 16);
+        attn_log_align("K", K, 16);
+        attn_log_align("V", V, 16);
+        attn_log_align("O", O, 16);
+        attn_log_align("Q", Q, 32);
+        attn_log_align("K", K, 32);
+        attn_log_align("V", V, 32);
+        attn_log_align("O", O, 32);
+    }
     dim3 grid(num_heads);
     dim3 block(max(FLASH_BLOCK_SIZE, (int)head_dim));
     flash_attention_decode_fused_rope_kernel_p<<<grid, block, 0, stream>>>(
