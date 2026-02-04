@@ -622,6 +622,17 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
+static bool trace_post_wo_enabled() {
+  return env_flag("GRETA_TRACE_POST_WO");
+}
+
+static const char *post_wo_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_POST_WO_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
 static bool validate_trace_shapes(const ModelConfig &config, std::string *err) {
   auto fail = [&](const std::string &msg) {
     if (err)
@@ -918,6 +929,34 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
                          static_cast<uint32_t>(seq_len),
                          static_cast<uint32_t>(tokens_total), stage_stats);
     }
+    if (trace_post_wo_enabled()) {
+      const char *out = post_wo_out_path();
+      if (out && *out) {
+        std::ostringstream oss;
+        oss << "{\"event\":\"post_wo_logits\"";
+        if (stage_prompt_id && *stage_prompt_id)
+          oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
+        oss << ",\"phase\":\"prefill_last\""
+            << ",\"pos_id\":" << pos_id
+            << ",\"seq_len\":" << seq_len
+            << ",\"tokens_total\":" << tokens_total
+            << ",\"token_index\":" << token_index
+            << ",\"logits_hash\":" << lhash
+            << ",\"logits_min\":" << lstats.min
+            << ",\"logits_max\":" << lstats.max
+            << ",\"logits_mean\":" << lstats.mean
+            << ",\"top1_id\":" << top2.top1_id
+            << ",\"top1_logit\":" << top2.top1_logit
+            << ",\"top2_id\":" << top2.top2_id
+            << ",\"top2_logit\":" << top2.top2_logit
+            << ",\"gap\":" << gap
+            << ",\"logits_ptr\":" << logits_ptr
+            << ",\"logits_offset_bytes\":" << last_token_offset
+            << ",\"vocab\":" << config_.vocab_size
+            << "}";
+        append_line(out, oss.str());
+      }
+    }
 
     const bool readout_is_single_token = false;
     const bool readout_mismatch =
@@ -1195,6 +1234,34 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
                              static_cast<uint32_t>(pos_id),
                              static_cast<uint32_t>(seq_len),
                              static_cast<uint32_t>(tokens_total), stage_stats);
+        }
+        if (trace_post_wo_enabled() && i == 1) {
+          const char *out = post_wo_out_path();
+          if (out && *out) {
+            std::ostringstream oss;
+            oss << "{\"event\":\"post_wo_logits\"";
+            if (stage_prompt_id && *stage_prompt_id)
+              oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
+            oss << ",\"phase\":\"decode0\""
+                << ",\"pos_id\":" << pos_id
+                << ",\"seq_len\":" << seq_len
+                << ",\"tokens_total\":" << tokens_total
+                << ",\"token_index\":" << hidden_token_index_used
+                << ",\"logits_hash\":" << lhash
+                << ",\"logits_min\":" << lstats.min
+                << ",\"logits_max\":" << lstats.max
+                << ",\"logits_mean\":" << lstats.mean
+                << ",\"top1_id\":" << top2.top1_id
+                << ",\"top1_logit\":" << top2.top1_logit
+                << ",\"top2_id\":" << top2.top2_id
+                << ",\"top2_logit\":" << top2.top2_logit
+                << ",\"gap\":" << gap
+                << ",\"logits_ptr\":" << logits_ptr
+                << ",\"logits_offset_bytes\":" << decode_logits_offset
+                << ",\"vocab\":" << config_.vocab_size
+                << "}";
+            append_line(out, oss.str());
+          }
         }
 
         const bool readout_is_single_token = true;

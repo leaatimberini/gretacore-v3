@@ -244,6 +244,112 @@ static bool trace_wo_w_verify_enabled() {
   return env_flag("GRETA_TRACE_WO_W_VERIFY");
 }
 
+static bool trace_post_wo_enabled() {
+  return env_flag("GRETA_TRACE_POST_WO");
+}
+
+static const char *post_wo_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_POST_WO_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
+static uint32_t post_wo_sample() {
+  const char *v = std::getenv("GRETA_TRACE_POST_WO_SAMPLE");
+  if (!v || !*v)
+    return 1024;
+  char *e = nullptr;
+  long val = std::strtol(v, &e, 10);
+  if (e == v || val <= 0)
+    return 1024;
+  return static_cast<uint32_t>(val);
+}
+
+static bool post_wo_trace_all_layers() {
+  static bool cached = false;
+  static bool trace_all = false;
+  if (!cached) {
+    const char *v = std::getenv("GRETA_TRACE_POST_WO_LAYERS");
+    if (v && *v) {
+      std::string s(v);
+      if (s == "all" || s == "ALL" || s == "*")
+        trace_all = true;
+    }
+    cached = true;
+  }
+  return trace_all;
+}
+
+static std::vector<int> post_wo_layers() {
+  static bool cached = false;
+  static std::vector<int> layers;
+  if (!cached) {
+    const char *v = std::getenv("GRETA_TRACE_POST_WO_LAYERS");
+    if (!v || !*v) {
+      layers.push_back(0);
+    } else {
+      std::string s(v);
+      size_t start = 0;
+      while (start < s.size()) {
+        size_t end = s.find(',', start);
+        std::string token =
+            s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                       : end - start);
+        if (!token.empty()) {
+          char *e = nullptr;
+          long val = std::strtol(token.c_str(), &e, 10);
+          if (e != token.c_str())
+            layers.push_back(static_cast<int>(val));
+        }
+        if (end == std::string::npos)
+          break;
+        start = end + 1;
+      }
+      if (layers.empty() && !post_wo_trace_all_layers()) {
+        layers.push_back(0);
+      }
+    }
+    cached = true;
+  }
+  return layers;
+}
+
+static bool post_wo_layer_selected(size_t layer_idx, size_t num_layers) {
+  if (post_wo_trace_all_layers())
+    return true;
+  const auto layers = post_wo_layers();
+  if (layers.empty())
+    return true;
+  for (int layer : layers) {
+    if (layer < 0 && static_cast<size_t>(-layer) == num_layers)
+      return true;
+    if (static_cast<size_t>(layer) == layer_idx)
+      return true;
+  }
+  return false;
+}
+
+static bool post_wo_phase_enabled(const char *phase) {
+  const char *v = std::getenv("GRETA_TRACE_POST_WO_PHASES");
+  if (!v || !*v)
+    return true;
+  std::string s(v);
+  size_t start = 0;
+  while (start < s.size()) {
+    size_t end = s.find(',', start);
+    std::string token =
+        s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                   : end - start);
+    if (!token.empty() && token == phase)
+      return true;
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  return false;
+}
+
 static const char *attn_l0_pipe_out_path() {
   const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
   if (out && *out)
@@ -792,6 +898,70 @@ static void append_line(const char *path, const std::string &line) {
   f << line << "\n";
 }
 
+static void post_wo_trace_tensor(const char *point, const char *phase,
+                                 const char *prompt_id, size_t layer,
+                                 uint32_t step, uint32_t pos_id,
+                                 uint32_t seq_len, uint32_t tokens_total,
+                                 const float *base, size_t stride_elems,
+                                 size_t token_index, size_t alloc_bytes,
+                                 hipStream_t stream) {
+  if (!trace_post_wo_enabled())
+    return;
+  const char *out = post_wo_out_path();
+  if (!out || !*out || !point || !phase)
+    return;
+  if (!post_wo_phase_enabled(phase))
+    return;
+  if (!base || stride_elems == 0)
+    return;
+
+  const size_t offset_elems = token_index * stride_elems;
+  const float *ptr = base + offset_elems;
+  const uint32_t sample_n =
+      std::min<uint32_t>(post_wo_sample(),
+                         static_cast<uint32_t>(stride_elems));
+  std::vector<float> host(sample_n, 0.0f);
+  if (sample_n > 0) {
+    hipMemcpyAsync(host.data(), ptr, sample_n * sizeof(float),
+                   hipMemcpyDeviceToHost, stream);
+    hipStreamSynchronize(stream);
+  }
+  const F32Stats stats = stats_f32(host.data(), host.size());
+  const uint64_t hash = hash_f32(host.data(), host.size());
+
+  std::ostringstream oss;
+  oss << "{\"event\":\"post_wo_trace\"";
+  if (prompt_id && *prompt_id)
+    oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+  oss << ",\"phase\":\"" << phase << "\""
+      << ",\"point\":\"" << point << "\""
+      << ",\"layer\":" << layer
+      << ",\"step\":" << step
+      << ",\"pos_id\":" << pos_id
+      << ",\"seq_len\":" << seq_len
+      << ",\"tokens_total\":" << tokens_total
+      << ",\"token_index\":" << token_index
+      << ",\"ptr\":" << reinterpret_cast<uintptr_t>(ptr)
+      << ",\"base_ptr\":" << reinterpret_cast<uintptr_t>(base)
+      << ",\"offset_bytes\":" << (offset_elems * sizeof(float))
+      << ",\"alloc_bytes\":" << alloc_bytes
+      << ",\"sample_n\":" << sample_n
+      << ",\"hash\":" << hash
+      << ",\"min\":" << stats.min
+      << ",\"max\":" << stats.max
+      << ",\"mean\":" << stats.mean
+      << ",\"nan\":" << stats.nan
+      << ",\"inf\":" << stats.inf
+      << ",\"sample\":[";
+  for (size_t i = 0; i < host.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << host[i];
+  }
+  oss << "]}";
+  append_line(out, oss.str());
+}
+
 static const char *layer_delta_out_path() {
   const char *out = std::getenv("GRETA_TRACE_LAYER_DELTA_OUT");
   if (out && *out)
@@ -1320,6 +1490,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       stage_enabled && stage_phase &&
       stage_trace_layer_selected(layer_idx, config_.num_layers) &&
       stage_trace_phase_enabled(stage_phase);
+  const bool post_wo_layer =
+      trace_post_wo_enabled() && stage_phase &&
+      post_wo_layer_selected(layer_idx, config_.num_layers) &&
+      post_wo_phase_enabled(stage_phase) && post_wo_out_path();
   const uint32_t stage_tokens_total =
       static_cast<uint32_t>(seq_start + seq_len);
   const uint32_t stage_token_index =
@@ -1355,6 +1529,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total, x,
                        D, stage_token_index, hip_stream, &input_meta);
+  }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                         D, stage_token_index, activations_.x.size(),
+                         hip_stream);
   }
   if (trace_layer) {
     layer_tracer_.trace_tensor("x", trace_step_, static_cast<int>(layer_idx),
@@ -2420,6 +2601,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(seq_len), stage_tokens_total,
                        attn_out, D, stage_token_index, hip_stream);
   }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("attn_out", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total,
+                         attn_out, D, stage_token_index,
+                         activations_.attn_out.size(), hip_stream);
+  }
 
   gcore::compute::GretaCompute::set_op_label(
       is_decode_step ? "attn_o_decode" : "attn_o_prefill");
@@ -2434,6 +2622,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total,
                        mlp_out, D, stage_token_index, hip_stream);
+  }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("wo_out", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total,
+                         mlp_out, D, stage_token_index,
+                         activations_.mlp_out.size(), hip_stream);
   }
 
   if (stage_layer && trace_wo_w_verify_enabled()) {
@@ -2555,6 +2750,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(seq_len), stage_tokens_total, x,
                        D, stage_token_index, hip_stream);
   }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("x_after_attn", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                         D, stage_token_index, activations_.x.size(),
+                         hip_stream);
+  }
 
   CHECK_HIP_KERNEL(
       launch_rmsnorm_naive(hip_stream, x,
@@ -2567,6 +2769,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total,
                        norm_out, D, stage_token_index, hip_stream);
+  }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("ffn_norm", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total,
+                         norm_out, D, stage_token_index,
+                         activations_.norm_out.size(), hip_stream);
   }
 
   if (trace_layer) {
@@ -2648,6 +2857,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(seq_len), stage_tokens_total,
                        mlp_out, D, stage_token_index, hip_stream);
   }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("mlp_out", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total,
+                         mlp_out, D, stage_token_index,
+                         activations_.mlp_out.size(), hip_stream);
+  }
 
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (FFN)");
@@ -2663,6 +2879,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                          static_cast<uint32_t>(seq_len), stage_tokens_total, x,
                          D, stage_token_index, hip_stream);
     }
+  }
+  if (post_wo_layer) {
+    post_wo_trace_tensor("x_after_mlp", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                         D, stage_token_index, activations_.x.size(),
+                         hip_stream);
+    post_wo_trace_tensor("x_out", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                         D, stage_token_index, activations_.x.size(),
+                         hip_stream);
   }
 
   if (PROFILE_ON()) {
@@ -3851,6 +4079,33 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                            stage_pos_id, static_cast<uint32_t>(seq_len),
                            stage_tokens_total, norm_out, stride_elems,
                            stage_token_index, hip_stream);
+      }
+    }
+
+    if (trace_post_wo_enabled() && post_wo_out_path() && stage_phase &&
+        post_wo_phase_enabled(stage_phase)) {
+      const uint32_t stage_tokens_total =
+          static_cast<uint32_t>(seq_start + seq_len);
+      const uint32_t stage_token_index =
+          seq_len > 0 ? static_cast<uint32_t>(seq_len - 1) : 0;
+      const uint32_t stage_pos_id =
+          static_cast<uint32_t>(seq_start + stage_token_index);
+      const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+      const size_t stride_elems = D;
+      const size_t final_layer = config_.num_layers;
+      if (post_wo_layer_selected(final_layer, config_.num_layers)) {
+        post_wo_trace_tensor("final_rms", stage_phase, stage_prompt_id,
+                             final_layer, static_cast<uint32_t>(trace_step_),
+                             stage_pos_id, static_cast<uint32_t>(seq_len),
+                             stage_tokens_total, norm_out, stride_elems,
+                             stage_token_index, activations_.norm_out.size(),
+                             hip_stream);
+        post_wo_trace_tensor("lm_head_in", stage_phase, stage_prompt_id,
+                             final_layer, static_cast<uint32_t>(trace_step_),
+                             stage_pos_id, static_cast<uint32_t>(seq_len),
+                             stage_tokens_total, norm_out, stride_elems,
+                             stage_token_index, activations_.norm_out.size(),
+                             hip_stream);
       }
     }
 
