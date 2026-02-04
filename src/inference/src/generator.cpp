@@ -872,7 +872,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     return output;
   }
 
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_stage) {
+  if (trace_readout || trace_prefill_decode || trace_delta ||
+      trace_lmhead_w_verify || trace_stage || trace_post_wo) {
     const size_t tokens_total = prompt_tokens.size();
     const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
     const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
