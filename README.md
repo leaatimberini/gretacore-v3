@@ -140,6 +140,15 @@ export GRETA_TRACE_PROMPT_ID=p4_sys
 
 Note: `GRETA_TRACE_STAGE_DEBUG_INPUT=1` adds input semantics fields and enables a decode0 input override used for isolation runs (B3.28).
 
+## Debug Tracing (Layer0 Attention Pipeline)
+
+```bash
+export GRETA_TRACE_ATTN_L0_PIPE=1
+export GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_30_attn_l0_pipe.jsonl
+# Recommended when comparing prefill_last vs decode0 for the same token/pos
+export GRETA_TRACE_STAGE_DEBUG_INPUT=1
+```
+
 ---
 
 ## Author

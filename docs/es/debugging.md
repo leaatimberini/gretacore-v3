@@ -38,6 +38,10 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Tamaño de ventana alrededor de la posición actual.
 - `GRETA_TRACE_ATTN_OUT=/root/gretacore/artifacts/alignment/.../b3_23_attn_softmax.jsonl`  
   Path de salida JSONL para aislamiento de softmax.
+- `GRETA_TRACE_ATTN_L0_PIPE=1`  
+  Traza la tubería de atención en layer0 (Q/K/V/QK/softmax/P·V/attn_out) para `prefill_last` vs `decode0`.
+- `GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/.../b3_30_attn_l0_pipe.jsonl`  
+  Path de salida JSONL para la traza de layer0.
 - `GRETA_TRACE_PROMPT_ID=p4_sys`  
   Etiqueta opcional del prompt para trazas.
 - `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  

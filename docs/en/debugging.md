@@ -38,6 +38,10 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Window size on each side of the current position for softmax isolation.
 - `GRETA_TRACE_ATTN_OUT=/root/gretacore/artifacts/alignment/.../b3_23_attn_softmax.jsonl`  
   JSONL output path for softmax isolation traces.
+- `GRETA_TRACE_ATTN_L0_PIPE=1`  
+  Traces the layer0 attention pipeline (Q/K/V/QK/softmax/P·V/attn_out) for `prefill_last` vs `decode0`.
+- `GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/.../b3_30_attn_l0_pipe.jsonl`  
+  JSONL output path for layer0 attention pipeline trace.
 - `GRETA_TRACE_PROMPT_ID=p4_sys`  
   Optional prompt label for trace attribution.
 - `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
