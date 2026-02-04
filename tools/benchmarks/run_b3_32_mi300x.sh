@@ -38,7 +38,7 @@ OUTDIR=/root/gretacore/artifacts/alignment/2026-02-03
 mkdir -p "$OUTDIR"
 
 export GRETA_INT4_WEIGHTS=1
-export GRETA_MAX_SEQ_LEN=1024
+export GRETA_MAX_SEQ_LEN=256
 export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_NORM=1
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
@@ -49,17 +49,26 @@ BIN=/root/gretacore/tools/inference/build/greta_infer
 run_one () {
   local prompt_id="$1"
   local prompt_file="$2"
+  local rc=0
   export GRETA_TRACE_PROMPT_ID="$prompt_id"
   export GRETA_TRACE_ATTN_L0_PIPE_OUT="$OUTDIR/b3_32_attn_l0_pipe_${prompt_id}.jsonl"
   rm -f "$OUTDIR/b3_32_attn_l0_pipe_${prompt_id}.jsonl"
+  set +e
   $BIN --model "$MODEL" --prompt-file "$prompt_file" --max-tokens 2 --greedy \
     2>&1 | tee "$OUTDIR/b3_32_${prompt_id}.log"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "RUN_FAILED ${prompt_id} rc=${rc}" >&2
+    return $rc
+  fi
 }
 
-run_one p0_short /root/gretacore/tools/benchmarks/prompts/p0_short_hi.txt
-run_one p4_sys   /root/gretacore/tools/benchmarks/prompts/p4_sys.txt
-run_one p5_ba    /root/gretacore/tools/benchmarks/prompts/p5_ba.txt
-run_one p6_long  /root/gretacore/tools/benchmarks/prompts/p6_long.txt
+fail=0
+run_one p0_short /root/gretacore/tools/benchmarks/prompts/p0_short_hi.txt || fail=1
+run_one p4_sys   /root/gretacore/tools/benchmarks/prompts/p4_sys.txt || fail=1
+run_one p5_ba    /root/gretacore/tools/benchmarks/prompts/p5_ba.txt || fail=1
+run_one p6_long  /root/gretacore/tools/benchmarks/prompts/p6_long.txt || fail=1
 
 unset GRETA_TRACE_PROMPT_ID
 
@@ -70,6 +79,8 @@ tar -czf /root/gretacore_b3_32_artifacts.tgz \
   $OUTDIR/b3_32_attn_l0_pipe_*.jsonl
 
 ls -lh /root/gretacore_b3_32_artifacts.tgz
+
+exit $fail
 EOF_REMOTE
 
 mkdir -p "$OUTDIR_LOCAL"

@@ -53,8 +53,18 @@ def main():
 
     base = Path(args.dir)
     files = sorted(base.glob("b3_32_attn_l0_pipe_*.jsonl"))
+    expected = {"p0_short", "p4_sys", "p5_ba", "p6_long"}
+    found = set()
+    for f in files:
+        name = f.name
+        if "b3_32_attn_l0_pipe_" in name:
+            prompt = name.split("b3_32_attn_l0_pipe_")[1].split(".jsonl")[0]
+            found.add(prompt)
+    missing = sorted(expected - found)
     if not files:
         print(f"No JSONL files found under {base}")
+        if missing:
+            print(f"MISSING_PROMPTS: {', '.join(missing)}")
         return
 
     lines = []
@@ -79,6 +89,9 @@ def main():
         lines.append(
             f"{prompt}\t{(norm_out_mae if norm_out_mae is not None else 'NA')}\t{(q_mae if q_mae is not None else 'NA')}\t{first}"
         )
+
+    if missing:
+        lines.append(f"MISSING_PROMPTS\t{', '.join(missing)}")
 
     output = "\n".join(lines)
     print(output)
