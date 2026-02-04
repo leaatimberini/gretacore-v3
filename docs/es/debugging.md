@@ -60,7 +60,7 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Path de salida JSONL para StageTrace.
 - `GRETA_TRACE_STAGE_LAYERS="0,1,2,15,31"`  
   Selecciona capas para StageTrace.
-- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,x_after_attn,mlp_out,x_after_mlp,final_norm,lm_head_in,logits"`  
+- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,x_after_attn,mlp_out,x_out,x_after_mlp,final_rms,lm_head_in,logits"`  
   Selecciona tensores para StageTrace.
 - `GRETA_TRACE_STAGE_PHASES="prefill_last,decode0"`  
   Selecciona fases para StageTrace.
