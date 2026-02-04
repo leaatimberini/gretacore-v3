@@ -147,6 +147,8 @@ export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_30_attn_l0_pipe.jsonl
 # Include attention norm input/output (B3.32)
 export GRETA_TRACE_ATTN_L0_NORM=1
+# Verify QKV weight layout/packing for layer0 (B3.33)
+export GRETA_TRACE_QKV_W_VERIFY=1
 # Recommended when comparing prefill_last vs decode0 for the same token/pos
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
 ```

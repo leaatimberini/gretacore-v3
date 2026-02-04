@@ -44,6 +44,8 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   JSONL output path for layer0 attention pipeline trace.
 - `GRETA_TRACE_ATTN_L0_NORM=1`  
   Adds `attn_norm_in` and `attn_norm_out` (RMSNorm input/output) to the layer0 trace.
+- `GRETA_TRACE_QKV_W_VERIFY=1`  
+  Verifies QKV weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Forces Q/K/V projection route in **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  
