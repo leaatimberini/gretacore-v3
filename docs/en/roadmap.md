@@ -28,7 +28,8 @@ It is optimized for correctness, performance, and sustainability.
 - B3.17–B3.18: decode traces (LM head force route, hidden equivalence, layer delta).
 - B3.19: `seq_len = pos + 1` fix in attention decode did not remove collapse.
 - B3.20: attention decode isolation (attn verify/ref, KV invariants, route matrix). KV invariants OK; attn_out diverges from ref at layer 31; `fused+mfma` fails at load.
-- B3.21: attention decode kernel audit (precision/accumulation) + `fused+mfma` stabilization.
+- B3.21: `fused+mfma` stabilized (Hkv fix + alignment guard rails). MFMA==VALU at decode0, but ref divergence at layer 31 and decode0 collapse persist.
+- B3.22: focus on high-layer attention precision/accumulation or reference mismatch.
 - MI300X validation ongoing; evidence under `docs/AMD/`.
 
 ## Phase 0 – Foundations

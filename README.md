@@ -58,7 +58,8 @@ performance-driven compute stack.
 - B3.17–B3.18: Decode LM head isolation, hidden equivalence, and per-layer delta traces for decode.
 - B3.19: Decode attention `seq_len = pos + 1` fix attempted; decode0 collapse persists.
 - B3.20: Attention decode isolation (attn verify/ref, KV invariants, forced kernel/matmul matrix). KV invariants OK; attn_out diverges from ref in layer 31; fused+mfma fails at load.
-- Next: B3.21 attention decode kernel audit (precision/accumulation) and fused+mfma path stabilization.
+- B3.21: Fused+MFMA decode stabilized (Hkv fix + alignment guards). MFMA==VALU under shadow compare, but attn_out vs ref still diverges at layer 31 and decode0 collapse persists.
+- Next: B3.22 focus on high-layer attention precision/reference mismatch and decode state coherence.
 - MI300X validation ongoing; AMD reports under `docs/AMD/`.
 
 **Phase 1 – Runtime Core (completed)**
@@ -97,7 +98,7 @@ performance-driven compute stack.
 - Framework version matrix: `docs/en/strategy/framework_versions.md`
 - Framework prototypes: `tools/compat/README.md`
 
-## Reproduce B3.20 (MI300X)
+## Reproduce B3.21 (MI300X)
 
 ```bash
 export GRETA_TRACE_ATTN_DECODE_VERIFY=1
@@ -105,10 +106,12 @@ export GRETA_TRACE_KV_INVARIANTS=1
 export GRETA_TRACE_ATTN_LAYERS="0,1,2,31"
 export GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"
 export GRETA_ATTN_DECODE_REF=1
+export GRETA_ATTN_DECODE_MFMA_SHADOW=1
+export GRETA_ATTN_DECODE_MFMA_SHADOW_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_21_attn_mfma_vs_valu.jsonl
 
 # Optional matrix controls
-export GRETA_FORCE_ATTN_DECODE_KERNEL=auto   # auto|manual|fused
-export GRETA_FORCE_ATTN_DECODE_MATMUL=auto   # auto|valu|mfma
+export GRETA_FORCE_ATTN_DECODE_KERNEL=fused  # auto|manual|fused
+export GRETA_FORCE_ATTN_DECODE_MATMUL=mfma   # auto|valu|mfma
 ```
 
 ---

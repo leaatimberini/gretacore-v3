@@ -26,6 +26,7 @@ hardware AMD.
 - Se aisló el LM head (rutas MFMA/VALU) y se agregó instrumentación de decode.
 - El colapso en decode persiste; la investigación se centra en atención/KV y estado.
 - B3.20 introduce verificación de attention decode con referencia y trazas de invariantes KV. Resultado: `attn_out` diverge del ref en layer 31 mientras KV invariants se mantiene; `fused+mfma` falla en load.
+- B3.21 estabiliza `fused+mfma` (fix de Hkv + guard rails de alignment). MFMA==VALU en decode0, pero persiste divergencia vs ref en layer 31 y el colapso decode0.
 - Validación MI300X en curso con evidencia en `docs/AMD/`.
 
 ---

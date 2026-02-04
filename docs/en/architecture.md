@@ -25,6 +25,7 @@ LLM workloads on AMD hardware.
 - LM head routing was isolated (MFMA/VALU) and decode instrumentation added.
 - Decode collapse persists; investigation focuses on attention/KV and state.
 - B3.20 introduces attention decode verification with reference and KV invariant traces. Results show attn_out diverges from the ref at layer 31 while KV invariants hold; fused+mfma fails at load.
+- B3.21 stabilizes `fused+mfma` (Hkv fix + alignment guard rails). MFMA==VALU at decode0, but ref divergence at layer 31 and decode0 collapse persist.
 - MI300X validation is ongoing with evidence in `docs/AMD/`.
 
 ---
