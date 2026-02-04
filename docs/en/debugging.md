@@ -47,6 +47,11 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
 - `GRETA_TRACE_QKV_W_VERIFY=1`  
   Verifies QKV weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_TRACE_WO_W_VERIFY=1`  
+- `GRETA_TRACE_POST_WO=1`  
+- `GRETA_TRACE_POST_WO_OUT=/root/gretacore/artifacts/alignment/.../b3_41_post_wo.jsonl`  
+- `GRETA_TRACE_POST_WO_LAYERS="0"`  
+- `GRETA_TRACE_POST_WO_SAMPLE=1024`  
+- `GRETA_TRACE_POST_WO_PHASES="prefill_last,decode0"`  
   Verifies WO weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Forces prefill Q projection to use the row-major interpretation (B3.34).

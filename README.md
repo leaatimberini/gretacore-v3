@@ -140,6 +140,19 @@ export GRETA_TRACE_PROMPT_ID=p4_sys
 
 Note: `GRETA_TRACE_STAGE_DEBUG_INPUT=1` adds input semantics fields and enables a decode0 input override used for isolation runs (B3.28).
 
+## Debug Tracing (Post-WO / FFN Isolation)
+
+```bash
+# Post-WO pipeline trace (B3.41)
+export GRETA_TRACE_POST_WO=1
+export GRETA_TRACE_POST_WO_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_41_post_wo.jsonl
+# Optional filters
+export GRETA_TRACE_POST_WO_LAYERS="0"
+export GRETA_TRACE_POST_WO_SAMPLE=1024
+# Optional phase filter (default: prefill_last,decode0)
+export GRETA_TRACE_POST_WO_PHASES="prefill_last,decode0"
+```
+
 ## Debug Tracing (Layer0 Attention Pipeline)
 
 ```bash
