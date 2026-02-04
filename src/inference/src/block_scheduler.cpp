@@ -228,6 +228,17 @@ static const char *attn_vacc_out_path() {
   return nullptr;
 }
 
+static bool trace_attn_l0_pipe_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_L0_PIPE");
+}
+
+static const char *attn_l0_pipe_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
 static bool trace_v_addr_enabled() {
   return env_flag("GRETA_TRACE_V_ADDR");
 }
@@ -1592,6 +1603,241 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               << ",\"use_fused_attn\":" << (use_fused_attn ? "true" : "false")
               << "}\n";
         }
+      }
+    }
+  }
+
+  if (trace_attn_l0_pipe_enabled() && layer_idx == 0) {
+    const char *out = attn_l0_pipe_out_path();
+    const char *phase = nullptr;
+    if (seq_len > 1 && trace_step_ == 0) {
+      phase = "prefill_last";
+    } else if (seq_len == 1 && trace_step_ == 1) {
+      phase = "decode0";
+    }
+    if (out && *out && phase) {
+      const uint32_t head = 0;
+      const uint32_t max_seq_len =
+          static_cast<uint32_t>(config_.max_seq_len);
+      uint32_t seq_len_used = (seq_len == 1)
+                                  ? static_cast<uint32_t>(seq_start + 1)
+                                  : static_cast<uint32_t>(seq_len);
+      if (seq_len_used > max_seq_len)
+        seq_len_used = max_seq_len;
+      uint32_t pos_id_used =
+          (seq_len == 1)
+              ? static_cast<uint32_t>(seq_start)
+              : static_cast<uint32_t>(seq_start + seq_len - 1);
+      const uint32_t token_index_used =
+          (seq_len == 1) ? 0 : static_cast<uint32_t>(seq_len - 1);
+      if (seq_len_used > 0 && pos_id_used >= seq_len_used) {
+        pos_id_used = seq_len_used - 1;
+      }
+      const uint32_t group = (Hkv > 0) ? (Hq / Hkv) : 0;
+      const uint32_t kv_head =
+          (group > 0 && head < Hq) ? (head / group) : 0;
+      if (kv_head < Hkv && Dh > 0 && seq_len_used > 0) {
+        const float *q_token =
+            q + static_cast<size_t>(token_index_used) * D;
+        const float *q_head = q_token + head * Dh;
+
+        const size_t kv_head_stride_elems =
+            static_cast<size_t>(max_seq_len) * Dh;
+        const size_t kv_layer_stride_elems =
+            static_cast<size_t>(max_seq_len) * Hkv * Dh;
+        const size_t kv_head_stride_bytes =
+            kv_head_stride_elems * sizeof(float);
+        const size_t kv_layer_stride_bytes =
+            kv_layer_stride_elems * sizeof(float);
+        const size_t kv_pos_stride_bytes = static_cast<size_t>(Dh) * sizeof(float);
+
+        const float *k_head_base =
+            cache_k + static_cast<size_t>(kv_head) * kv_head_stride_elems;
+        const float *v_head_base =
+            cache_v + static_cast<size_t>(kv_head) * kv_head_stride_elems;
+
+        std::vector<float> q_host(Dh);
+        std::vector<float> k_host(seq_len_used * Dh);
+        std::vector<float> v_host(seq_len_used * Dh);
+        std::vector<float> attn_host(Dh);
+
+        hipMemcpyAsync(q_host.data(), q_head, Dh * sizeof(float),
+                       hipMemcpyDeviceToHost, hip_stream);
+        hipMemcpyAsync(k_host.data(), k_head_base,
+                       static_cast<size_t>(seq_len_used) * Dh * sizeof(float),
+                       hipMemcpyDeviceToHost, hip_stream);
+        hipMemcpyAsync(v_host.data(), v_head_base,
+                       static_cast<size_t>(seq_len_used) * Dh * sizeof(float),
+                       hipMemcpyDeviceToHost, hip_stream);
+
+        const float *attn_token =
+            attn_out + static_cast<size_t>(token_index_used) * D;
+        const float *attn_head = attn_token + head * Dh;
+        hipMemcpyAsync(attn_host.data(), attn_head, Dh * sizeof(float),
+                       hipMemcpyDeviceToHost, hip_stream);
+        hipStreamSynchronize(hip_stream);
+
+        const float *k_vec =
+            k_host.data() + static_cast<size_t>(pos_id_used) * Dh;
+        const float *v_vec =
+            v_host.data() + static_cast<size_t>(pos_id_used) * Dh;
+
+        const F32Stats q_stats = stats_f32(q_host.data(), q_host.size());
+        const F32Stats k_stats = stats_f32(k_vec, Dh);
+        const F32Stats v_stats = stats_f32(v_vec, Dh);
+        const F32Stats attn_stats = stats_f32(attn_host.data(), attn_host.size());
+
+        const uint64_t q_hash = hash_f32(q_host.data(), q_host.size());
+        const uint64_t k_hash = hash_f32(k_vec, Dh);
+        const uint64_t v_hash = hash_f32(v_vec, Dh);
+        const uint64_t attn_hash = hash_f32(attn_host.data(), attn_host.size());
+
+        const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
+        std::vector<float> qk_row(seq_len_used, 0.0f);
+        std::vector<float> soft_row(seq_len_used, 0.0f);
+        double max_qk = -INFINITY;
+        for (uint32_t t = 0; t < seq_len_used; ++t) {
+          const float *k_t = k_host.data() + static_cast<size_t>(t) * Dh;
+          double dot = 0.0;
+          for (uint32_t d = 0; d < Dh; ++d) {
+            dot += static_cast<double>(q_host[d]) *
+                   static_cast<double>(k_t[d]);
+          }
+          const double qk = dot * static_cast<double>(scale);
+          qk_row[t] = static_cast<float>(qk);
+          if (qk > max_qk)
+            max_qk = qk;
+        }
+        double sumexp = 0.0;
+        for (uint32_t t = 0; t < seq_len_used; ++t) {
+          sumexp += std::exp(static_cast<double>(qk_row[t]) - max_qk);
+        }
+        const double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
+        for (uint32_t t = 0; t < seq_len_used; ++t) {
+          soft_row[t] =
+              static_cast<float>(std::exp(static_cast<double>(qk_row[t]) -
+                                          max_qk) *
+                                 inv_sum);
+        }
+
+        const F32Stats qk_stats = stats_f32(qk_row.data(), qk_row.size());
+        const F32Stats soft_stats = stats_f32(soft_row.data(), soft_row.size());
+        const uint64_t qk_hash = hash_f32(qk_row.data(), qk_row.size());
+        const uint64_t soft_hash = hash_f32(soft_row.data(), soft_row.size());
+
+        std::vector<double> pv_accum(Dh, 0.0);
+        for (uint32_t t = 0; t < seq_len_used; ++t) {
+          const double p = static_cast<double>(soft_row[t]);
+          const float *v_t = v_host.data() + static_cast<size_t>(t) * Dh;
+          for (uint32_t d = 0; d < Dh; ++d) {
+            pv_accum[d] += p * static_cast<double>(v_t[d]);
+          }
+        }
+        std::vector<float> pv_row(Dh, 0.0f);
+        for (uint32_t d = 0; d < Dh; ++d) {
+          pv_row[d] = static_cast<float>(pv_accum[d]);
+        }
+
+        const F32Stats pv_stats = stats_f32(pv_row.data(), pv_row.size());
+        const uint64_t pv_hash = hash_f32(pv_row.data(), pv_row.size());
+
+        double pv_attn_mae = 0.0;
+        float pv_attn_max = 0.0f;
+        mae_max_f32(pv_row.data(), attn_host.data(), pv_row.size(),
+                    &pv_attn_mae, &pv_attn_max);
+
+        auto append_span = [&](const char *name, const float *data,
+                               size_t n) {
+          std::ostringstream tmp;
+          tmp << ",\"" << name << "\":[";
+          for (size_t i = 0; i < n; ++i) {
+            if (i)
+              tmp << ",";
+            tmp << data[i];
+          }
+          tmp << "]";
+          return tmp.str();
+        };
+
+        const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+        std::ostringstream oss;
+        oss << "{\"event\":\"attn_l0_pipe\"";
+        if (prompt_id && *prompt_id)
+          oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+        oss << ",\"phase\":\"" << phase << "\""
+            << ",\"layer\":" << layer_idx
+            << ",\"head\":" << head
+            << ",\"seq_len\":" << seq_len
+            << ",\"seq_len_used\":" << seq_len_used
+            << ",\"tokens_total\":" << (seq_start + seq_len)
+            << ",\"pos_id\":" << pos_id_used
+            << ",\"kv_pos\":" << pos_id_used
+            << ",\"token_index\":" << token_index_used
+            << ",\"scale_used\":" << scale
+            << ",\"q_hash\":" << q_hash
+            << ",\"q_min\":" << q_stats.min
+            << ",\"q_max\":" << q_stats.max
+            << ",\"q_mean\":" << q_stats.mean
+            << ",\"k_hash\":" << k_hash
+            << ",\"k_min\":" << k_stats.min
+            << ",\"k_max\":" << k_stats.max
+            << ",\"k_mean\":" << k_stats.mean
+            << ",\"v_hash\":" << v_hash
+            << ",\"v_min\":" << v_stats.min
+            << ",\"v_max\":" << v_stats.max
+            << ",\"v_mean\":" << v_stats.mean
+            << ",\"qk_hash\":" << qk_hash
+            << ",\"qk_min\":" << qk_stats.min
+            << ",\"qk_max\":" << qk_stats.max
+            << ",\"qk_mean\":" << qk_stats.mean
+            << ",\"softmax_hash\":" << soft_hash
+            << ",\"softmax_min\":" << soft_stats.min
+            << ",\"softmax_max\":" << soft_stats.max
+            << ",\"softmax_mean\":" << soft_stats.mean
+            << ",\"pv_hash\":" << pv_hash
+            << ",\"pv_min\":" << pv_stats.min
+            << ",\"pv_max\":" << pv_stats.max
+            << ",\"pv_mean\":" << pv_stats.mean
+            << ",\"attn_out_hash\":" << attn_hash
+            << ",\"attn_out_min\":" << attn_stats.min
+            << ",\"attn_out_max\":" << attn_stats.max
+            << ",\"attn_out_mean\":" << attn_stats.mean
+            << ",\"pv_attn_mae\":" << pv_attn_mae
+            << ",\"pv_attn_max_diff\":" << pv_attn_max
+            << ",\"k_layout_used\":\"row_major\""
+            << ",\"v_layout_used\":\"row_major\""
+            << ",\"q_ptr\":" << reinterpret_cast<uintptr_t>(q)
+            << ",\"q_offset_bytes\":"
+            << (static_cast<size_t>(token_index_used) * D +
+                static_cast<size_t>(head) * Dh) *
+                   sizeof(float)
+            << ",\"k_base_ptr\":" << reinterpret_cast<uintptr_t>(cache_k)
+            << ",\"v_base_ptr\":" << reinterpret_cast<uintptr_t>(cache_v)
+            << ",\"k_head_base_ptr\":"
+            << reinterpret_cast<uintptr_t>(k_head_base)
+            << ",\"v_head_base_ptr\":"
+            << reinterpret_cast<uintptr_t>(v_head_base)
+            << ",\"k_pos_ptr\":"
+            << reinterpret_cast<uintptr_t>(k_head_base +
+                                           static_cast<size_t>(pos_id_used) *
+                                               Dh)
+            << ",\"v_pos_ptr\":"
+            << reinterpret_cast<uintptr_t>(v_head_base +
+                                           static_cast<size_t>(pos_id_used) *
+                                               Dh)
+            << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
+            << ",\"kv_head_stride_bytes\":" << kv_head_stride_bytes
+            << ",\"kv_pos_stride_bytes\":" << kv_pos_stride_bytes;
+
+        oss << append_span("q", q_host.data(), q_host.size());
+        oss << append_span("k", k_vec, Dh);
+        oss << append_span("v", v_vec, Dh);
+        oss << append_span("qk", qk_row.data(), qk_row.size());
+        oss << append_span("softmax", soft_row.data(), soft_row.size());
+        oss << append_span("pv", pv_row.data(), pv_row.size());
+        oss << append_span("attn_out", attn_host.data(), attn_host.size());
+        oss << "}";
+        append_line(out, oss.str());
       }
     }
   }
