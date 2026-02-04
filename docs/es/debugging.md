@@ -64,6 +64,8 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Selecciona layers para trazas de atención decode.
 - `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
   Selecciona tensores para trazas de atención decode.
+- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,wo_out,x_after_attn,ffn_norm,mlp_out,x_out,final_norm,lm_head_in,logits"`  
+  Ejemplo de puntos de traza de stage (incluye `wo_out` para la proyección de salida de atención).
 - `GRETA_TRACE_KV_INVARIANTS=1`  
   Chequeos de offsets/posiciones en KV cache.
 - `GRETA_FORCE_ATTN_DECODE_KERNEL=auto|manual|fused`  

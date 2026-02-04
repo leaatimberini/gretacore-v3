@@ -64,6 +64,8 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Selects layers for decode attention traces.
 - `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
   Selects tensors for decode attention traces.
+- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,wo_out,x_after_attn,ffn_norm,mlp_out,x_out,final_norm,lm_head_in,logits"`  
+  Example stage trace points (includes `wo_out` for attention output projection).
 - `GRETA_TRACE_KV_INVARIANTS=1`  
   Checks KV cache offsets/positions invariants.
 - `GRETA_FORCE_ATTN_DECODE_KERNEL=auto|manual|fused`  
