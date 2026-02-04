@@ -8,8 +8,8 @@ OUTDIR_LOCAL="$ROOT_DIR/artifacts_remote/${DATE}/b3_23"
 
 cd "$ROOT_DIR"
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ERROR: working tree is dirty. Commit first." >&2
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "ERROR: working tree has modified tracked files. Commit first." >&2
   exit 1
 fi
 
