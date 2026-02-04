@@ -77,14 +77,15 @@ void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
                                    uint32_t num_heads, uint32_t num_heads_kv,
                                    uint32_t seq_len, uint32_t max_seq_len,
-                                   uint32_t head_dim, float scale);
+                                   uint32_t head_dim, float scale,
+                                   int accum_mode = 0);
 
 void launch_flash_attention_decode(hipStream_t stream, const float *Q,
                                    const float *K, const float *V, float *O,
                                    uint32_t num_heads, uint32_t num_heads_kv,
                                    const uint32_t *d_pos,
                                    uint32_t max_seq_len, uint32_t head_dim,
-                                   float scale);
+                                   float scale, int accum_mode = 0);
 
 /**
  * @brief FlashAttention v2 for prefill mode (multiple queries).

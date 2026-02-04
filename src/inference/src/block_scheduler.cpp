@@ -10,6 +10,7 @@
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 #include <algorithm>
 #include <cmath>
+#include <hip/hip_fp16.h>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -160,6 +161,17 @@ static bool attn_decode_ref_enabled() {
   return env_flag("GRETA_ATTN_DECODE_REF");
 }
 
+static bool trace_attn_ref_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_REF");
+}
+
+static const char *attn_ref_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_ATTN_REF_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
 static bool attn_mfma_shadow_enabled() {
   return env_flag("GRETA_ATTN_DECODE_MFMA_SHADOW");
 }
@@ -217,11 +229,29 @@ static double mae_f32(const float *a, const float *b, size_t n) {
   return sum / static_cast<double>(n);
 }
 
-static void compute_attention_ref(const float *q, const float *k_cache,
-                                  const float *v_cache, uint32_t num_heads,
-                                  uint32_t num_heads_kv, uint32_t head_dim,
-                                  uint32_t seq_len, uint32_t max_seq_len,
-                                  float scale, std::vector<float> &out) {
+enum class AttnAccumMode { Fp32 = 0, Fp16 = 1 };
+
+static AttnAccumMode attn_accum_mode() {
+  const char *v = std::getenv("GRETA_ATTN_ACCUM");
+  if (!v)
+    return AttnAccumMode::Fp32;
+  std::string s(v);
+  if (s == "fp16" || s == "FP16")
+    return AttnAccumMode::Fp16;
+  return AttnAccumMode::Fp32;
+}
+
+static inline float round_fp16_host(float x) {
+  return __half2float(__float2half_rn(x));
+}
+
+static void compute_attention_ref_fp32(const float *q, const float *k_cache,
+                                       const float *v_cache,
+                                       uint32_t num_heads,
+                                       uint32_t num_heads_kv,
+                                       uint32_t head_dim, uint32_t seq_len,
+                                       uint32_t max_seq_len, float scale,
+                                       std::vector<float> &out) {
   if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
     return;
   out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
@@ -265,6 +295,129 @@ static void compute_attention_ref(const float *q, const float *k_cache,
       o_ptr[d] = static_cast<float>(acc * inv_sum);
     }
   }
+}
+
+static void compute_attention_ref_fp16_accum(
+    const float *q, const float *k_cache, const float *v_cache,
+    uint32_t num_heads, uint32_t num_heads_kv, uint32_t head_dim,
+    uint32_t seq_len, uint32_t max_seq_len, float scale,
+    std::vector<float> &out) {
+  if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
+    return;
+  out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
+  const uint32_t group =
+      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  for (uint32_t h = 0; h < num_heads; ++h) {
+    const uint32_t kv_head = (group > 0) ? (h / group) : 0;
+    const float *q_ptr = q + h * head_dim;
+    const float *k_ptr = k_cache + kv_head * max_seq_len * head_dim;
+    const float *v_ptr = v_cache + kv_head * max_seq_len * head_dim;
+
+    std::vector<float> scores(seq_len, 0.0f);
+    float max_score = -INFINITY;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      const float *k_t = k_ptr + t * head_dim;
+      float dot = 0.0f;
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        float prod = round_fp16_host(q_ptr[d] * k_t[d]);
+        dot = round_fp16_host(dot + prod);
+      }
+      float s = round_fp16_host(dot * scale);
+      scores[t] = s;
+      if (s > max_score)
+        max_score = s;
+    }
+    double sum = 0.0;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      float e = std::exp(scores[t] - max_score);
+      scores[t] = round_fp16_host(e);
+      sum += scores[t];
+    }
+    const double inv_sum = sum > 0.0 ? (1.0 / sum) : 0.0;
+
+    float *o_ptr = out.data() + h * head_dim;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      float acc = 0.0f;
+      for (uint32_t t = 0; t < seq_len; ++t) {
+        const float *v_t = v_ptr + t * head_dim;
+        float term = round_fp16_host(scores[t] * v_t[d]);
+        acc = round_fp16_host(acc + term);
+      }
+      o_ptr[d] = round_fp16_host(acc * static_cast<float>(inv_sum));
+    }
+  }
+}
+
+static void compute_attention_ref_fp64(const float *q, const float *k_cache,
+                                       const float *v_cache,
+                                       uint32_t num_heads,
+                                       uint32_t num_heads_kv,
+                                       uint32_t head_dim, uint32_t seq_len,
+                                       uint32_t max_seq_len, double scale,
+                                       std::vector<float> &out) {
+  if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
+    return;
+  out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
+  const uint32_t group =
+      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  for (uint32_t h = 0; h < num_heads; ++h) {
+    const uint32_t kv_head = (group > 0) ? (h / group) : 0;
+    const float *q_ptr = q + h * head_dim;
+    const float *k_ptr = k_cache + kv_head * max_seq_len * head_dim;
+    const float *v_ptr = v_cache + kv_head * max_seq_len * head_dim;
+
+    std::vector<double> scores(seq_len, 0.0);
+    double max_score = -INFINITY;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      const float *k_t = k_ptr + t * head_dim;
+      double dot = 0.0;
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        dot += static_cast<double>(q_ptr[d]) *
+               static_cast<double>(k_t[d]);
+      }
+      double s = dot * scale;
+      scores[t] = s;
+      if (s > max_score)
+        max_score = s;
+    }
+    double sum = 0.0;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      scores[t] = std::exp(scores[t] - max_score);
+      sum += scores[t];
+    }
+    const double inv_sum = sum > 0.0 ? (1.0 / sum) : 0.0;
+
+    float *o_ptr = out.data() + h * head_dim;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      double acc = 0.0;
+      for (uint32_t t = 0; t < seq_len; ++t) {
+        const float *v_t = v_ptr + t * head_dim;
+        acc += scores[t] * static_cast<double>(v_t[d]);
+      }
+      o_ptr[d] = static_cast<float>(acc * inv_sum);
+    }
+  }
+}
+
+static std::vector<double> per_head_mae_f32(const float *a, const float *b,
+                                            uint32_t num_heads,
+                                            uint32_t head_dim) {
+  std::vector<double> out;
+  if (!a || !b || num_heads == 0 || head_dim == 0)
+    return out;
+  out.resize(num_heads, 0.0);
+  const size_t head_size = head_dim;
+  for (uint32_t h = 0; h < num_heads; ++h) {
+    double sum = 0.0;
+    const float *pa = a + h * head_size;
+    const float *pb = b + h * head_size;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      sum += std::abs(static_cast<double>(pa[d]) -
+                      static_cast<double>(pb[d]));
+    }
+    out[h] = sum / static_cast<double>(head_dim);
+  }
+  return out;
 }
 
 static void stats_hash_kv_subset(const float *base, uint32_t num_heads_kv,
@@ -1444,11 +1597,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     launch_debug_tensor_stats(hip_stream, "L.residual.x", x, n_x);
   }
 
-  if (trace_attn_decode_verify_enabled() && seq_len == 1 &&
+  const bool trace_attn_verify = trace_attn_decode_verify_enabled();
+  const bool trace_attn_ref = trace_attn_ref_enabled();
+  if ((trace_attn_verify || trace_attn_ref) && seq_len == 1 &&
       trace_step_ == 1 &&
       attn_trace_layer_selected(layer_idx, config_.num_layers)) {
     const char *out = attn_trace_out_path();
-    if (out && *out) {
+    const char *out_ref = attn_ref_out_path();
+    if ((trace_attn_verify && out && *out) || trace_attn_ref) {
       const uint32_t point_mask =
           attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
       const uint32_t seq_len_used =
@@ -1544,9 +1700,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           !k_cache_host.empty() && !v_cache_host.empty() &&
           !attn_out_host.empty()) {
         const float scale = 1.0f / sqrtf(static_cast<float>(Dh));
-        compute_attention_ref(q_host.data(), k_cache_host.data(),
-                              v_cache_host.data(), Hq, Hkv, Dh, seq_len_used,
-                              max_seq_len, scale, attn_ref);
+        compute_attention_ref_fp32(q_host.data(), k_cache_host.data(),
+                                   v_cache_host.data(), Hq, Hkv, Dh,
+                                   seq_len_used, max_seq_len, scale, attn_ref);
         if (!attn_ref.empty()) {
           attn_ref_hash = hash_f32(attn_ref.data(), attn_ref.size());
           attn_mae = mae_f32(attn_out_host.data(), attn_ref.data(),
@@ -1589,58 +1745,133 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         }
       }
 
-      std::ostringstream oss;
-      oss << "{\"event\":\"attn_decode_verify\""
-          << ",\"phase\":\"decode0\""
-          << ",\"layer\":" << layer_idx
-          << ",\"seq_len_used\":" << seq_len_used
-          << ",\"pos_id_used\":" << pos_id_used
-          << ",\"kernel_path\":\"" << (use_fused_attn ? "fused" : "manual")
-          << "\""
-          << ",\"matmul_route\":\""
-          << (std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
-                  ? std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
-                  : "auto")
-          << "\""
-          << ",\"num_heads\":" << Hq
-          << ",\"num_heads_kv\":" << Hkv
-          << ",\"head_dim\":" << Dh
-          << ",\"q_hash\":" << q_hash
-          << ",\"q_min\":" << q_stats.min
-          << ",\"q_max\":" << q_stats.max
-          << ",\"q_mean\":" << q_stats.mean
-          << ",\"k_hash\":" << k_hash
-          << ",\"k_min\":" << k_stats.min
-          << ",\"k_max\":" << k_stats.max
-          << ",\"k_mean\":" << k_stats.mean
-          << ",\"v_hash\":" << v_hash
-          << ",\"v_min\":" << v_stats.min
-          << ",\"v_max\":" << v_stats.max
-          << ",\"v_mean\":" << v_stats.mean
-          << ",\"attn_out_hash\":" << attn_hash
-          << ",\"attn_out_min\":" << attn_stats.min
-          << ",\"attn_out_max\":" << attn_stats.max
-          << ",\"attn_out_mean\":" << attn_stats.mean
-          << ",\"attn_out_ref_hash\":" << attn_ref_hash
-          << ",\"attn_out_mae\":" << attn_mae
-          << ",\"x_out_hash\":" << x_hash
-          << ",\"x_out_min\":" << x_stats.min
-          << ",\"x_out_max\":" << x_stats.max
-          << ",\"x_out_mean\":" << x_stats.mean
-          << ",\"kv_base_ptr_k\":"
-          << reinterpret_cast<uintptr_t>(activations_.kv_cache_k.data())
-          << ",\"kv_base_ptr_v\":"
-          << reinterpret_cast<uintptr_t>(activations_.kv_cache_v.data())
-          << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
-          << ",\"kv_pos\":" << kv_pos
-          << ",\"k_read_offset_bytes\":" << k_read_offset_bytes
-          << ",\"v_read_offset_bytes\":" << v_read_offset_bytes
-          << ",\"k_write_offset_bytes\":" << k_read_offset_bytes
-          << ",\"v_write_offset_bytes\":" << v_read_offset_bytes
-          << ",\"kv_invariant_ok\":" << (kv_invariant_ok ? "true" : "false")
-          << ",\"kv_error\":\"" << kv_error << "\""
-          << "}";
-      append_line(out, oss.str());
+      if (trace_attn_verify && out && *out) {
+        std::ostringstream oss;
+        oss << "{\"event\":\"attn_decode_verify\""
+            << ",\"phase\":\"decode0\""
+            << ",\"layer\":" << layer_idx
+            << ",\"seq_len_used\":" << seq_len_used
+            << ",\"pos_id_used\":" << pos_id_used
+            << ",\"kernel_path\":\"" << (use_fused_attn ? "fused" : "manual")
+            << "\""
+            << ",\"matmul_route\":\""
+            << (std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
+                    ? std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
+                    : "auto")
+            << "\""
+            << ",\"num_heads\":" << Hq
+            << ",\"num_heads_kv\":" << Hkv
+            << ",\"head_dim\":" << Dh
+            << ",\"q_hash\":" << q_hash
+            << ",\"q_min\":" << q_stats.min
+            << ",\"q_max\":" << q_stats.max
+            << ",\"q_mean\":" << q_stats.mean
+            << ",\"k_hash\":" << k_hash
+            << ",\"k_min\":" << k_stats.min
+            << ",\"k_max\":" << k_stats.max
+            << ",\"k_mean\":" << k_stats.mean
+            << ",\"v_hash\":" << v_hash
+            << ",\"v_min\":" << v_stats.min
+            << ",\"v_max\":" << v_stats.max
+            << ",\"v_mean\":" << v_stats.mean
+            << ",\"attn_out_hash\":" << attn_hash
+            << ",\"attn_out_min\":" << attn_stats.min
+            << ",\"attn_out_max\":" << attn_stats.max
+            << ",\"attn_out_mean\":" << attn_stats.mean
+            << ",\"attn_out_ref_hash\":" << attn_ref_hash
+            << ",\"attn_out_mae\":" << attn_mae
+            << ",\"x_out_hash\":" << x_hash
+            << ",\"x_out_min\":" << x_stats.min
+            << ",\"x_out_max\":" << x_stats.max
+            << ",\"x_out_mean\":" << x_stats.mean
+            << ",\"kv_base_ptr_k\":"
+            << reinterpret_cast<uintptr_t>(activations_.kv_cache_k.data())
+            << ",\"kv_base_ptr_v\":"
+            << reinterpret_cast<uintptr_t>(activations_.kv_cache_v.data())
+            << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
+            << ",\"kv_pos\":" << kv_pos
+            << ",\"k_read_offset_bytes\":" << k_read_offset_bytes
+            << ",\"v_read_offset_bytes\":" << v_read_offset_bytes
+            << ",\"k_write_offset_bytes\":" << k_read_offset_bytes
+            << ",\"v_write_offset_bytes\":" << v_read_offset_bytes
+            << ",\"kv_invariant_ok\":"
+            << (kv_invariant_ok ? "true" : "false")
+            << ",\"kv_error\":\"" << kv_error << "\""
+            << "}";
+        append_line(out, oss.str());
+      }
+
+      if (trace_attn_ref && out_ref && *out_ref && !q_host.empty() &&
+          !k_cache_host.empty() && !v_cache_host.empty() &&
+          !attn_out_host.empty()) {
+        const double scale_d = 1.0 / std::sqrt(static_cast<double>(Dh));
+        std::vector<float> attn_ref_hp;
+        compute_attention_ref_fp64(q_host.data(), k_cache_host.data(),
+                                   v_cache_host.data(), Hq, Hkv, Dh,
+                                   seq_len_used, max_seq_len, scale_d,
+                                   attn_ref_hp);
+
+        std::vector<float> attn_ref_accum;
+        const AttnAccumMode mode = attn_accum_mode();
+        if (mode == AttnAccumMode::Fp16) {
+          compute_attention_ref_fp16_accum(
+              q_host.data(), k_cache_host.data(), v_cache_host.data(), Hq, Hkv,
+              Dh, seq_len_used, max_seq_len,
+              1.0f / std::sqrt(static_cast<float>(Dh)), attn_ref_accum);
+        } else {
+          compute_attention_ref_fp32(
+              q_host.data(), k_cache_host.data(), v_cache_host.data(), Hq, Hkv,
+              Dh, seq_len_used, max_seq_len,
+              1.0f / std::sqrt(static_cast<float>(Dh)), attn_ref_accum);
+        }
+
+        double ref_mae = 0.0;
+        float ref_max_diff = 0.0f;
+        double accum_mae = 0.0;
+        float accum_max_diff = 0.0f;
+        uint64_t ref_hp_hash = 0;
+        uint64_t ref_accum_hash = 0;
+
+        if (!attn_ref_hp.empty()) {
+          ref_hp_hash = hash_f32(attn_ref_hp.data(), attn_ref_hp.size());
+          mae_max_f32(attn_out_host.data(), attn_ref_hp.data(),
+                      attn_out_host.size(), &ref_mae, &ref_max_diff);
+        }
+        if (!attn_ref_accum.empty() && !attn_ref_hp.empty()) {
+          ref_accum_hash =
+              hash_f32(attn_ref_accum.data(), attn_ref_accum.size());
+          mae_max_f32(attn_ref_accum.data(), attn_ref_hp.data(),
+                      attn_ref_accum.size(), &accum_mae, &accum_max_diff);
+        }
+
+        const std::vector<double> per_head =
+            per_head_mae_f32(attn_out_host.data(), attn_ref_hp.data(), Hq, Dh);
+
+        std::ostringstream oss;
+        oss << "{\"event\":\"attn_precision_ref\""
+            << ",\"phase\":\"decode0\""
+            << ",\"layer\":" << layer_idx
+            << ",\"seq_len_used\":" << seq_len_used
+            << ",\"pos_id_used\":" << pos_id_used
+            << ",\"attn_accum_mode\":\""
+            << (mode == AttnAccumMode::Fp16 ? "fp16" : "fp32") << "\""
+            << ",\"attn_out_hash\":" << attn_hash
+            << ",\"attn_ref_hp_hash\":" << ref_hp_hash
+            << ",\"attn_ref_accum_hash\":" << ref_accum_hash
+            << ",\"attn_ref_mae\":" << ref_mae
+            << ",\"attn_ref_max_diff\":" << ref_max_diff
+            << ",\"attn_accum_mae\":" << accum_mae
+            << ",\"attn_accum_max_diff\":" << accum_max_diff
+            << ",\"per_head_mae\":[";
+        for (size_t i = 0; i < per_head.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << per_head[i];
+        }
+        oss << "]";
+        oss << "}";
+        append_line(out_ref, oss.str());
+      }
     }
   }
 

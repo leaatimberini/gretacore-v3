@@ -289,6 +289,16 @@ GretaResult GretaCompute::attention_decode(
   }
 
   (void)rope_base;
+  int accum_mode = 0;
+  const char *accum_env = std::getenv("GRETA_ATTN_ACCUM");
+  if (accum_env) {
+    std::string mode(accum_env);
+    if (mode == "fp16" || mode == "FP16") {
+      accum_mode = 1;
+    } else if (mode == "fp32" || mode == "FP32") {
+      accum_mode = 0;
+    }
+  }
   // Non-fused decode path (RoPE applied in scheduler)
   launch_flash_attention_decode(
       s->handle(), static_cast<const float *>(Q->data()),
@@ -296,7 +306,7 @@ GretaResult GretaCompute::attention_decode(
       static_cast<const float *>(V_cache->data()),
       static_cast<float *>(O->data()), num_heads, num_heads_kv,
       static_cast<const uint32_t *>(d_pos->data()), max_seq_len, head_dim,
-      scale);
+      scale, accum_mode);
 
   return GretaResult::SUCCESS;
 }
