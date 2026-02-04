@@ -1158,7 +1158,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (!scheduler_->forward(&last_token_id, decode_seq_start, 1, err)) {
       break;
     }
-    const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode || trace_delta || trace_stage;
+    const bool need_logits_host = !params.greedy || align_callback || trace_readout ||
+                                  trace_landscape || trace_prefill_decode ||
+                                  trace_delta || trace_stage || trace_post_wo;
     const size_t decode_logits_offset =
         decode_seq_start * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
@@ -1173,7 +1175,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         break;
       }
 
-      if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_stage) {
+      if (trace_readout || trace_prefill_decode || trace_delta ||
+          trace_lmhead_w_verify || trace_stage || trace_post_wo) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
