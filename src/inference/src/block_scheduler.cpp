@@ -227,6 +227,17 @@ static const char *attn_vacc_out_path() {
   return nullptr;
 }
 
+static bool trace_v_addr_enabled() {
+  return env_flag("GRETA_TRACE_V_ADDR");
+}
+
+static const char *v_addr_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_V_ADDR_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
 static uint32_t attn_vacc_dims_sample() {
   const char *v = std::getenv("GRETA_TRACE_ATTN_DIMS_SAMPLE");
   if (!v || !*v)
@@ -1668,22 +1679,28 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const bool trace_attn_ref = trace_attn_ref_enabled();
   const bool trace_attn_softmax = trace_attn_softmax_enabled();
   const bool trace_attn_vacc = trace_attn_vacc_enabled();
+  const bool trace_v_addr = trace_v_addr_enabled();
   const bool trace_attn_layer =
       attn_trace_layer_selected(layer_idx, config_.num_layers);
   const bool trace_softmax_layer =
       attn_softmax_layer_selected(layer_idx, config_.num_layers);
   const bool trace_vacc_layer =
       attn_softmax_layer_selected(layer_idx, config_.num_layers);
+  const bool trace_v_addr_layer =
+      attn_softmax_layer_selected(layer_idx, config_.num_layers);
   if ((trace_attn_verify || trace_attn_ref || trace_attn_softmax ||
-       trace_attn_vacc) &&
+       trace_attn_vacc || trace_v_addr) &&
       seq_len == 1 && trace_step_ == 1 &&
-      (trace_attn_layer || trace_softmax_layer || trace_vacc_layer)) {
+      (trace_attn_layer || trace_softmax_layer || trace_vacc_layer ||
+       trace_v_addr_layer)) {
     const char *out = attn_trace_out_path();
     const char *out_ref = attn_ref_out_path();
     const char *out_softmax = attn_softmax_out_path();
     const char *out_vacc = attn_vacc_out_path();
+    const char *out_v_addr = v_addr_out_path();
     if ((trace_attn_verify && out && *out) || trace_attn_ref ||
-        trace_attn_softmax || trace_attn_vacc) {
+        trace_attn_softmax || trace_attn_vacc ||
+        (trace_v_addr && out_v_addr && *out_v_addr)) {
       const uint32_t point_mask =
           attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
       const uint32_t seq_len_used =
@@ -1744,7 +1761,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                            static_cast<uint32_t>(AttnTracePoint::K)) ||
                           (point_mask &
                            static_cast<uint32_t>(AttnTracePoint::V));
-      bool need_kv_head = trace_attn_softmax || trace_attn_vacc;
+      bool need_kv_head =
+          trace_attn_softmax || trace_attn_vacc || trace_v_addr;
       if (need_kv_full) {
         k_cache_host.resize(kv_layer_stride_elems);
         v_cache_host.resize(kv_layer_stride_elems);
@@ -2393,6 +2411,216 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             append_line(out_vacc, oss.str());
           }
         }
+      }
+
+      if (trace_v_addr && out_v_addr && *out_v_addr && trace_kv_head < Hkv) {
+        const uint32_t dims_sample =
+            std::min(attn_vacc_dims_sample(), Dh);
+        const uint32_t pos_cur = pos_id_used;
+        const uint32_t pos_prev = (pos_cur > 0) ? (pos_cur - 1) : pos_cur;
+        const uint32_t pos_next =
+            (pos_cur + 1 < max_seq_len) ? (pos_cur + 1) : pos_cur;
+        const size_t kv_pos_stride_elems = Dh;
+        const size_t kv_pos_stride_bytes =
+            kv_pos_stride_elems * sizeof(float);
+
+        const float *k_head_host = nullptr;
+        const float *v_head_host = nullptr;
+        if (!k_cache_host.empty() && !v_cache_host.empty()) {
+          if (kv_head_only) {
+            k_head_host = k_cache_host.data();
+            v_head_host = v_cache_host.data();
+          } else {
+            k_head_host = k_cache_host.data() +
+                          static_cast<size_t>(trace_kv_head) *
+                              kv_head_stride_elems;
+            v_head_host = v_cache_host.data() +
+                          static_cast<size_t>(trace_kv_head) *
+                              kv_head_stride_elems;
+          }
+        }
+
+        auto row_at = [&](const float *base, uint32_t pos,
+                          uint32_t d) -> float {
+          if (!base)
+            return 0.0f;
+          return base[static_cast<size_t>(pos) * Dh + d];
+        };
+        auto col_at = [&](const float *base, uint32_t pos,
+                          uint32_t d) -> float {
+          if (!base)
+            return 0.0f;
+          return base[static_cast<size_t>(d) * max_seq_len + pos];
+        };
+
+        std::vector<float> k_cur_sample(dims_sample, 0.0f);
+        std::vector<float> v_cur_sample(dims_sample, 0.0f);
+        if (dims_sample > 0) {
+          hipMemcpy(k_cur_sample.data(),
+                    k + static_cast<size_t>(trace_kv_head) * Dh,
+                    dims_sample * sizeof(float), hipMemcpyDeviceToHost);
+          hipMemcpy(v_cur_sample.data(),
+                    v + static_cast<size_t>(trace_kv_head) * Dh,
+                    dims_sample * sizeof(float), hipMemcpyDeviceToHost);
+        }
+
+        std::vector<float> k_cache_row_pos(dims_sample, 0.0f);
+        std::vector<float> k_cache_row_prev(dims_sample, 0.0f);
+        std::vector<float> k_cache_row_next(dims_sample, 0.0f);
+        std::vector<float> v_cache_row_pos(dims_sample, 0.0f);
+        std::vector<float> v_cache_row_prev(dims_sample, 0.0f);
+        std::vector<float> v_cache_row_next(dims_sample, 0.0f);
+        std::vector<float> v_cache_col_pos(dims_sample, 0.0f);
+        for (uint32_t d = 0; d < dims_sample; ++d) {
+          k_cache_row_pos[d] = row_at(k_head_host, pos_cur, d);
+          k_cache_row_prev[d] = row_at(k_head_host, pos_prev, d);
+          k_cache_row_next[d] = row_at(k_head_host, pos_next, d);
+          v_cache_row_pos[d] = row_at(v_head_host, pos_cur, d);
+          v_cache_row_prev[d] = row_at(v_head_host, pos_prev, d);
+          v_cache_row_next[d] = row_at(v_head_host, pos_next, d);
+          v_cache_col_pos[d] = col_at(v_head_host, pos_cur, d);
+        }
+
+        auto mae_vec = [&](const std::vector<float> &a,
+                           const std::vector<float> &b) -> double {
+          if (a.size() != b.size() || a.empty())
+            return 0.0;
+          double sum = 0.0;
+          for (size_t i = 0; i < a.size(); ++i) {
+            sum += std::abs(static_cast<double>(a[i]) -
+                            static_cast<double>(b[i]));
+          }
+          return sum / static_cast<double>(a.size());
+        };
+
+        const double mae_k_pos = mae_vec(k_cur_sample, k_cache_row_pos);
+        const double mae_k_prev = mae_vec(k_cur_sample, k_cache_row_prev);
+        const double mae_k_next = mae_vec(k_cur_sample, k_cache_row_next);
+        const double mae_v_pos = mae_vec(v_cur_sample, v_cache_row_pos);
+        const double mae_v_prev = mae_vec(v_cur_sample, v_cache_row_prev);
+        const double mae_v_next = mae_vec(v_cur_sample, v_cache_row_next);
+        const double mae_v_col = mae_vec(v_cur_sample, v_cache_col_pos);
+
+        const uintptr_t k_base_ptr =
+            reinterpret_cast<uintptr_t>(activations_.kv_cache_k.data());
+        const uintptr_t v_base_ptr =
+            reinterpret_cast<uintptr_t>(activations_.kv_cache_v.data());
+        const uintptr_t k_layer_ptr =
+            k_base_ptr + kv_layer_offset_elems * sizeof(float);
+        const uintptr_t v_layer_ptr =
+            v_base_ptr + kv_layer_offset_elems * sizeof(float);
+        const uintptr_t k_head_ptr = k_layer_ptr +
+            static_cast<uintptr_t>(trace_kv_head) * kv_head_stride_bytes;
+        const uintptr_t v_head_ptr = v_layer_ptr +
+            static_cast<uintptr_t>(trace_kv_head) * kv_head_stride_bytes;
+        const uintptr_t k_pos_ptr =
+            k_head_ptr + static_cast<uintptr_t>(pos_cur) * kv_pos_stride_bytes;
+        const uintptr_t v_pos_ptr =
+            v_head_ptr + static_cast<uintptr_t>(pos_cur) * kv_pos_stride_bytes;
+
+        const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+        std::ostringstream oss;
+        oss << "{\"event\":\"v_addr_trace\"";
+        if (prompt_id && *prompt_id) {
+          oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+        }
+        oss
+            << ",\"phase\":\"decode0\""
+            << ",\"layer\":" << layer_idx
+            << ",\"head\":" << head
+            << ",\"kv_head\":" << trace_kv_head
+            << ",\"pos_id\":" << pos_id_used
+            << ",\"seq_len\":" << seq_len_used
+            << ",\"tokens_total\":" << seq_len_used
+            << ",\"kv_pos_used\":" << pos_cur
+            << ",\"kv_pos_prev\":" << pos_prev
+            << ",\"kv_pos_next\":" << pos_next
+            << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
+            << ",\"kv_head_stride_bytes\":" << kv_head_stride_bytes
+            << ",\"kv_pos_stride_bytes\":" << kv_pos_stride_bytes
+            << ",\"k_base_ptr\":" << k_base_ptr
+            << ",\"k_layer_ptr\":" << k_layer_ptr
+            << ",\"k_head_ptr\":" << k_head_ptr
+            << ",\"k_pos_ptr\":" << k_pos_ptr
+            << ",\"v_base_ptr\":" << v_base_ptr
+            << ",\"v_layer_ptr\":" << v_layer_ptr
+            << ",\"v_head_ptr\":" << v_head_ptr
+            << ",\"v_pos_ptr\":" << v_pos_ptr
+            << ",\"k_elem_ptrs\":[";
+        for (uint32_t d = 0; d < std::min<uint32_t>(4, Dh); ++d) {
+          if (d)
+            oss << ",";
+          oss << (k_pos_ptr + static_cast<uintptr_t>(d) * sizeof(float));
+        }
+        oss << "],\"v_elem_ptrs\":[";
+        for (uint32_t d = 0; d < std::min<uint32_t>(4, Dh); ++d) {
+          if (d)
+            oss << ",";
+          oss << (v_pos_ptr + static_cast<uintptr_t>(d) * sizeof(float));
+        }
+        oss << "],\"k_cur_sample\":[";
+        for (uint32_t d = 0; d < k_cur_sample.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << k_cur_sample[d];
+        }
+        oss << "],\"v_cur_sample\":[";
+        for (uint32_t d = 0; d < v_cur_sample.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << v_cur_sample[d];
+        }
+        oss << "],\"k_cache_row_pos\":[";
+        for (uint32_t d = 0; d < k_cache_row_pos.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << k_cache_row_pos[d];
+        }
+        oss << "],\"k_cache_row_prev\":[";
+        for (uint32_t d = 0; d < k_cache_row_prev.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << k_cache_row_prev[d];
+        }
+        oss << "],\"k_cache_row_next\":[";
+        for (uint32_t d = 0; d < k_cache_row_next.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << k_cache_row_next[d];
+        }
+        oss << "],\"v_cache_row_pos\":[";
+        for (uint32_t d = 0; d < v_cache_row_pos.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << v_cache_row_pos[d];
+        }
+        oss << "],\"v_cache_row_prev\":[";
+        for (uint32_t d = 0; d < v_cache_row_prev.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << v_cache_row_prev[d];
+        }
+        oss << "],\"v_cache_row_next\":[";
+        for (uint32_t d = 0; d < v_cache_row_next.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << v_cache_row_next[d];
+        }
+        oss << "],\"v_cache_col_pos\":[";
+        for (uint32_t d = 0; d < v_cache_col_pos.size(); ++d) {
+          if (d)
+            oss << ",";
+          oss << v_cache_col_pos[d];
+        }
+        oss << "],\"mae_k_pos\":" << mae_k_pos
+            << ",\"mae_k_prev\":" << mae_k_prev
+            << ",\"mae_k_next\":" << mae_k_next
+            << ",\"mae_v_pos\":" << mae_v_pos
+            << ",\"mae_v_prev\":" << mae_v_prev
+            << ",\"mae_v_next\":" << mae_v_next
+            << ",\"mae_v_col\":" << mae_v_col
+            << "}";
+        append_line(out_v_addr, oss.str());
       }
     }
   }
