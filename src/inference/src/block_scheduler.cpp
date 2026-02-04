@@ -2033,6 +2033,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         float k_weight_max_row = 0.0f;
         float k_weight_max_col = 0.0f;
         uint32_t k_weight_sample = 0;
+        std::string v_weight_layout =
+            qkv_w_verify ? std::string("unavailable") : std::string("disabled");
+        double v_weight_mae_row = 0.0;
+        double v_weight_mae_col = 0.0;
+        float v_weight_max_row = 0.0f;
+        float v_weight_max_col = 0.0f;
+        uint32_t v_weight_sample = 0;
         if (qkv_w_verify && norm_out_valid &&
             norm_out_host.size() >= static_cast<size_t>(D)) {
           q_weight_sample = std::min<uint32_t>(
@@ -2180,6 +2187,54 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               k_weight_layout = "error";
             }
           }
+
+          if (q_weight_sample > 0 && Dh > 0 && kv_dim > 0) {
+            v_weight_sample = q_weight_sample;
+            static QkvWeightHostCache wv_cache;
+            const size_t wv_elems = static_cast<size_t>(D) * kv_dim;
+            if (ensure_qkv_weight_cache(b.wv, b.s_wv, b.sh_wv, wv_elems,
+                                        &wv_cache)) {
+              std::vector<float> v_row(static_cast<size_t>(Dh), 0.0f);
+              std::vector<float> v_col(static_cast<size_t>(Dh), 0.0f);
+              const float *x_vec = norm_out_host.data();
+              const uint32_t row_base = kv_head * Dh;
+              for (uint32_t j = 0; j < Dh; ++j) {
+                const uint32_t row = row_base + j;
+                double sum_row = 0.0;
+                double sum_col = 0.0;
+                for (uint32_t i = 0; i < D; ++i) {
+                  const float x_i = x_vec[i];
+                  const size_t idx_row =
+                      static_cast<size_t>(row) * D + i;
+                  const size_t idx_col =
+                      static_cast<size_t>(i) * kv_dim + row;
+                  sum_row += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wv_cache,
+                                                                  idx_row));
+                  sum_col += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wv_cache,
+                                                                  idx_col));
+                }
+                float h_scale = 1.0f;
+                if (!wv_cache.head_scales.empty() && Dh > 0) {
+                  const size_t h_idx = row / Dh;
+                  if (h_idx < wv_cache.head_scales.size()) {
+                    h_scale = wv_cache.head_scales[h_idx];
+                  }
+                }
+                v_row[j] = static_cast<float>(sum_row * h_scale);
+                v_col[j] = static_cast<float>(sum_col * h_scale);
+              }
+              mae_max_f32(v_row.data(), v_vec, v_weight_sample, &v_weight_mae_row,
+                          &v_weight_max_row);
+              mae_max_f32(v_col.data(), v_vec, v_weight_sample, &v_weight_mae_col,
+                          &v_weight_max_col);
+              v_weight_layout =
+                  (v_weight_mae_row <= v_weight_mae_col) ? "row" : "col";
+            } else {
+              v_weight_layout = "error";
+            }
+          }
         }
 
         auto append_span = [&](const char *name, const float *data,
@@ -2282,6 +2337,19 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"k_weight_head_dim\":" << Dh
             << ",\"k_weight_kv_heads\":" << Hkv
             << ",\"k_weight_sample_dims\":" << k_weight_sample
+            << ",\"v_weight\":\"V\""
+            << ",\"v_weight_layout_best\":\"" << v_weight_layout << "\""
+            << ",\"v_weight_mae_row\":" << v_weight_mae_row
+            << ",\"v_weight_mae_col\":" << v_weight_mae_col
+            << ",\"v_weight_max_row\":" << v_weight_max_row
+            << ",\"v_weight_max_col\":" << v_weight_max_col
+            << ",\"v_weight_dtype\":\"" << dtype_label(b.wv.data_type()) << "\""
+            << ",\"v_weight_quant_mode\":\""
+            << dtype_label(b.wv.data_type()) << "\""
+            << ",\"v_weight_stride_used\":" << D
+            << ",\"v_weight_head_dim\":" << Dh
+            << ",\"v_weight_kv_heads\":" << Hkv
+            << ",\"v_weight_sample_dims\":" << v_weight_sample
             << ",\"k_layout_used\":\"row_major\""
             << ",\"v_layout_used\":\"row_major\""
             << ",\"q_ptr\":" << reinterpret_cast<uintptr_t>(q)
