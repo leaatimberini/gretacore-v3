@@ -57,7 +57,8 @@ performance-driven compute stack.
 - B3.14–B3.16: LM head route isolation; MFMA disabled by default for LM head; VALU coherent in prefill.
 - B3.17–B3.18: Decode LM head isolation, hidden equivalence, and per-layer delta traces for decode.
 - B3.19: Decode attention `seq_len = pos + 1` fix attempted; decode0 collapse persists.
-- Next: B3.20 attention/KV decode audit to eliminate decode collapse.
+- B3.20: Attention decode isolation (attn verify/ref, KV invariants, forced kernel/matmul matrix). KV invariants OK; attn_out diverges from ref in layer 31; fused+mfma fails at load.
+- Next: B3.21 attention decode kernel audit (precision/accumulation) and fused+mfma path stabilization.
 - MI300X validation ongoing; AMD reports under `docs/AMD/`.
 
 **Phase 1 – Runtime Core (completed)**
@@ -95,6 +96,20 @@ performance-driven compute stack.
 - Framework compatibility plan: `docs/en/strategy/framework_compat.md`
 - Framework version matrix: `docs/en/strategy/framework_versions.md`
 - Framework prototypes: `tools/compat/README.md`
+
+## Reproduce B3.20 (MI300X)
+
+```bash
+export GRETA_TRACE_ATTN_DECODE_VERIFY=1
+export GRETA_TRACE_KV_INVARIANTS=1
+export GRETA_TRACE_ATTN_LAYERS="0,1,2,31"
+export GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"
+export GRETA_ATTN_DECODE_REF=1
+
+# Optional matrix controls
+export GRETA_FORCE_ATTN_DECODE_KERNEL=auto   # auto|manual|fused
+export GRETA_FORCE_ATTN_DECODE_MATMUL=auto   # auto|valu|mfma
+```
 
 ---
 

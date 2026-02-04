@@ -27,6 +27,8 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 - B3.14–B3.16: aislación de LM head; MFMA deshabilitado en LM head; prefill coherente con VALU.
 - B3.17–B3.18: trazas de decode (LM head force route, hidden equivalence, layer delta).
 - B3.19: fix de `seq_len = pos + 1` en attention decode no resolvió el colapso.
+- B3.20: aislamiento de attention decode (attn verify/ref, invariantes KV, matriz de rutas). KV invariants OK; divergencia attn_out vs ref en layer 31; `fused+mfma` falla en load.
+- B3.21: auditoría de kernel de attention decode (precisión/acumulación) + estabilización `fused+mfma`.
 - Validación MI300X en curso; evidencia en `docs/AMD/`.
 
 ## Fase 0 – Fundaciones

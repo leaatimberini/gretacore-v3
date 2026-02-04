@@ -24,10 +24,26 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Registra equivalencia de hidden prefill↔decode.
 - `GRETA_TRACE_LAYER_DELTA=1`  
   Hash/stats de `attn_out`, `mlp_out`, `x_out` en layers 0 y last (decode).
+- `GRETA_TRACE_ATTN_DECODE_VERIFY=1`  
+  Verifica atención decode con referencia (hash/MAE).
+- `GRETA_ATTN_DECODE_REF=1`  
+  Habilita recompute de referencia en decode0.
+- `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
+  Selecciona layers para trazas de atención decode.
+- `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
+  Selecciona tensores para trazas de atención decode.
+- `GRETA_TRACE_KV_INVARIANTS=1`  
+  Chequeos de offsets/posiciones en KV cache.
+- `GRETA_FORCE_ATTN_DECODE_KERNEL=auto|manual|fused`  
+  Fuerza ruta de kernel de atención decode.
+- `GRETA_FORCE_ATTN_DECODE_MATMUL=auto|valu|mfma`  
+  Fuerza ruta de GEMM en decode (Q/K/V/O) para aislar kernels.
 - `GRETA_LMHEAD_FORCE_ROUTE=valu|mfma`  
   Fuerza ruta LM head (prefill+decode) para aislar MFMA/VALU.
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Fuerza ruta LM head **solo en decode**.
+
+**Nota B3.20:** KV invariants se mantuvo mientras `attn_out` divergió del ref en layer 31; `fused+mfma` falló en load. El foco pasa a precisión/acumulación del kernel de atención decode y estabilidad de `fused+mfma`.
 
 ## Flujo Recomendada de Diagnóstico
 1. **Baseline**: ejecutar p4_sys y p5_ba con trazas delta.

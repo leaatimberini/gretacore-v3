@@ -24,10 +24,26 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Records hidden equivalence prefill↔decode.
 - `GRETA_TRACE_LAYER_DELTA=1`  
   Hash/stats of `attn_out`, `mlp_out`, `x_out` for layer 0 and last (decode).
+- `GRETA_TRACE_ATTN_DECODE_VERIFY=1`  
+  Verifies decode attention with a reference (hash/MAE).
+- `GRETA_ATTN_DECODE_REF=1`  
+  Enables recompute reference on decode0.
+- `GRETA_TRACE_ATTN_LAYERS="0,1,2,31"`  
+  Selects layers for decode attention traces.
+- `GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"`  
+  Selects tensors for decode attention traces.
+- `GRETA_TRACE_KV_INVARIANTS=1`  
+  Checks KV cache offsets/positions invariants.
+- `GRETA_FORCE_ATTN_DECODE_KERNEL=auto|manual|fused`  
+  Forces decode attention kernel path.
+- `GRETA_FORCE_ATTN_DECODE_MATMUL=auto|valu|mfma`  
+  Forces GEMM route in decode (Q/K/V/O) to isolate kernels.
 - `GRETA_LMHEAD_FORCE_ROUTE=valu|mfma`  
   Forces LM head route (prefill+decode) to isolate MFMA/VALU.
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Forces LM head route **decode-only**.
+
+**B3.20 note:** KV invariants held while `attn_out` diverged from ref at layer 31; `fused+mfma` failed at load. Treat decode attention kernel precision/accumulation and fused+mfma stability as primary suspects.
 
 ## Recommended Debug Flow
 1. **Baseline**: run p4_sys and p5_ba with delta traces.

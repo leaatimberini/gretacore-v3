@@ -25,6 +25,7 @@ hardware AMD.
 - El pipeline de inferencia LLM está en fase de corrección y trazas profundas.
 - Se aisló el LM head (rutas MFMA/VALU) y se agregó instrumentación de decode.
 - El colapso en decode persiste; la investigación se centra en atención/KV y estado.
+- B3.20 introduce verificación de attention decode con referencia y trazas de invariantes KV. Resultado: `attn_out` diverge del ref en layer 31 mientras KV invariants se mantiene; `fused+mfma` falla en load.
 - Validación MI300X en curso con evidencia en `docs/AMD/`.
 
 ---
