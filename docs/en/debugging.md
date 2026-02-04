@@ -48,8 +48,10 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Verifies QKV weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Forces prefill Q projection to use the row-major interpretation (B3.34).
+- `GRETA_PREFILL_FORCE_WK_ROW=1`  
+  Forces prefill K projection to use the row-major interpretation (B3.35).
 - `GRETA_PREFILL_QKV_LAYOUT=row|col|auto`  
-  Explicit layout selector for prefill QKV projection (row recommended for B3.34).
+  Explicit layout selector for prefill QKV projection (row recommended for B3.34/B3.35).
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Forces Q/K/V projection route in **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  

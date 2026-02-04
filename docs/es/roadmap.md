@@ -35,7 +35,8 @@ Está optimizado para corrección, rendimiento y sostenibilidad.
 - B3.27–B3.29: stage trace post-x_in; primer mismatch localizado en `attn_out` (layer 0).
 - B3.30–B3.32: aislamiento en layer0; `attn_norm_out` ok; primer mismatch en Q; ruta no depende de MFMA/VALU.
 - B3.33: verificación layout Wq: prefill_last=col, decode0=row en prompts con contexto.
-- B3.34: **en curso** — corregir layout de Wq en prefill (GEMM) para alinear con decode (row).
+- B3.34: corregir layout de Wq en prefill (GEMM) para alinear con decode (row).
+- B3.35: **en curso** — corregir layout de Wk en prefill (GEMM) para alinear con decode (row).
 - Validación MI300X en curso; evidencia en `docs/AMD/`.
 
 ## Fase 0 – Fundaciones

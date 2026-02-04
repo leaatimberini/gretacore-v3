@@ -35,7 +35,8 @@ It is optimized for correctness, performance, and sustainability.
 - B3.27–B3.29: post-x_in stage trace; first mismatch localized at `attn_out` (layer 0).
 - B3.30–B3.32: layer0 isolation; `attn_norm_out` ok; first mismatch at Q; not MFMA/VALU route-dependent.
 - B3.33: Wq layout verification: prefill_last=col, decode0=row for context prompts.
-- B3.34: **in progress** — fix prefill Wq layout (GEMM) to align with decode (row).
+- B3.34: fix prefill Wq layout (GEMM) to align with decode (row).
+- B3.35: **in progress** — fix prefill Wk layout (GEMM) to align with decode (row).
 - MI300X validation ongoing; evidence under `docs/AMD/`.
 
 ## Phase 0 – Foundations

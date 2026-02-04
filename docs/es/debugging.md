@@ -48,8 +48,10 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Verifica el layout/packing de pesos QKV en layer0 (row vs col) entre `prefill_last` y `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Fuerza la proyección Q en prefill a usar layout row (B3.34).
+- `GRETA_PREFILL_FORCE_WK_ROW=1`  
+  Fuerza la proyección K en prefill a usar layout row (B3.35).
 - `GRETA_PREFILL_QKV_LAYOUT=row|col|auto`  
-  Selector explícito de layout para la proyección QKV en prefill (row recomendado para B3.34).
+  Selector explícito de layout para la proyección QKV en prefill (row recomendado para B3.34/B3.35).
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Fuerza la ruta de proyección Q/K/V en **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  
