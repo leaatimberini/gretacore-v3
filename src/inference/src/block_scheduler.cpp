@@ -1478,8 +1478,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   const bool trace_layer = GRETA_UNLIKELY(layer_tracer_.enabled());
   const bool stage_enabled = stage_trace_enabled();
+  const bool post_wo_enabled = trace_post_wo_enabled();
   const char *stage_phase = nullptr;
-  if (stage_enabled) {
+  if (stage_enabled || post_wo_enabled) {
     if (seq_len > 1 && trace_step_ == 0) {
       stage_phase = "prefill_last";
     } else if (seq_len == 1 && trace_step_ == 1) {
@@ -4040,8 +4041,9 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                      "Final RMSNorm");
 
     const bool stage_enabled = stage_trace_enabled();
+    const bool post_wo_enabled = trace_post_wo_enabled();
     const char *stage_phase = nullptr;
-    if (stage_enabled) {
+    if (stage_enabled || post_wo_enabled) {
       if (seq_len > 1 && trace_step_ == 0) {
         stage_phase = "prefill_last";
       } else if (seq_len == 1 && trace_step_ == 1) {
