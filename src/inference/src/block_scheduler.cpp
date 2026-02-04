@@ -2440,6 +2440,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                            norm_out, S, D, config_.rms_eps),
       "RMSNorm (FFN)");
 
+  if (stage_layer) {
+    stage_trace_tensor("ffn_norm", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total,
+                       norm_out, D, stage_token_index, hip_stream);
+  }
+
   if (trace_layer) {
     layer_tracer_.trace_tensor("ffn_norm", trace_step_,
                                static_cast<int>(layer_idx), hip_stream,
