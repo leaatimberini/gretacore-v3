@@ -36,6 +36,11 @@ static bool is_lm_head_decode_label(const std::string &label) {
   return label == "lm_head_decode";
 }
 
+static bool is_attn_decode_label(const std::string &label) {
+  return label.rfind("attn_", 0) == 0 &&
+         label.find("_decode") != std::string::npos;
+}
+
 static gcore::compute::GemmAuditInfo &last_gemm_audit() {
   static gcore::compute::GemmAuditInfo info;
   return info;
@@ -111,6 +116,18 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
     } else if (force_str == "VALU") {
       use_mfma = false;
       reason = "Forced by GRETA_GEMM_FORCE=VALU";
+    }
+  }
+
+  const char *attn_force = std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL");
+  if (attn_force && is_attn_decode_label(op_label)) {
+    std::string force_str(attn_force);
+    if (force_str == "mfma" || force_str == "MFMA") {
+      use_mfma = true;
+      reason = "Forced by GRETA_FORCE_ATTN_DECODE_MATMUL=mfma";
+    } else if (force_str == "valu" || force_str == "VALU") {
+      use_mfma = false;
+      reason = "Forced by GRETA_FORCE_ATTN_DECODE_MATMUL=valu";
     }
   }
   std::string lmhead_force_route = "auto";

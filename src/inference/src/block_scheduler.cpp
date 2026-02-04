@@ -792,6 +792,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   uint32_t Dh = D / Hq;
   uint32_t hidden_dim = static_cast<uint32_t>(config_.hidden_dim);
   uint32_t S = static_cast<uint32_t>(seq_len);
+  const bool is_decode_step = (S == 1 && seq_start > 0);
 
   const uint32_t n_x = S * D;
   const uint32_t n_mlp = S * hidden_dim;
@@ -904,30 +905,39 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
     if (profile_attn)
       ev_q_start->record(stream_);
+    gcore::compute::GretaCompute::set_op_label(
+        is_decode_step ? "attn_q_decode" : "attn_q_prefill");
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
                                            &b.wq, &activations_.q, S, D, D),
         "GEMM Q");
+    gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_q_end->record(stream_);
 
     if (profile_attn)
       ev_k_start->record(stream_);
+    gcore::compute::GretaCompute::set_op_label(
+        is_decode_step ? "attn_k_decode" : "attn_k_prefill");
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
                                            &b.wk, &activations_.k, S, kv_dim,
                                            D),
         "GEMM K");
+    gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_k_end->record(stream_);
 
     if (profile_attn)
       ev_v_start->record(stream_);
+    gcore::compute::GretaCompute::set_op_label(
+        is_decode_step ? "attn_v_decode" : "attn_v_prefill");
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
                                            &b.wv, &activations_.v, S, kv_dim,
                                            D),
         "GEMM V");
+    gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_v_end->record(stream_);
 
@@ -955,6 +965,17 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   bool use_fused_attn =
       (use_fused_attn_env && std::string(use_fused_attn_env) == "1") &&
       (S == 1) && (Hkv == Hq);
+  if (S == 1) {
+    const char *force_attn = std::getenv("GRETA_FORCE_ATTN_DECODE_KERNEL");
+    if (force_attn) {
+      std::string force_str(force_attn);
+      if (force_str == "manual" || force_str == "MANUAL") {
+        use_fused_attn = false;
+      } else if (force_str == "fused" || force_str == "FUSED") {
+        use_fused_attn = true;
+      }
+    }
+  }
 
   if (profile_attn)
     ev_rope_start->record(stream_);
@@ -1065,10 +1086,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     launch_debug_tensor_stats(hip_stream, "L.attn.attn_out", attn_out, n_x);
   }
 
+  gcore::compute::GretaCompute::set_op_label(
+      is_decode_step ? "attn_o_decode" : "attn_o_prefill");
   CHECK_GRETA(
       gcore::compute::GretaCompute::gemm(stream_, &activations_.attn_out, &b.wo,
                                          &activations_.mlp_out, S, D, D),
       "GEMM O");
+  gcore::compute::GretaCompute::set_op_label(nullptr);
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (Attn)");
 
