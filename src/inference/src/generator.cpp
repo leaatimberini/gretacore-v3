@@ -812,6 +812,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
   const bool trace_stage = stage_trace_enabled();
+  const bool trace_stage_debug_input = stage_trace_debug_input();
   const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape ||
                          trace_delta || trace_lmhead_w_verify || trace_hidden_equiv ||
                          trace_stage;
@@ -1108,12 +1109,17 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     // Use current sequence length (output.size() - 1) as start position for the
     // new token
     int32_t last_token_id = output.back();
-    if (!scheduler_->forward(&last_token_id, output.size() - 1, 1, err)) {
+    size_t decode_seq_start = output.size() - 1;
+    if (trace_stage_debug_input && i == 1 && !prompt_tokens.empty()) {
+      last_token_id = prompt_tokens.back();
+      decode_seq_start = prompt_tokens.size() - 1;
+    }
+    if (!scheduler_->forward(&last_token_id, decode_seq_start, 1, err)) {
       break;
     }
     const bool need_logits_host = !params.greedy || align_callback || trace_readout || trace_landscape || trace_prefill_decode || trace_delta || trace_stage;
     const size_t decode_logits_offset =
-        (output.size() - 1) * config_.vocab_size * sizeof(float);
+        decode_seq_start * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
       next_token = scheduler_->sample_greedy_gpu(decode_logits_offset, err);
     } else {
@@ -1133,7 +1139,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         const size_t hidden_token_index_used = 0;
         const size_t used_index = hidden_token_index_used;
         const size_t seq_len = 1;
-        const size_t pos_id = token_index;
+        const size_t pos_id = decode_seq_start;
         const size_t hidden_stride_bytes = config_.dim * sizeof(float);
         const size_t hidden_offset =
             hidden_token_index_used * hidden_stride_bytes;
