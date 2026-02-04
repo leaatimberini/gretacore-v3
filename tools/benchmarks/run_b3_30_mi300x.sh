@@ -41,6 +41,7 @@ export GRETA_INT4_WEIGHTS=1
 export GRETA_MAX_SEQ_LEN=256
 export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_PIPE_OUT=$OUTDIR/b3_30_attn_l0_pipe.jsonl
+export GRETA_TRACE_STAGE_DEBUG_INPUT=1
 
 MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 BIN=/root/gretacore/tools/inference/build/greta_infer
