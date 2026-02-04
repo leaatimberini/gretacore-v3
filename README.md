@@ -153,6 +153,8 @@ export GRETA_TRACE_QKV_W_VERIFY=1
 export GRETA_PREFILL_FORCE_WQ_ROW=1
 # Force prefill K projection to use row layout (B3.35)
 export GRETA_PREFILL_FORCE_WK_ROW=1
+# Force prefill V projection to use row layout (B3.36)
+export GRETA_PREFILL_FORCE_WV_LAYOUT=row
 # Alternative: explicit layout selector (row|col|auto)
 export GRETA_PREFILL_QKV_LAYOUT=row
 # Recommended when comparing prefill_last vs decode0 for the same token/pos

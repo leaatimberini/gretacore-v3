@@ -50,6 +50,8 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Fuerza la proyección Q en prefill a usar layout row (B3.34).
 - `GRETA_PREFILL_FORCE_WK_ROW=1`  
   Fuerza la proyección K en prefill a usar layout row (B3.35).
+- `GRETA_PREFILL_FORCE_WV_LAYOUT=row|col|auto`  
+  Fuerza la proyección V en prefill a usar layout row/col (B3.36; recomendado `row`).
 - `GRETA_PREFILL_QKV_LAYOUT=row|col|auto`  
   Selector explícito de layout para la proyección QKV en prefill (row recomendado para B3.34/B3.35).
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
