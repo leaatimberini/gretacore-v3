@@ -2424,6 +2424,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                                          &activations_.mlp_out, S, D, D),
       "GEMM O");
   gcore::compute::GretaCompute::set_op_label(nullptr);
+
+  if (stage_layer) {
+    stage_trace_tensor("wo_out", stage_phase, stage_prompt_id, layer_idx,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id,
+                       static_cast<uint32_t>(seq_len), stage_tokens_total,
+                       mlp_out, D, stage_token_index, hip_stream);
+  }
+
   CHECK_HIP_KERNEL(launch_add(hip_stream, x, mlp_out, x, S * D),
                    "Residual (Attn)");
 
