@@ -350,6 +350,112 @@ static bool post_wo_phase_enabled(const char *phase) {
   return false;
 }
 
+static bool trace_rmsnorm_enabled() {
+  return env_flag("GRETA_TRACE_RMSNORM");
+}
+
+static const char *rmsnorm_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_RMSNORM_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
+static uint32_t rmsnorm_sample() {
+  const char *v = std::getenv("GRETA_TRACE_RMSNORM_SAMPLE");
+  if (!v || !*v)
+    return 1024;
+  char *e = nullptr;
+  long val = std::strtol(v, &e, 10);
+  if (e == v || val <= 0)
+    return 1024;
+  return static_cast<uint32_t>(val);
+}
+
+static bool rmsnorm_trace_all_layers() {
+  static bool cached = false;
+  static bool trace_all = false;
+  if (!cached) {
+    const char *v = std::getenv("GRETA_TRACE_RMSNORM_LAYERS");
+    if (v && *v) {
+      std::string s(v);
+      if (s == "all" || s == "ALL" || s == "*")
+        trace_all = true;
+    }
+    cached = true;
+  }
+  return trace_all;
+}
+
+static std::vector<int> rmsnorm_layers() {
+  static bool cached = false;
+  static std::vector<int> layers;
+  if (!cached) {
+    const char *v = std::getenv("GRETA_TRACE_RMSNORM_LAYERS");
+    if (!v || !*v) {
+      layers.push_back(0);
+    } else {
+      std::string s(v);
+      size_t start = 0;
+      while (start < s.size()) {
+        size_t end = s.find(',', start);
+        std::string token =
+            s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                       : end - start);
+        if (!token.empty()) {
+          char *e = nullptr;
+          long val = std::strtol(token.c_str(), &e, 10);
+          if (e != token.c_str())
+            layers.push_back(static_cast<int>(val));
+        }
+        if (end == std::string::npos)
+          break;
+        start = end + 1;
+      }
+      if (layers.empty() && !rmsnorm_trace_all_layers()) {
+        layers.push_back(0);
+      }
+    }
+    cached = true;
+  }
+  return layers;
+}
+
+static bool rmsnorm_layer_selected(size_t layer_idx, size_t num_layers) {
+  if (rmsnorm_trace_all_layers())
+    return true;
+  const auto layers = rmsnorm_layers();
+  if (layers.empty())
+    return true;
+  for (int layer : layers) {
+    if (layer < 0 && static_cast<size_t>(-layer) == num_layers)
+      return true;
+    if (static_cast<size_t>(layer) == layer_idx)
+      return true;
+  }
+  return false;
+}
+
+static bool rmsnorm_phase_enabled(const char *phase) {
+  const char *v = std::getenv("GRETA_TRACE_RMSNORM_PHASES");
+  if (!v || !*v)
+    return true;
+  std::string s(v);
+  size_t start = 0;
+  while (start < s.size()) {
+    size_t end = s.find(',', start);
+    std::string token =
+        s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                   : end - start);
+    if (!token.empty() && token == phase)
+      return true;
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  return false;
+}
+
 static const char *attn_l0_pipe_out_path() {
   const char *out = std::getenv("GRETA_TRACE_ATTN_L0_PIPE_OUT");
   if (out && *out)
@@ -959,6 +1065,112 @@ static void post_wo_trace_tensor(const char *point, const char *phase,
     oss << host[i];
   }
   oss << "]}";
+  append_line(out, oss.str());
+}
+
+static void trace_rmsnorm(const char *phase, const char *prompt_id,
+                          size_t layer, size_t num_layers, uint32_t step,
+                          uint32_t pos_id, uint32_t seq_len,
+                          uint32_t tokens_total, const float *input,
+                          const float *output, size_t stride_elems,
+                          size_t token_index, size_t input_alloc_bytes,
+                          size_t output_alloc_bytes,
+                          const gcore::rt::hip::Buffer &weight, float eps,
+                          hipStream_t stream) {
+  if (!trace_rmsnorm_enabled())
+    return;
+  const char *out = rmsnorm_out_path();
+  if (!out || !*out || !phase)
+    return;
+  if (!rmsnorm_phase_enabled(phase))
+    return;
+  if (!rmsnorm_layer_selected(layer, num_layers))
+    return;
+  if (!input || !output || stride_elems == 0)
+    return;
+
+  const size_t offset_elems = token_index * stride_elems;
+  const float *in_ptr = input + offset_elems;
+  const float *out_ptr = output + offset_elems;
+  const uint32_t sample_n =
+      std::min<uint32_t>(rmsnorm_sample(),
+                         static_cast<uint32_t>(stride_elems));
+  std::vector<float> in_host(sample_n, 0.0f);
+  std::vector<float> out_host(sample_n, 0.0f);
+  std::vector<float> w_host(sample_n, 0.0f);
+  if (sample_n > 0) {
+    hipMemcpyAsync(in_host.data(), in_ptr, sample_n * sizeof(float),
+                   hipMemcpyDeviceToHost, stream);
+    hipMemcpyAsync(out_host.data(), out_ptr, sample_n * sizeof(float),
+                   hipMemcpyDeviceToHost, stream);
+    if (weight.data()) {
+      hipMemcpyAsync(w_host.data(), weight.data(), sample_n * sizeof(float),
+                     hipMemcpyDeviceToHost, stream);
+    }
+    hipStreamSynchronize(stream);
+  }
+
+  const F32Stats instats = stats_f32(in_host.data(), in_host.size());
+  const F32Stats outstats = stats_f32(out_host.data(), out_host.size());
+  const F32Stats wstats = stats_f32(w_host.data(), w_host.size());
+  const uint64_t inhash = hash_f32(in_host.data(), in_host.size());
+  const uint64_t outhash = hash_f32(out_host.data(), out_host.size());
+  const uint64_t whash = hash_f32(w_host.data(), w_host.size());
+
+  double sumsq = 0.0;
+  for (float v : in_host) {
+    sumsq += static_cast<double>(v) * static_cast<double>(v);
+  }
+  double mean_sq = (in_host.empty()) ? 0.0 : (sumsq / in_host.size());
+  double inv_rms = (mean_sq + eps) > 0.0
+                       ? (1.0 / std::sqrt(mean_sq + eps))
+                       : 0.0;
+
+  std::ostringstream oss;
+  oss << "{\"event\":\"rmsnorm_trace\"";
+  if (prompt_id && *prompt_id)
+    oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+  oss << ",\"phase\":\"" << phase << "\""
+      << ",\"layer\":" << layer
+      << ",\"step\":" << step
+      << ",\"pos_id\":" << pos_id
+      << ",\"seq_len\":" << seq_len
+      << ",\"tokens_total\":" << tokens_total
+      << ",\"token_index\":" << token_index
+      << ",\"eps\":" << eps
+      << ",\"sumsq\":" << mean_sq
+      << ",\"inv_rms\":" << inv_rms
+      << ",\"input_hash\":" << inhash
+      << ",\"input_min\":" << instats.min
+      << ",\"input_max\":" << instats.max
+      << ",\"input_mean\":" << instats.mean
+      << ",\"input_nan\":" << instats.nan
+      << ",\"input_inf\":" << instats.inf
+      << ",\"output_hash\":" << outhash
+      << ",\"output_min\":" << outstats.min
+      << ",\"output_max\":" << outstats.max
+      << ",\"output_mean\":" << outstats.mean
+      << ",\"output_nan\":" << outstats.nan
+      << ",\"output_inf\":" << outstats.inf
+      << ",\"weight_hash\":" << whash
+      << ",\"weight_min\":" << wstats.min
+      << ",\"weight_max\":" << wstats.max
+      << ",\"weight_mean\":" << wstats.mean
+      << ",\"input_ptr\":" << reinterpret_cast<uintptr_t>(in_ptr)
+      << ",\"output_ptr\":" << reinterpret_cast<uintptr_t>(out_ptr)
+      << ",\"weight_ptr\":" << reinterpret_cast<uintptr_t>(weight.data())
+      << ",\"input_offset_bytes\":" << (offset_elems * sizeof(float))
+      << ",\"output_offset_bytes\":" << (offset_elems * sizeof(float))
+      << ",\"input_alloc_bytes\":" << input_alloc_bytes
+      << ",\"output_alloc_bytes\":" << output_alloc_bytes
+      << ",\"weight_bytes\":" << weight.size()
+      << ",\"stride_bytes\":" << (stride_elems * sizeof(float))
+      << ",\"input_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32) << "\""
+      << ",\"output_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32) << "\""
+      << ",\"weight_dtype\":\"" << dtype_label(weight.data_type()) << "\""
+      << ",\"kernel\":\"rmsnorm_naive\""
+      << ",\"sample_n\":" << sample_n
+      << "}";
   append_line(out, oss.str());
 }
 
@@ -2764,6 +2976,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                            static_cast<const float *>(b.ffn_norm.data()),
                            norm_out, S, D, config_.rms_eps),
       "RMSNorm (FFN)");
+
+  if (trace_rmsnorm_enabled() && stage_phase &&
+      rmsnorm_phase_enabled(stage_phase) &&
+      rmsnorm_layer_selected(layer_idx, config_.num_layers) &&
+      rmsnorm_out_path()) {
+    trace_rmsnorm(stage_phase, stage_prompt_id, layer_idx, config_.num_layers,
+                  static_cast<uint32_t>(trace_step_), stage_pos_id,
+                  static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                  norm_out, D, stage_token_index, activations_.x.size(),
+                  activations_.norm_out.size(), b.ffn_norm, config_.rms_eps,
+                  hip_stream);
+  }
 
   if (stage_layer) {
     stage_trace_tensor("ffn_norm", stage_phase, stage_prompt_id, layer_idx,
