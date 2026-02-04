@@ -428,6 +428,9 @@ struct DeltaTrace {
   size_t tokens_total = 0;
   size_t seq_len = 0;
   size_t pos_id = 0;
+  uintptr_t hidden_ptr = 0;
+  size_t hidden_offset_bytes = 0;
+  size_t hidden_token_index_used = 0;
   uint64_t hidden_hash = 0;
   F32Stats hidden_stats{};
   uint64_t rms_hash = 0;
@@ -444,6 +447,7 @@ struct DeltaTrace {
   float gap = 0.0f;
   std::string lm_head_route;
   std::string lm_head_force_route;
+  std::string lm_head_force_route_decode;
   std::string lm_head_quant_mode;
   std::string lm_head_layout_used;
   std::string lm_head_layout_assumed;
@@ -482,6 +486,9 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"tokens_total\":" << t.tokens_total
       << ",\"seq_len\":" << t.seq_len
       << ",\"pos_id\":" << t.pos_id
+      << ",\"hidden_ptr\":" << t.hidden_ptr
+      << ",\"hidden_offset_bytes\":" << t.hidden_offset_bytes
+      << ",\"hidden_token_index_used\":" << t.hidden_token_index_used
       << ",\"hidden_hash\":" << t.hidden_hash
       << ",\"hidden_min\":" << t.hidden_stats.min
       << ",\"hidden_max\":" << t.hidden_stats.max
@@ -502,6 +509,7 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"gap\":" << t.gap
       << ",\"lm_head_route\":\"" << t.lm_head_route << "\""
       << ",\"lm_head_force_route\":\"" << t.lm_head_force_route << "\""
+      << ",\"lm_head_force_route_decode\":\"" << t.lm_head_force_route_decode << "\""
       << ",\"lm_head_quant_mode\":\"" << t.lm_head_quant_mode << "\""
       << ",\"lm_head_layout_used\":\"" << t.lm_head_layout_used << "\""
       << ",\"lm_head_layout_assumed\":\"" << t.lm_head_layout_assumed << "\""
@@ -529,6 +537,42 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"cpu_probe_agrees_gpu\":" << (t.cpu_probe_agrees_gpu ? "true" : "false")
       << ",\"cpu_probe_prefill_top1\":" << t.cpu_probe_prefill_top1
       << ",\"cpu_probe_decode0_top1\":" << t.cpu_probe_decode0_top1
+      << "}";
+  append_line(path, oss.str());
+}
+
+struct HiddenEquivTrace {
+  size_t prefill_tokens_total = 0;
+  size_t prefill_seq_len = 0;
+  size_t prefill_pos_id = 0;
+  uint64_t prefill_hash = 0;
+  F32Stats prefill_stats{};
+  size_t decode_tokens_total = 0;
+  size_t decode_seq_len = 0;
+  size_t decode_pos_id = 0;
+  uint64_t decode_hash = 0;
+  F32Stats decode_stats{};
+};
+
+static void log_hidden_equiv(const char *path, const HiddenEquivTrace &t) {
+  if (!path || !*path)
+    return;
+  std::ostringstream oss;
+  oss << "{\"event\":\"hidden_equiv\""
+      << ",\"prefill_tokens_total\":" << t.prefill_tokens_total
+      << ",\"prefill_seq_len\":" << t.prefill_seq_len
+      << ",\"prefill_pos_id\":" << t.prefill_pos_id
+      << ",\"prefill_hash\":" << t.prefill_hash
+      << ",\"prefill_min\":" << t.prefill_stats.min
+      << ",\"prefill_max\":" << t.prefill_stats.max
+      << ",\"prefill_mean\":" << t.prefill_stats.mean
+      << ",\"decode_tokens_total\":" << t.decode_tokens_total
+      << ",\"decode_seq_len\":" << t.decode_seq_len
+      << ",\"decode_pos_id\":" << t.decode_pos_id
+      << ",\"decode_hash\":" << t.decode_hash
+      << ",\"decode_min\":" << t.decode_stats.min
+      << ",\"decode_max\":" << t.decode_stats.max
+      << ",\"decode_mean\":" << t.decode_stats.mean
       << "}";
   append_line(path, oss.str());
 }
@@ -758,6 +802,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const char *trace_prefill_decode_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
   const bool trace_delta = env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA");
   const char *trace_delta_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+  const bool trace_hidden_equiv = env_flag("GRETA_TRACE_HIDDEN_EQUIV");
   const bool trace_rms_verify = env_flag("GRETA_TRACE_RMS_VERIFY");
   const bool trace_cpu_probe = env_flag("GRETA_TRACE_LMHEAD_CPU_PROBE");
   const bool trace_lmhead_w_verify = env_flag("GRETA_TRACE_LMHEAD_W_VERIFY");
@@ -765,11 +810,12 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_landscape = env_flag("GRETA_TRACE_LANDSCAPE");
   const char *trace_landscape_out = std::getenv("GRETA_TRACE_LANDSCAPE_OUT");
   const int landscape_topk = 64;
-  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape || trace_delta || trace_lmhead_w_verify;
+  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape ||
+                         trace_delta || trace_lmhead_w_verify || trace_hidden_equiv;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_hidden_equiv) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
@@ -897,7 +943,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (trace_prefill_decode && trace_prefill_decode_out) {
       log_readout(trace_prefill_decode_out, trace);
     }
-    if (trace_delta && trace_delta_out) {
+    if ((trace_delta || trace_hidden_equiv) && trace_delta_out) {
       gcore::compute::GemmAuditInfo audit =
           gcore::compute::GretaCompute::get_last_gemm_audit();
       DeltaTrace delta{};
@@ -906,6 +952,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       delta.tokens_total = tokens_total;
       delta.seq_len = seq_len;
       delta.pos_id = pos_id;
+      delta.hidden_ptr = hidden_ptr;
+      delta.hidden_offset_bytes = hidden_offset;
+      delta.hidden_token_index_used = hidden_token_index_used;
       delta.hidden_hash = hhash;
       delta.hidden_stats = hstats;
       delta.rms_hash = rhash;
@@ -926,6 +975,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
       delta.gap = gap;
       delta.lm_head_route = audit.route;
       delta.lm_head_force_route = audit.force_route;
+      delta.lm_head_force_route_decode = audit.force_route_decode;
       delta.lm_head_quant_mode = audit.quant_mode;
       delta.lm_head_layout_used = audit.layout_used;
       delta.lm_head_layout_assumed = audit.layout_assumed;
@@ -1153,6 +1203,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           delta.tokens_total = tokens_total;
           delta.seq_len = seq_len;
           delta.pos_id = pos_id;
+          delta.hidden_ptr = hidden_ptr;
+          delta.hidden_offset_bytes = hidden_offset;
+          delta.hidden_token_index_used = hidden_token_index_used;
           delta.hidden_hash = hhash;
           delta.hidden_stats = hstats;
           delta.rms_hash = rhash;
@@ -1172,8 +1225,23 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           delta.top2_logit = top2.top2_logit;
           delta.gap = gap;
           delta.lm_head_route = audit.route;
+          delta.lm_head_force_route = audit.force_route;
+          delta.lm_head_force_route_decode = audit.force_route_decode;
           delta.lm_head_quant_mode = audit.quant_mode;
           delta.lm_head_layout_used = audit.layout_used;
+          delta.lm_head_layout_assumed = audit.layout_assumed;
+          delta.lm_head_layout_actual = audit.layout_actual;
+          delta.lm_head_m = audit.m;
+          delta.lm_head_n = audit.n;
+          delta.lm_head_k = audit.k;
+          delta.lm_head_vocab = audit.n;
+          delta.lm_head_lda = audit.lda;
+          delta.lm_head_ldb = audit.ldb;
+          delta.lm_head_ldc = audit.ldc;
+          delta.lm_head_a_ptr = audit.a_ptr;
+          delta.lm_head_b_ptr_base = audit.b_ptr_base;
+          delta.lm_head_b_ptr_effective = audit.b_ptr_effective;
+          delta.lm_head_c_ptr = audit.c_ptr;
           delta.lm_head_dtype_a = audit.type_a;
           delta.lm_head_dtype_b = audit.type_b;
           delta.lm_head_accum_dtype = audit.accum_type;
@@ -1219,6 +1287,21 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             prefill_delta_written = true;
           }
           log_delta(trace_delta_out, delta);
+        }
+        if (trace_hidden_equiv && trace_delta_out && i == 1 &&
+            prefill_delta_ready) {
+          HiddenEquivTrace eq{};
+          eq.prefill_tokens_total = prefill_delta.tokens_total;
+          eq.prefill_seq_len = prefill_delta.seq_len;
+          eq.prefill_pos_id = prefill_delta.pos_id;
+          eq.prefill_hash = prefill_delta.hidden_hash;
+          eq.prefill_stats = prefill_delta.hidden_stats;
+          eq.decode_tokens_total = tokens_total;
+          eq.decode_seq_len = seq_len;
+          eq.decode_pos_id = pos_id;
+          eq.decode_hash = hhash;
+          eq.decode_stats = hstats;
+          log_hidden_equiv(trace_delta_out, eq);
         }
       }
 

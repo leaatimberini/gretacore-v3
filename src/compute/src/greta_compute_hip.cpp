@@ -27,6 +27,15 @@ static std::string &current_op_label() {
   return label;
 }
 
+static bool is_lm_head_label(const std::string &label) {
+  return label == "lm_head" || label == "lm_head_prefill" ||
+         label == "lm_head_decode";
+}
+
+static bool is_lm_head_decode_label(const std::string &label) {
+  return label == "lm_head_decode";
+}
+
 static gcore::compute::GemmAuditInfo &last_gemm_audit() {
   static gcore::compute::GemmAuditInfo info;
   return info;
@@ -90,6 +99,10 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
   bool use_mfma = (M > GEMM_MFMA_THRESHOLD);
   std::string reason = use_mfma ? "M > threshold" : "M <= threshold";
 
+  const std::string op_label = current_op_label();
+  const bool is_lm_head = is_lm_head_label(op_label);
+  const bool is_lm_head_decode = is_lm_head_decode_label(op_label);
+
   if (force_gemm) {
     std::string force_str(force_gemm);
     if (force_str == "MFMA") {
@@ -101,8 +114,9 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
     }
   }
   std::string lmhead_force_route = "auto";
+  std::string lmhead_force_route_decode = "auto";
   const char *lmhead_force = std::getenv("GRETA_LMHEAD_FORCE_ROUTE");
-  if (lmhead_force && current_op_label() == "lm_head") {
+  if (lmhead_force && is_lm_head) {
     std::string force_str(lmhead_force);
     if (force_str == "mfma" || force_str == "MFMA") {
       use_mfma = true;
@@ -116,7 +130,23 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
       lmhead_force_route = "auto";
     }
   }
-  if (current_op_label() == "lm_head" && lmhead_force_route == "auto") {
+  const char *lmhead_force_decode = std::getenv("GRETA_LMHEAD_FORCE_ROUTE_DECODE");
+  if (lmhead_force_decode && is_lm_head_decode) {
+    std::string force_str(lmhead_force_decode);
+    if (force_str == "mfma" || force_str == "MFMA") {
+      use_mfma = true;
+      reason = "Forced by GRETA_LMHEAD_FORCE_ROUTE_DECODE=mfma";
+      lmhead_force_route_decode = "mfma";
+    } else if (force_str == "valu" || force_str == "VALU") {
+      use_mfma = false;
+      reason = "Forced by GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu";
+      lmhead_force_route_decode = "valu";
+    } else {
+      lmhead_force_route_decode = "auto";
+    }
+  }
+  if (is_lm_head && lmhead_force_route == "auto" &&
+      (!is_lm_head_decode || lmhead_force_route_decode == "auto")) {
     use_mfma = false;
     reason = "LM head MFMA disabled (B3.16)";
   }
@@ -126,13 +156,13 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
   GretaDataType type_A = A->data_type();
   GretaDataType type_B = B->data_type();
 
-  const bool trace_audit = trace_lmhead_enabled() &&
-      (current_op_label() == "lm_head");
+  const bool trace_audit = trace_lmhead_enabled() && is_lm_head;
   if (trace_audit) {
     auto &info = last_gemm_audit();
-    info.op_label = current_op_label();
+    info.op_label = op_label;
     info.route = use_mfma ? "MFMA" : "VALU";
     info.force_route = lmhead_force_route;
+    info.force_route_decode = lmhead_force_route_decode;
     info.quant_mode = dtype_name(type_B);
     info.layout_used = "KxN row_major";
     info.layout_assumed = "KxN row_major";

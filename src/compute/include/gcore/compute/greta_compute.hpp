@@ -16,6 +16,7 @@ struct GemmAuditInfo {
   std::string op_label;
   std::string route;
   std::string force_route;
+  std::string force_route_decode;
   std::string quant_mode;
   std::string layout_used;
   std::string layout_assumed;

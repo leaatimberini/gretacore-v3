@@ -9,7 +9,10 @@
 #include "gcore/rt/hip/kernels/fused_compute_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 #include <cmath>
+#include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +32,69 @@ namespace gcore::inference {
 static bool env_flag(const char *k) {
   const char *v = std::getenv(k);
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
+}
+
+struct F32Stats {
+  float min = 0.0f;
+  float max = 0.0f;
+  float mean = 0.0f;
+  int nan = 0;
+  int inf = 0;
+};
+
+static F32Stats stats_f32(const float *p, size_t n) {
+  F32Stats s{};
+  if (n == 0 || !p)
+    return s;
+  s.min = p[0];
+  s.max = p[0];
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    float v = p[i];
+    if (std::isnan(v)) {
+      s.nan++;
+      continue;
+    }
+    if (std::isinf(v)) {
+      s.inf++;
+      continue;
+    }
+    if (v < s.min)
+      s.min = v;
+    if (v > s.max)
+      s.max = v;
+    sum += v;
+  }
+  s.mean = (n > 0) ? static_cast<float>(sum / n) : 0.0f;
+  return s;
+}
+
+static uint64_t hash_f32(const float *p, size_t n) {
+  const size_t count = (n < 256) ? n : 256;
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < count; ++i) {
+    uint32_t v;
+    std::memcpy(&v, &p[i], sizeof(uint32_t));
+    h ^= static_cast<uint64_t>(v);
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+static void append_line(const char *path, const std::string &line) {
+  if (!path || !*path)
+    return;
+  std::ofstream f(path, std::ios::out | std::ios::app);
+  if (!f.is_open())
+    return;
+  f << line << "\n";
+}
+
+static const char *layer_delta_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_LAYER_DELTA_OUT");
+  if (out && *out)
+    return out;
+  return std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
 }
 
 class GretaMemoryView final : public gcore::rt::GretaMemory {
@@ -894,6 +960,60 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     launch_debug_tensor_stats(hip_stream, "L.residual.x", x, n_x);
   }
 
+  if (env_flag("GRETA_TRACE_LAYER_DELTA") && seq_len == 1 &&
+      (layer_idx == 0 || (layer_idx + 1) == config_.num_layers)) {
+    const char *out = layer_delta_out_path();
+    if (out && *out) {
+      auto capture = [&](const float *d, uint32_t n, F32Stats *stats,
+                         uint64_t *hash) -> bool {
+        if (!d || n == 0)
+          return false;
+        std::vector<float> host(n);
+        if (hipMemcpyAsync(host.data(), d, n * sizeof(float),
+                           hipMemcpyDeviceToHost, hip_stream) != hipSuccess) {
+          return false;
+        }
+        hipStreamSynchronize(hip_stream);
+        *stats = stats_f32(host.data(), n);
+        *hash = hash_f32(host.data(), n);
+        return true;
+      };
+
+      const uint32_t n_vec = D;
+      F32Stats attn_stats{};
+      F32Stats mlp_stats{};
+      F32Stats x_stats{};
+      uint64_t attn_hash = 0;
+      uint64_t mlp_hash = 0;
+      uint64_t x_hash = 0;
+      capture(attn_out, n_vec, &attn_stats, &attn_hash);
+      capture(mlp_out, n_vec, &mlp_stats, &mlp_hash);
+      capture(x, n_vec, &x_stats, &x_hash);
+
+      const size_t tokens_total = seq_start + seq_len;
+      std::ostringstream oss;
+      oss << "{\"event\":\"layer_delta\""
+          << ",\"step\":" << trace_step_
+          << ",\"layer\":" << layer_idx
+          << ",\"tokens_total\":" << tokens_total
+          << ",\"seq_len\":" << seq_len
+          << ",\"attn_out_hash\":" << attn_hash
+          << ",\"attn_out_min\":" << attn_stats.min
+          << ",\"attn_out_max\":" << attn_stats.max
+          << ",\"attn_out_mean\":" << attn_stats.mean
+          << ",\"mlp_out_hash\":" << mlp_hash
+          << ",\"mlp_out_min\":" << mlp_stats.min
+          << ",\"mlp_out_max\":" << mlp_stats.max
+          << ",\"mlp_out_mean\":" << mlp_stats.mean
+          << ",\"x_out_hash\":" << x_hash
+          << ",\"x_out_min\":" << x_stats.min
+          << ",\"x_out_max\":" << x_stats.max
+          << ",\"x_out_mean\":" << x_stats.mean
+          << "}";
+      append_line(out, oss.str());
+    }
+  }
+
   return true;
 }
 
@@ -969,7 +1089,9 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
       return false;
     }
     GretaMemoryView logits_view(&logits_, logits_offset_bytes);
-    gcore::compute::GretaCompute::set_op_label("lm_head");
+    const bool is_decode = (seq_len == 1 && seq_start > 0);
+    const char *lm_head_label = is_decode ? "lm_head_decode" : "lm_head_prefill";
+    gcore::compute::GretaCompute::set_op_label(lm_head_label);
     CHECK_GRETA(
         gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
                                            &output_weight_, &logits_view, S, V,
