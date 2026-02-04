@@ -1170,7 +1170,25 @@ static void trace_rmsnorm(const char *phase, const char *prompt_id,
       << ",\"weight_dtype\":\"" << dtype_label(weight.data_type()) << "\""
       << ",\"kernel\":\"rmsnorm_naive\""
       << ",\"sample_n\":" << sample_n
-      << "}";
+      << ",\"input_sample\":[";
+  for (size_t i = 0; i < in_host.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << in_host[i];
+  }
+  oss << "],\"output_sample\":[";
+  for (size_t i = 0; i < out_host.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << out_host[i];
+  }
+  oss << "],\"weight_sample\":[";
+  for (size_t i = 0; i < w_host.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << w_host[i];
+  }
+  oss << "]}";
   append_line(out, oss.str());
 }
 
