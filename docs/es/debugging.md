@@ -46,6 +46,8 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Incluye `attn_norm_in` y `attn_norm_out` (RMSNorm entrada/salida) en la traza de layer0.
 - `GRETA_TRACE_QKV_W_VERIFY=1`  
   Verifica el layout/packing de pesos QKV en layer0 (row vs col) entre `prefill_last` y `decode0`.
+- `GRETA_TRACE_WO_W_VERIFY=1`  
+  Verifica el layout/packing de pesos WO en layer0 (row vs col) entre `prefill_last` y `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Fuerza la proyección Q en prefill a usar layout row (B3.34).
 - `GRETA_PREFILL_FORCE_WK_ROW=1`  
@@ -54,6 +56,8 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Fuerza la proyección V en prefill a usar layout row/col (B3.36; recomendado `row`).
 - `GRETA_PREFILL_QKV_LAYOUT=row|col|auto`  
   Selector explícito de layout para la proyección QKV en prefill (row recomendado para B3.34/B3.35).
+- `GRETA_WO_LAYOUT_FORCE=row|col|auto`  
+  Fuerza la interpretación de layout para WO (B3.40; recomendado `row`).
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Fuerza la ruta de proyección Q/K/V en **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  

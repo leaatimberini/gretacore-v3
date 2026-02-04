@@ -46,6 +46,8 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Adds `attn_norm_in` and `attn_norm_out` (RMSNorm input/output) to the layer0 trace.
 - `GRETA_TRACE_QKV_W_VERIFY=1`  
   Verifies QKV weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
+- `GRETA_TRACE_WO_W_VERIFY=1`  
+  Verifies WO weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Forces prefill Q projection to use the row-major interpretation (B3.34).
 - `GRETA_PREFILL_FORCE_WK_ROW=1`  
@@ -54,6 +56,8 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Forces prefill V projection to use row/col layout (B3.36; recommend `row`).
 - `GRETA_PREFILL_QKV_LAYOUT=row|col|auto`  
   Explicit layout selector for prefill QKV projection (row recommended for B3.34/B3.35).
+- `GRETA_WO_LAYOUT_FORCE=row|col|auto`  
+  Forces WO layout interpretation (B3.40; recommend `row`).
 - `GRETA_QKV_FORCE_ROUTE=mfma|valu|auto`  
   Forces Q/K/V projection route in **decode** (S=1).
 - `GRETA_QKV_FORCE_GEMM=1`  

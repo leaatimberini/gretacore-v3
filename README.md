@@ -149,6 +149,8 @@ export GRETA_TRACE_ATTN_L0_PIPE_OUT=/root/gretacore/artifacts/alignment/2026-02-
 export GRETA_TRACE_ATTN_L0_NORM=1
 # Verify QKV weight layout/packing for layer0 (B3.33)
 export GRETA_TRACE_QKV_W_VERIFY=1
+# Verify WO weight layout/packing for layer0 (B3.40)
+export GRETA_TRACE_WO_W_VERIFY=1
 # Force prefill Q projection to use row layout (B3.34)
 export GRETA_PREFILL_FORCE_WQ_ROW=1
 # Force prefill K projection to use row layout (B3.35)
@@ -157,6 +159,8 @@ export GRETA_PREFILL_FORCE_WK_ROW=1
 export GRETA_PREFILL_FORCE_WV_LAYOUT=row
 # Alternative: explicit layout selector (row|col|auto)
 export GRETA_PREFILL_QKV_LAYOUT=row
+# Force WO layout interpretation (row|col|auto) for diagnostics (B3.40)
+export GRETA_WO_LAYOUT_FORCE=row
 # Recommended when comparing prefill_last vs decode0 for the same token/pos
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
 ```
