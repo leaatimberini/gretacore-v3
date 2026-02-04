@@ -3208,6 +3208,29 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                              size_t seq_len, std::string *err) {
   using namespace gcore::rt::hip::kernels;
+  if (seq_len == 0) {
+    if (err)
+      *err = "Embedding Lookup input has seq_len=0";
+    return false;
+  }
+  if (seq_len > config_.max_seq_len) {
+    if (err) {
+      std::ostringstream oss;
+      oss << "Embedding Lookup seq_len(" << seq_len
+          << ") exceeds GRETA_MAX_SEQ_LEN(" << config_.max_seq_len << ")";
+      *err = oss.str();
+    }
+    return false;
+  }
+  if (seq_start + seq_len > config_.max_seq_len) {
+    if (err) {
+      std::ostringstream oss;
+      oss << "Embedding Lookup range overflow: seq_start=" << seq_start
+          << ", seq_len=" << seq_len << ", max_seq_len=" << config_.max_seq_len;
+      *err = oss.str();
+    }
+    return false;
+  }
   uint32_t S = static_cast<uint32_t>(seq_len);
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t V = static_cast<uint32_t>(config_.vocab_size);
