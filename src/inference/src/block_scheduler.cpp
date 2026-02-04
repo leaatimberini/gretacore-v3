@@ -37,6 +37,14 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
+struct F32Stats {
+  float min = 0.0f;
+  float max = 0.0f;
+  float mean = 0.0f;
+  int nan = 0;
+  int inf = 0;
+};
+
 enum class AttnTracePoint : uint32_t {
   Q = 1u << 0,
   K = 1u << 1,
@@ -254,14 +262,6 @@ static void stats_hash_kv_subset(const float *base, uint32_t num_heads_kv,
   stats->mean = count > 0 ? static_cast<float>(sum / count) : 0.0f;
   *hash = h;
 }
-
-struct F32Stats {
-  float min = 0.0f;
-  float max = 0.0f;
-  float mean = 0.0f;
-  int nan = 0;
-  int inf = 0;
-};
 
 static F32Stats stats_f32(const float *p, size_t n) {
   F32Stats s{};
