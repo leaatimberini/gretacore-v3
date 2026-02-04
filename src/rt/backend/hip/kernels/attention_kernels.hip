@@ -256,7 +256,8 @@ __global__ void flash_attention_decode_kernel_p(
     float *__restrict__ O, uint32_t num_heads, uint32_t num_heads_kv,
     const uint32_t *pos_ptr, uint32_t max_seq_len, uint32_t head_dim,
     float scale) {
-  flash_attention_decode_logic(Q, K, V, O, num_heads, num_heads_kv, *pos_ptr,
+  flash_attention_decode_logic(Q, K, V, O, num_heads, num_heads_kv,
+                               *pos_ptr + 1,
                                max_seq_len, head_dim, scale);
 }
 
