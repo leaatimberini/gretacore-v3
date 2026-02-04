@@ -96,6 +96,14 @@ void launch_attn_softmax_trace(hipStream_t stream, const float *Q,
                                float *qk_out, float *softmax_out,
                                float *stats_out);
 
+void launch_attn_vacc_vsample(hipStream_t stream, const float *V_cache,
+                              uint32_t num_heads, uint32_t num_heads_kv,
+                              uint32_t head_dim, uint32_t seq_len,
+                              uint32_t max_seq_len, uint32_t head,
+                              uint32_t window_start, uint32_t window_len,
+                              uint32_t dims_sample, float *v_row_out,
+                              float *v_col_out);
+
 /**
  * @brief FlashAttention v2 for prefill mode (multiple queries).
  *

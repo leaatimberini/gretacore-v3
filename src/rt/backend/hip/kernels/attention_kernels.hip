@@ -485,6 +485,59 @@ void launch_attn_softmax_trace(hipStream_t stream, const float *Q,
       window_start, window_len, scale, qk_out, softmax_out, stats_out);
 }
 
+__global__ void attn_vacc_vsample_kernel(
+    const float *__restrict__ V_cache, uint32_t num_heads,
+    uint32_t num_heads_kv, uint32_t head_dim, uint32_t seq_len,
+    uint32_t max_seq_len, uint32_t head, uint32_t window_start,
+    uint32_t window_len, uint32_t dims_sample, float *__restrict__ v_row_out,
+    float *__restrict__ v_col_out) {
+  if (blockIdx.x != 0 || threadIdx.x != 0)
+    return;
+  if (!V_cache || !v_row_out || !v_col_out)
+    return;
+  if (num_heads == 0 || num_heads_kv == 0 || head_dim == 0 || seq_len == 0)
+    return;
+  if (head >= num_heads)
+    return;
+  if (dims_sample == 0 || window_len == 0)
+    return;
+
+  const uint32_t group = num_heads / num_heads_kv;
+  const uint32_t kv_head = (group > 0) ? (head / group) : 0;
+  if (kv_head >= num_heads_kv)
+    return;
+
+  const float *v_ptr = V_cache + kv_head * max_seq_len * head_dim;
+
+  for (uint32_t i = 0; i < window_len; ++i) {
+    uint32_t t = window_start + i;
+    for (uint32_t d = 0; d < dims_sample; ++d) {
+      float row_val = 0.0f;
+      float col_val = 0.0f;
+      if (t < seq_len) {
+        row_val = v_ptr[t * head_dim + d];
+        col_val = v_ptr[d * max_seq_len + t];
+      }
+      v_row_out[i * dims_sample + d] = row_val;
+      v_col_out[i * dims_sample + d] = col_val;
+    }
+  }
+}
+
+void launch_attn_vacc_vsample(hipStream_t stream, const float *V_cache,
+                              uint32_t num_heads, uint32_t num_heads_kv,
+                              uint32_t head_dim, uint32_t seq_len,
+                              uint32_t max_seq_len, uint32_t head,
+                              uint32_t window_start, uint32_t window_len,
+                              uint32_t dims_sample, float *v_row_out,
+                              float *v_col_out) {
+  dim3 grid(1);
+  dim3 block(1);
+  attn_vacc_vsample_kernel<<<grid, block, 0, stream>>>(
+      V_cache, num_heads, num_heads_kv, head_dim, seq_len, max_seq_len, head,
+      window_start, window_len, dims_sample, v_row_out, v_col_out);
+}
+
 
 
 __global__ void flash_attention_prefill_kernel(

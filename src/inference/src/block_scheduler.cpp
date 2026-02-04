@@ -216,6 +216,28 @@ static uint32_t attn_softmax_window() {
   return static_cast<uint32_t>(val);
 }
 
+static bool trace_attn_vacc_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_VACC");
+}
+
+static const char *attn_vacc_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_ATTN_OUT");
+  if (out && *out)
+    return out;
+  return nullptr;
+}
+
+static uint32_t attn_vacc_dims_sample() {
+  const char *v = std::getenv("GRETA_TRACE_ATTN_DIMS_SAMPLE");
+  if (!v || !*v)
+    return 16;
+  char *e = nullptr;
+  long val = std::strtol(v, &e, 10);
+  if (e == v || val <= 0)
+    return 16;
+  return static_cast<uint32_t>(val);
+}
+
 static bool attn_mfma_shadow_enabled() {
   return env_flag("GRETA_ATTN_DECODE_MFMA_SHADOW");
 }
@@ -1644,18 +1666,23 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const bool trace_attn_verify = trace_attn_decode_verify_enabled();
   const bool trace_attn_ref = trace_attn_ref_enabled();
   const bool trace_attn_softmax = trace_attn_softmax_enabled();
+  const bool trace_attn_vacc = trace_attn_vacc_enabled();
   const bool trace_attn_layer =
       attn_trace_layer_selected(layer_idx, config_.num_layers);
   const bool trace_softmax_layer =
       attn_softmax_layer_selected(layer_idx, config_.num_layers);
-  if ((trace_attn_verify || trace_attn_ref || trace_attn_softmax) &&
+  const bool trace_vacc_layer =
+      attn_softmax_layer_selected(layer_idx, config_.num_layers);
+  if ((trace_attn_verify || trace_attn_ref || trace_attn_softmax ||
+       trace_attn_vacc) &&
       seq_len == 1 && trace_step_ == 1 &&
-      (trace_attn_layer || trace_softmax_layer)) {
+      (trace_attn_layer || trace_softmax_layer || trace_vacc_layer)) {
     const char *out = attn_trace_out_path();
     const char *out_ref = attn_ref_out_path();
     const char *out_softmax = attn_softmax_out_path();
+    const char *out_vacc = attn_vacc_out_path();
     if ((trace_attn_verify && out && *out) || trace_attn_ref ||
-        trace_attn_softmax) {
+        trace_attn_softmax || trace_attn_vacc) {
       const uint32_t point_mask =
           attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
       const uint32_t seq_len_used =
@@ -1667,13 +1694,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       std::vector<float> q_host;
       std::vector<float> attn_out_host;
       std::vector<float> x_out_host;
-      if (trace_attn_softmax ||
+      if (trace_attn_softmax || trace_attn_vacc ||
           (point_mask & static_cast<uint32_t>(AttnTracePoint::Q))) {
         q_host.resize(D);
         hipMemcpy(q_host.data(), q, D * sizeof(float),
                   hipMemcpyDeviceToHost);
       }
-      if (point_mask & static_cast<uint32_t>(AttnTracePoint::ATTN_OUT)) {
+      if (trace_attn_vacc ||
+          (point_mask & static_cast<uint32_t>(AttnTracePoint::ATTN_OUT))) {
         attn_out_host.resize(D);
         hipMemcpy(attn_out_host.data(), attn_out, D * sizeof(float),
                   hipMemcpyDeviceToHost);
@@ -1697,18 +1725,44 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           static_cast<const float *>(activations_.kv_cache_v.data()) +
           kv_layer_offset_elems;
 
+      const uint32_t trace_head = attn_softmax_head();
+      const uint32_t group = (Hkv > 0) ? (Hq / Hkv) : 0;
+      const uint32_t trace_kv_head =
+          (group > 0 && trace_head < Hq) ? (trace_head / group) : 0;
+      const size_t kv_head_stride_elems =
+          static_cast<size_t>(config_.max_seq_len) * Dh;
+      const size_t kv_head_stride_bytes =
+          kv_head_stride_elems * sizeof(float);
+
       std::vector<float> k_cache_host;
       std::vector<float> v_cache_host;
-      bool need_kv = attn_decode_ref_enabled() || trace_attn_softmax ||
-                     (point_mask & static_cast<uint32_t>(AttnTracePoint::K)) ||
-                     (point_mask & static_cast<uint32_t>(AttnTracePoint::V));
-      if (need_kv) {
+      bool kv_head_only = false;
+      bool need_kv_full = attn_decode_ref_enabled() || trace_attn_ref ||
+                          trace_attn_verify ||
+                          (point_mask &
+                           static_cast<uint32_t>(AttnTracePoint::K)) ||
+                          (point_mask &
+                           static_cast<uint32_t>(AttnTracePoint::V));
+      bool need_kv_head = trace_attn_softmax || trace_attn_vacc;
+      if (need_kv_full) {
         k_cache_host.resize(kv_layer_stride_elems);
         v_cache_host.resize(kv_layer_stride_elems);
-        hipMemcpy(k_cache_host.data(), k_cache_layer,
-                  kv_layer_stride_bytes, hipMemcpyDeviceToHost);
-        hipMemcpy(v_cache_host.data(), v_cache_layer,
-                  kv_layer_stride_bytes, hipMemcpyDeviceToHost);
+        hipMemcpy(k_cache_host.data(), k_cache_layer, kv_layer_stride_bytes,
+                  hipMemcpyDeviceToHost);
+        hipMemcpy(v_cache_host.data(), v_cache_layer, kv_layer_stride_bytes,
+                  hipMemcpyDeviceToHost);
+      } else if (need_kv_head && trace_kv_head < Hkv) {
+        kv_head_only = true;
+        k_cache_host.resize(kv_head_stride_elems);
+        v_cache_host.resize(kv_head_stride_elems);
+        const float *k_head_dev =
+            k_cache_layer + trace_kv_head * kv_head_stride_elems;
+        const float *v_head_dev =
+            v_cache_layer + trace_kv_head * kv_head_stride_elems;
+        hipMemcpy(k_cache_host.data(), k_head_dev, kv_head_stride_bytes,
+                  hipMemcpyDeviceToHost);
+        hipMemcpy(v_cache_host.data(), v_head_dev, kv_head_stride_bytes,
+                  hipMemcpyDeviceToHost);
       }
 
       F32Stats q_stats{};
@@ -1723,12 +1777,22 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       uint64_t k_hash = 0;
       uint64_t v_hash = 0;
       if (!k_cache_host.empty()) {
-        stats_hash_kv_subset(k_cache_host.data(), Hkv, Dh, max_seq_len,
-                             seq_len_used, &k_stats, &k_hash);
+        if (kv_head_only) {
+          k_stats = stats_f32(k_cache_host.data(), k_cache_host.size());
+          k_hash = hash_f32(k_cache_host.data(), k_cache_host.size());
+        } else {
+          stats_hash_kv_subset(k_cache_host.data(), Hkv, Dh, max_seq_len,
+                               seq_len_used, &k_stats, &k_hash);
+        }
       }
       if (!v_cache_host.empty()) {
-        stats_hash_kv_subset(v_cache_host.data(), Hkv, Dh, max_seq_len,
-                             seq_len_used, &v_stats, &v_hash);
+        if (kv_head_only) {
+          v_stats = stats_f32(v_cache_host.data(), v_cache_host.size());
+          v_hash = hash_f32(v_cache_host.data(), v_cache_host.size());
+        } else {
+          stats_hash_kv_subset(v_cache_host.data(), Hkv, Dh, max_seq_len,
+                               seq_len_used, &v_stats, &v_hash);
+        }
       }
 
       F32Stats attn_stats{};
@@ -1926,229 +1990,408 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         append_line(out_ref, oss.str());
       }
 
-      if (trace_attn_softmax && out_softmax && *out_softmax &&
-          attn_softmax_layer_selected(layer_idx, config_.num_layers) &&
-          !q_host.empty() && !k_cache_host.empty()) {
-        const uint32_t head = attn_softmax_head();
-        if (head < Hq) {
-          const uint32_t window = attn_softmax_window();
-          const uint32_t pos_id = pos_id_used;
-          const uint32_t seq_len_trace = seq_len_used;
-          const uint32_t window_start =
-              (seq_len_trace > window) ? (seq_len_trace - window) : 0;
-          const uint32_t window_len =
-              seq_len_trace > window_start ? (seq_len_trace - window_start)
-                                           : 0;
+      bool softmax_window_ok = false;
+      uint32_t window_start = 0;
+      uint32_t window_len = 0;
+      std::vector<float> qk_gpu;
+      std::vector<float> softmax_gpu;
+      std::vector<float> stats_gpu;
+      std::vector<double> qk_cpu;
+      std::vector<double> softmax_cpu;
+      std::vector<float> q_sample;
+      std::vector<float> k_sample;
+      double max_qk = -INFINITY;
+      double sumexp = 0.0;
+      double top1_prob = 0.0;
+      double top2_prob = 0.0;
+      double entropy = 0.0;
+      double qk_mae = 0.0;
+      double qk_max_diff = 0.0;
+      double soft_mae = 0.0;
+      double soft_max_diff = 0.0;
+      uint64_t q_head_hash = 0;
+      uint64_t k_head_hash = 0;
 
-          if (window_len > 0) {
-            using Usage = gcore::rt::hip::BufferUsage;
-            gcore::rt::hip::Buffer qk_dev;
-            gcore::rt::hip::Buffer softmax_dev;
-            gcore::rt::hip::Buffer stats_dev;
-            std::string err;
-            bool alloc_ok =
-                qk_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
-                                gcore::rt::GretaDataType::FP32, &err) &&
-                softmax_dev.allocate(window_len * sizeof(float),
-                                     Usage::DeviceOnly,
-                                     gcore::rt::GretaDataType::FP32, &err) &&
-                stats_dev.allocate(5 * sizeof(float), Usage::DeviceOnly,
-                                   gcore::rt::GretaDataType::FP32, &err);
-            if (!alloc_ok) {
-              std::cerr << "[ATTN_SOFTMAX] alloc failed: " << err << "\n";
-            } else {
-              const size_t kv_layer_stride_elems =
-                  static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
-              const size_t kv_layer_offset_elems =
-                  static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
-              const float *k_cache_layer =
-                  static_cast<const float *>(activations_.kv_cache_k.data()) +
-                  kv_layer_offset_elems;
+      const bool need_softmax_window =
+          ((trace_attn_softmax && out_softmax && *out_softmax) ||
+           (trace_attn_vacc && out_vacc && *out_vacc)) &&
+          attn_softmax_layer_selected(layer_idx, config_.num_layers);
 
-              const float scale =
-                  1.0f / std::sqrt(static_cast<float>(Dh));
+      const uint32_t head = attn_softmax_head();
+      const float *q_head =
+          (!q_host.empty() && head < Hq) ? (q_host.data() + head * Dh) : nullptr;
+      const float *k_head = nullptr;
+      if (!k_cache_host.empty() && trace_kv_head < Hkv) {
+        k_head = kv_head_only
+                     ? k_cache_host.data()
+                     : k_cache_host.data() +
+                           static_cast<size_t>(trace_kv_head) *
+                               config_.max_seq_len * Dh;
+      }
 
-              gcore::rt::hip::kernels::launch_attn_softmax_trace(
-                  hip_stream, q, k_cache_layer, Hq, Hkv, Dh, seq_len_trace,
-                  static_cast<uint32_t>(config_.max_seq_len), head, window_start,
-                  window_len, scale, static_cast<float *>(qk_dev.data()),
-                  static_cast<float *>(softmax_dev.data()),
-                  static_cast<float *>(stats_dev.data()));
+      if (need_softmax_window && q_head && k_head) {
+        const uint32_t window = attn_softmax_window();
+        const uint32_t pos_id = pos_id_used;
+        const uint32_t seq_len_trace = seq_len_used;
+        window_start = (seq_len_trace > window) ? (seq_len_trace - window) : 0;
+        window_len =
+            seq_len_trace > window_start ? (seq_len_trace - window_start) : 0;
+        if (window_len > 0) {
+          using Usage = gcore::rt::hip::BufferUsage;
+          gcore::rt::hip::Buffer qk_dev;
+          gcore::rt::hip::Buffer softmax_dev;
+          gcore::rt::hip::Buffer stats_dev;
+          std::string err;
+          bool alloc_ok =
+              qk_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
+                              gcore::rt::GretaDataType::FP32, &err) &&
+              softmax_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
+                                   gcore::rt::GretaDataType::FP32, &err) &&
+              stats_dev.allocate(5 * sizeof(float), Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32, &err);
+          if (!alloc_ok) {
+            std::cerr << "[ATTN_SOFTMAX] alloc failed: " << err << "\n";
+          } else {
+            const size_t kv_layer_stride_elems =
+                static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
+            const size_t kv_layer_offset_elems =
+                static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
+            const float *k_cache_layer =
+                static_cast<const float *>(activations_.kv_cache_k.data()) +
+                kv_layer_offset_elems;
 
-              hipStreamSynchronize(hip_stream);
+            const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
 
-              std::vector<float> qk_gpu(window_len);
-              std::vector<float> softmax_gpu(window_len);
-              std::vector<float> stats_gpu(5, 0.0f);
-              hipMemcpy(qk_gpu.data(), qk_dev.data(),
-                        window_len * sizeof(float), hipMemcpyDeviceToHost);
-              hipMemcpy(softmax_gpu.data(), softmax_dev.data(),
-                        window_len * sizeof(float), hipMemcpyDeviceToHost);
-              hipMemcpy(stats_gpu.data(), stats_dev.data(),
-                        stats_gpu.size() * sizeof(float),
-                        hipMemcpyDeviceToHost);
+            gcore::rt::hip::kernels::launch_attn_softmax_trace(
+                hip_stream, q, k_cache_layer, Hq, Hkv, Dh, seq_len_trace,
+                static_cast<uint32_t>(config_.max_seq_len), head, window_start,
+                window_len, scale, static_cast<float *>(qk_dev.data()),
+                static_cast<float *>(softmax_dev.data()),
+                static_cast<float *>(stats_dev.data()));
 
-              const uint32_t group =
-                  (Hkv > 0) ? (Hq / Hkv) : 0;
-              const uint32_t kv_head =
-                  (group > 0) ? (head / group) : 0;
-              const float *q_head = q_host.data() + head * Dh;
-              const float *k_head =
-                  k_cache_host.data() +
-                  static_cast<size_t>(kv_head) * config_.max_seq_len * Dh;
-              const float *k_pos = k_head + pos_id * Dh;
+            hipStreamSynchronize(hip_stream);
 
-              uint64_t q_hash = hash_f32(q_head, Dh);
-              uint64_t k_hash = hash_f32(k_pos, Dh);
+            qk_gpu.assign(window_len, 0.0f);
+            softmax_gpu.assign(window_len, 0.0f);
+            stats_gpu.assign(5, 0.0f);
+            hipMemcpy(qk_gpu.data(), qk_dev.data(),
+                      window_len * sizeof(float), hipMemcpyDeviceToHost);
+            hipMemcpy(softmax_gpu.data(), softmax_dev.data(),
+                      window_len * sizeof(float), hipMemcpyDeviceToHost);
+            hipMemcpy(stats_gpu.data(), stats_dev.data(),
+                      stats_gpu.size() * sizeof(float), hipMemcpyDeviceToHost);
 
-              std::vector<float> q_sample;
-              std::vector<float> k_sample;
-              const uint32_t sample_n = std::min<uint32_t>(8, Dh);
-              q_sample.assign(q_head, q_head + sample_n);
-              k_sample.assign(k_pos, k_pos + sample_n);
+            q_head_hash = hash_f32(q_head, Dh);
+            const float *k_pos = k_head + pos_id * Dh;
+            k_head_hash = hash_f32(k_pos, Dh);
 
-              std::vector<double> qk_full(seq_len_trace, 0.0);
-              double max_qk = -INFINITY;
-              double second_qk = -INFINITY;
-              for (uint32_t t = 0; t < seq_len_trace; ++t) {
-                const float *k_t = k_head + t * Dh;
-                double dot = 0.0;
-                for (uint32_t d = 0; d < Dh; ++d) {
-                  dot += static_cast<double>(q_head[d]) *
-                         static_cast<double>(k_t[d]);
-                }
-                double qk = dot * static_cast<double>(scale);
-                qk_full[t] = qk;
-                if (qk > max_qk) {
-                  second_qk = max_qk;
-                  max_qk = qk;
-                } else if (qk > second_qk) {
-                  second_qk = qk;
-                }
+            const uint32_t sample_n = std::min<uint32_t>(8, Dh);
+            q_sample.assign(q_head, q_head + sample_n);
+            k_sample.assign(k_pos, k_pos + sample_n);
+
+            std::vector<double> qk_full(seq_len_trace, 0.0);
+            double second_qk = -INFINITY;
+            for (uint32_t t = 0; t < seq_len_trace; ++t) {
+              const float *k_t = k_head + t * Dh;
+              double dot = 0.0;
+              for (uint32_t d = 0; d < Dh; ++d) {
+                dot += static_cast<double>(q_head[d]) *
+                       static_cast<double>(k_t[d]);
               }
-
-              double sumexp = 0.0;
-              double sumexp_log = 0.0;
-              for (uint32_t t = 0; t < seq_len_trace; ++t) {
-                double e = std::exp(qk_full[t] - max_qk);
-                sumexp += e;
-                sumexp_log += e * (qk_full[t] - max_qk);
+              double qk = dot * static_cast<double>(scale);
+              qk_full[t] = qk;
+              if (qk > max_qk) {
+                second_qk = max_qk;
+                max_qk = qk;
+              } else if (qk > second_qk) {
+                second_qk = qk;
               }
-              double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
-              double top1_prob = inv_sum;
-              double top2_prob =
-                  (sumexp > 0.0 && std::isfinite(second_qk))
-                      ? std::exp(second_qk - max_qk) * inv_sum
-                      : 0.0;
-              double entropy =
-                  (sumexp > 0.0) ? (std::log(sumexp) - sumexp_log / sumexp)
-                                 : 0.0;
-
-              std::vector<double> qk_cpu(window_len, 0.0);
-              std::vector<double> softmax_cpu(window_len, 0.0);
-              for (uint32_t i = 0; i < window_len; ++i) {
-                uint32_t t = window_start + i;
-                if (t >= seq_len_trace)
-                  break;
-                double qk = qk_full[t];
-                qk_cpu[i] = qk;
-                double p = (sumexp > 0.0)
-                               ? std::exp(qk - max_qk) * inv_sum
-                               : 0.0;
-                softmax_cpu[i] = p;
-              }
-
-              double qk_mae = 0.0;
-              double qk_max_diff = 0.0;
-              double soft_mae = 0.0;
-              double soft_max_diff = 0.0;
-              for (uint32_t i = 0; i < window_len; ++i) {
-                double dq =
-                    std::abs(static_cast<double>(qk_gpu[i]) - qk_cpu[i]);
-                qk_mae += dq;
-                if (dq > qk_max_diff)
-                  qk_max_diff = dq;
-                double ds = std::abs(static_cast<double>(softmax_gpu[i]) -
-                                     softmax_cpu[i]);
-                soft_mae += ds;
-                if (ds > soft_max_diff)
-                  soft_max_diff = ds;
-              }
-              qk_mae = (window_len > 0) ? (qk_mae / window_len) : 0.0;
-              soft_mae = (window_len > 0) ? (soft_mae / window_len) : 0.0;
-
-              const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
-              std::ostringstream oss;
-              oss << "{\"event\":\"attn_softmax_trace\"";
-              if (prompt_id && *prompt_id) {
-                oss << ",\"prompt_id\":\"" << prompt_id << "\"";
-              }
-              oss << ",\"phase\":\"decode0\""
-                  << ",\"phase\":\"decode0\""
-                  << ",\"layer\":" << layer_idx
-                  << ",\"head\":" << head
-                  << ",\"pos_id\":" << pos_id
-                  << ",\"seq_len\":" << seq_len_trace
-                  << ",\"kv_heads\":" << Hkv
-                  << ",\"head_dim\":" << Dh
-                  << ",\"scale_used\":" << scale
-                  << ",\"q_hash\":" << q_hash
-                  << ",\"k_hash\":" << k_hash
-                  << ",\"q_sample\":[";
-              for (size_t i = 0; i < q_sample.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << q_sample[i];
-              }
-              oss << "],\"k_sample\":[";
-              for (size_t i = 0; i < k_sample.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << k_sample[i];
-              }
-              oss << "],\"qk_window_gpu\":[";
-              for (size_t i = 0; i < qk_gpu.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << qk_gpu[i];
-              }
-              oss << "],\"qk_window_cpu_fp64\":[";
-              for (size_t i = 0; i < qk_cpu.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << qk_cpu[i];
-              }
-              oss << "],\"qk_mae\":" << qk_mae
-                  << ",\"qk_max_diff\":" << qk_max_diff
-                  << ",\"softmax_gpu_stats\":{"
-                  << "\"max\":" << stats_gpu[0]
-                  << ",\"sumexp\":" << stats_gpu[1]
-                  << ",\"top1_prob\":" << stats_gpu[2]
-                  << ",\"top2_prob\":" << stats_gpu[3]
-                  << ",\"entropy\":" << stats_gpu[4] << "}"
-                  << ",\"softmax_cpu_stats\":{"
-                  << "\"max\":" << max_qk
-                  << ",\"sumexp\":" << sumexp
-                  << ",\"top1_prob\":" << top1_prob
-                  << ",\"top2_prob\":" << top2_prob
-                  << ",\"entropy\":" << entropy << "}"
-                  << ",\"softmax_window_gpu\":[";
-              for (size_t i = 0; i < softmax_gpu.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << softmax_gpu[i];
-              }
-              oss << "],\"softmax_window_cpu\":[";
-              for (size_t i = 0; i < softmax_cpu.size(); ++i) {
-                if (i)
-                  oss << ",";
-                oss << softmax_cpu[i];
-              }
-              oss << "],\"softmax_mae\":" << soft_mae
-                  << ",\"softmax_max_diff\":" << soft_max_diff
-                  << "}";
-              append_line(out_softmax, oss.str());
             }
+
+            double sumexp_log = 0.0;
+            for (uint32_t t = 0; t < seq_len_trace; ++t) {
+              double e = std::exp(qk_full[t] - max_qk);
+              sumexp += e;
+              sumexp_log += e * (qk_full[t] - max_qk);
+            }
+            double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
+            top1_prob = inv_sum;
+            top2_prob = (sumexp > 0.0 && std::isfinite(second_qk))
+                            ? std::exp(second_qk - max_qk) * inv_sum
+                            : 0.0;
+            entropy = (sumexp > 0.0)
+                          ? (std::log(sumexp) - sumexp_log / sumexp)
+                          : 0.0;
+
+            qk_cpu.assign(window_len, 0.0);
+            softmax_cpu.assign(window_len, 0.0);
+            for (uint32_t i = 0; i < window_len; ++i) {
+              uint32_t t = window_start + i;
+              if (t >= seq_len_trace)
+                break;
+              double qk = qk_full[t];
+              qk_cpu[i] = qk;
+              double p = (sumexp > 0.0)
+                             ? std::exp(qk - max_qk) * inv_sum
+                             : 0.0;
+              softmax_cpu[i] = p;
+            }
+
+            for (uint32_t i = 0; i < window_len; ++i) {
+              double dq =
+                  std::abs(static_cast<double>(qk_gpu[i]) - qk_cpu[i]);
+              qk_mae += dq;
+              if (dq > qk_max_diff)
+                qk_max_diff = dq;
+              double ds = std::abs(static_cast<double>(softmax_gpu[i]) -
+                                   softmax_cpu[i]);
+              soft_mae += ds;
+              if (ds > soft_max_diff)
+                soft_max_diff = ds;
+            }
+            qk_mae = (window_len > 0) ? (qk_mae / window_len) : 0.0;
+            soft_mae = (window_len > 0) ? (soft_mae / window_len) : 0.0;
+            softmax_window_ok = true;
+          }
+        }
+      }
+
+      if (trace_attn_softmax && out_softmax && *out_softmax &&
+          softmax_window_ok) {
+        const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+        std::ostringstream oss;
+        oss << "{\"event\":\"attn_softmax_trace\"";
+        if (prompt_id && *prompt_id) {
+          oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+        }
+        oss << ",\"phase\":\"decode0\""
+            << ",\"layer\":" << layer_idx
+            << ",\"head\":" << head
+            << ",\"pos_id\":" << pos_id_used
+            << ",\"seq_len\":" << seq_len_used
+            << ",\"kv_heads\":" << Hkv
+            << ",\"head_dim\":" << Dh
+            << ",\"scale_used\":" << (1.0f / std::sqrt(static_cast<float>(Dh)))
+            << ",\"q_hash\":" << q_head_hash
+            << ",\"k_hash\":" << k_head_hash
+            << ",\"q_sample\":[";
+        for (size_t i = 0; i < q_sample.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << q_sample[i];
+        }
+        oss << "],\"k_sample\":[";
+        for (size_t i = 0; i < k_sample.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << k_sample[i];
+        }
+        oss << "],\"qk_window_gpu\":[";
+        for (size_t i = 0; i < qk_gpu.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << qk_gpu[i];
+        }
+        oss << "],\"qk_window_cpu_fp64\":[";
+        for (size_t i = 0; i < qk_cpu.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << qk_cpu[i];
+        }
+        oss << "],\"qk_mae\":" << qk_mae << ",\"qk_max_diff\":" << qk_max_diff
+            << ",\"softmax_gpu_stats\":{"
+            << "\"max\":" << stats_gpu[0] << ",\"sumexp\":" << stats_gpu[1]
+            << ",\"top1_prob\":" << stats_gpu[2]
+            << ",\"top2_prob\":" << stats_gpu[3]
+            << ",\"entropy\":" << stats_gpu[4] << "}"
+            << ",\"softmax_cpu_stats\":{"
+            << "\"max\":" << max_qk << ",\"sumexp\":" << sumexp
+            << ",\"top1_prob\":" << top1_prob
+            << ",\"top2_prob\":" << top2_prob
+            << ",\"entropy\":" << entropy << "}"
+            << ",\"softmax_window_gpu\":[";
+        for (size_t i = 0; i < softmax_gpu.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << softmax_gpu[i];
+        }
+        oss << "],\"softmax_window_cpu\":[";
+        for (size_t i = 0; i < softmax_cpu.size(); ++i) {
+          if (i)
+            oss << ",";
+          oss << softmax_cpu[i];
+        }
+        oss << "],\"softmax_mae\":" << soft_mae
+            << ",\"softmax_max_diff\":" << soft_max_diff << "}";
+        append_line(out_softmax, oss.str());
+      }
+
+      if (trace_attn_vacc && out_vacc && *out_vacc && softmax_window_ok &&
+          !attn_out_host.empty() && head < Hq) {
+        const uint32_t dims_sample =
+            std::min(attn_vacc_dims_sample(), Dh);
+        if (dims_sample > 0 && window_len > 0) {
+          using Usage = gcore::rt::hip::BufferUsage;
+          gcore::rt::hip::Buffer v_row_dev;
+          gcore::rt::hip::Buffer v_col_dev;
+          std::string err;
+          const size_t v_bytes =
+              static_cast<size_t>(window_len) * dims_sample * sizeof(float);
+          bool alloc_ok =
+              v_row_dev.allocate(v_bytes, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32, &err) &&
+              v_col_dev.allocate(v_bytes, Usage::DeviceOnly,
+                                 gcore::rt::GretaDataType::FP32, &err);
+          if (!alloc_ok) {
+            std::cerr << "[ATTN_VACC] alloc failed: " << err << "\n";
+          } else {
+            const size_t kv_layer_stride_elems =
+                static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
+            const size_t kv_layer_offset_elems =
+                static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
+            const float *v_cache_layer =
+                static_cast<const float *>(activations_.kv_cache_v.data()) +
+                kv_layer_offset_elems;
+
+            gcore::rt::hip::kernels::launch_attn_vacc_vsample(
+                hip_stream, v_cache_layer, Hq, Hkv, Dh, seq_len_used,
+                static_cast<uint32_t>(config_.max_seq_len), head, window_start,
+                window_len, dims_sample, static_cast<float *>(v_row_dev.data()),
+                static_cast<float *>(v_col_dev.data()));
+            hipStreamSynchronize(hip_stream);
+
+            std::vector<float> v_row(window_len * dims_sample, 0.0f);
+            std::vector<float> v_col(window_len * dims_sample, 0.0f);
+            hipMemcpy(v_row.data(), v_row_dev.data(), v_bytes,
+                      hipMemcpyDeviceToHost);
+            hipMemcpy(v_col.data(), v_col_dev.data(), v_bytes,
+                      hipMemcpyDeviceToHost);
+
+            std::vector<float> pv_gpu_sample(dims_sample, 0.0f);
+            const float *attn_head =
+                attn_out_host.data() + static_cast<size_t>(head) * Dh;
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              pv_gpu_sample[d] = attn_head[d];
+            }
+
+            std::vector<double> pv_row(dims_sample, 0.0);
+            std::vector<double> pv_col(dims_sample, 0.0);
+            for (uint32_t i = 0; i < window_len; ++i) {
+              double p = (i < softmax_cpu.size()) ? softmax_cpu[i] : 0.0;
+              for (uint32_t d = 0; d < dims_sample; ++d) {
+                const float v_r = v_row[i * dims_sample + d];
+                const float v_c = v_col[i * dims_sample + d];
+                pv_row[d] += p * static_cast<double>(v_r);
+                pv_col[d] += p * static_cast<double>(v_c);
+              }
+            }
+
+            double v_mae_row = 0.0;
+            double v_mae_col = 0.0;
+            double v_max_row = 0.0;
+            double v_max_col = 0.0;
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              double dr = std::abs(static_cast<double>(pv_gpu_sample[d]) -
+                                   pv_row[d]);
+              double dc = std::abs(static_cast<double>(pv_gpu_sample[d]) -
+                                   pv_col[d]);
+              v_mae_row += dr;
+              v_mae_col += dc;
+              if (dr > v_max_row)
+                v_max_row = dr;
+              if (dc > v_max_col)
+                v_max_col = dc;
+            }
+            v_mae_row = dims_sample > 0 ? (v_mae_row / dims_sample) : 0.0;
+            v_mae_col = dims_sample > 0 ? (v_mae_col / dims_sample) : 0.0;
+
+            const bool row_best = v_mae_row <= v_mae_col;
+            const char *layout_best = row_best ? "row" : "col";
+            const std::vector<double> &pv_best = row_best ? pv_row : pv_col;
+
+            double pv_mae = 0.0;
+            double pv_max_diff = 0.0;
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              double diff = std::abs(static_cast<double>(pv_gpu_sample[d]) -
+                                     pv_best[d]);
+              pv_mae += diff;
+              if (diff > pv_max_diff)
+                pv_max_diff = diff;
+            }
+            pv_mae = dims_sample > 0 ? (pv_mae / dims_sample) : 0.0;
+
+            const char *prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+            std::ostringstream oss;
+            oss << "{\"event\":\"attn_vacc_trace\"";
+            if (prompt_id && *prompt_id) {
+              oss << ",\"prompt_id\":\"" << prompt_id << "\"";
+            }
+            oss << ",\"phase\":\"decode0\""
+                << ",\"layer\":" << layer_idx
+                << ",\"head\":" << head
+                << ",\"pos_id\":" << pos_id_used
+                << ",\"seq_len\":" << seq_len_used
+                << ",\"t\":" << pos_id_used
+                << ",\"window_len\":" << window_len
+                << ",\"head_dim\":" << Dh
+                << ",\"dims_sample\":" << dims_sample
+                << ",\"kv_heads\":" << Hkv
+                << ",\"scale_used\":"
+                << (1.0f / std::sqrt(static_cast<float>(Dh)))
+                << ",\"p_window_gpu\":[";
+            for (size_t i = 0; i < softmax_gpu.size(); ++i) {
+              if (i)
+                oss << ",";
+              oss << softmax_gpu[i];
+            }
+            oss << "],\"v_window_gpu_sample\":[";
+            for (uint32_t i = 0; i < window_len; ++i) {
+              if (i)
+                oss << ",";
+              oss << "[";
+              for (uint32_t d = 0; d < dims_sample; ++d) {
+                if (d)
+                  oss << ",";
+                oss << v_row[i * dims_sample + d];
+              }
+              oss << "]";
+            }
+            oss << "],\"v_layout_probe\":{"
+                << "\"v_layout_best\":\"" << layout_best << "\""
+                << ",\"v_mae_row\":" << v_mae_row
+                << ",\"v_mae_col\":" << v_mae_col
+                << ",\"v_max_row\":" << v_max_row
+                << ",\"v_max_col\":" << v_max_col << "}"
+                << ",\"pv_cpu_fp64_sample\":[";
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              if (d)
+                oss << ",";
+              oss << pv_best[d];
+            }
+            oss << "],\"pv_gpu_sample\":[";
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              if (d)
+                oss << ",";
+              oss << pv_gpu_sample[d];
+            }
+            oss << "],\"pv_mae\":" << pv_mae
+                << ",\"pv_max_diff\":" << pv_max_diff
+                << ",\"attn_out_scope\":\"per_head_concat\""
+                << ",\"attn_out_gpu_sample\":[";
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              if (d)
+                oss << ",";
+              oss << pv_gpu_sample[d];
+            }
+            oss << "],\"attn_out_cpu_fp64_sample\":[";
+            for (uint32_t d = 0; d < dims_sample; ++d) {
+              if (d)
+                oss << ",";
+              oss << pv_best[d];
+            }
+            oss << "],\"attn_out_mae\":" << pv_mae
+                << ",\"attn_out_max_diff\":" << pv_max_diff << "}";
+            append_line(out_vacc, oss.str());
           }
         }
       }
