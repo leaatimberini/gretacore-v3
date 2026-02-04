@@ -54,8 +54,21 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
   Fuerza ruta LM head (prefill+decode) para aislar MFMA/VALU.
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Fuerza ruta LM head **solo en decode**.
+- `GRETA_TRACE_STAGE=1`  
+  Emite JSONL por etapas para `prefill_last` vs `decode0`.
+- `GRETA_TRACE_STAGE_OUT=/root/gretacore/artifacts/alignment/.../b3_27_stage.jsonl`  
+  Path de salida JSONL para StageTrace.
+- `GRETA_TRACE_STAGE_LAYERS="0,1,2,15,31"`  
+  Selecciona capas para StageTrace.
+- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,x_after_attn,mlp_out,x_after_mlp,final_norm,lm_head_in,logits"`  
+  Selecciona tensores para StageTrace.
+- `GRETA_TRACE_STAGE_PHASES="prefill_last,decode0"`  
+  Selecciona fases para StageTrace.
+- `GRETA_TRACE_STAGE_DEBUG_INPUT=1`  
+  Agrega campos de semántica de entrada (`x_in_src_kind`, `x_in_token_index_used`, `x_in_offset_bytes`, `x_in_ptr`, `x_in_alloc_bytes`, `prompt_tokens`, `kv_pos`, `decode_step`).
 
 **Nota B3.23:** QK y softmax coinciden con FP64 en decode0 (layer 31 head 0, ventana). La divergencia es más probable en el acumulado de V / `attn_out`.
+**Nota B3.27:** La primera divergencia aparece en `x_in` de layer 0, indicando mismatch en semántica de entrada de decode (antes de attention/MLP).
 
 ## Flujo Recomendada de Diagnóstico
 1. **Baseline**: ejecutar p4_sys y p5_ba con trazas delta.

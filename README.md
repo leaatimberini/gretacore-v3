@@ -61,7 +61,9 @@ performance-driven compute stack.
 - B3.21: Fused+MFMA decode stabilized (Hkv fix + alignment guards). MFMA==VALU under shadow compare, but attn_out vs ref still diverges at layer 31 and decode0 collapse persists.
 - B3.22: High-layer attention precision audit; divergence vs FP64 ref persists at layer 31 independent of FP16/FP32 accumulation.
 - B3.23: Softmax isolation (decode0, layer 31 head 0) shows QK and softmax match FP64 (MAE ~1e-6 / ~1e-8). Focus shifts to V accumulation / attn_out path.
-- Next: B3.24 isolate V accumulation and attention output path for decode0.
+- B3.24–B3.26: V accumulation/layout fixed; PV matches ref (pv_mae ~1e-7), but decode0 collapse persists.
+- B3.27: StageTrace shows first mismatch at layer-0 `x_in` between `prefill_last` and `decode0`.
+- B3.28: Input semantics tracing to align decode0 `x_in` with `prefill_last` for isolation (debug-only override).
 - MI300X validation ongoing; AMD reports under `docs/AMD/`.
 
 **Phase 1 – Runtime Core (completed)**
@@ -123,6 +125,20 @@ export GRETA_TRACE_ATTN_LAYERS="0,1,2,31"
 export GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out,x_out"
 export GRETA_ATTN_DECODE_REF=1
 ```
+
+## Debug Tracing (StageTrace)
+
+```bash
+export GRETA_TRACE_STAGE=1
+export GRETA_TRACE_STAGE_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_28_stage.jsonl
+export GRETA_TRACE_STAGE_LAYERS="0,1,2,15,31"
+export GRETA_TRACE_STAGE_POINTS="x_in,attn_out,x_after_attn,mlp_out,x_after_mlp,final_norm,lm_head_in,logits"
+export GRETA_TRACE_STAGE_PHASES="prefill_last,decode0"
+export GRETA_TRACE_STAGE_DEBUG_INPUT=1
+export GRETA_TRACE_PROMPT_ID=p4_sys
+```
+
+Note: `GRETA_TRACE_STAGE_DEBUG_INPUT=1` adds input semantics fields and enables a decode0 input override used for isolation runs (B3.28).
 
 ---
 

@@ -54,8 +54,21 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
   Forces LM head route (prefill+decode) to isolate MFMA/VALU.
 - `GRETA_LMHEAD_FORCE_ROUTE_DECODE=valu|mfma`  
   Forces LM head route **decode-only**.
+- `GRETA_TRACE_STAGE=1`  
+  Emits per-stage JSONL for `prefill_last` vs `decode0`.
+- `GRETA_TRACE_STAGE_OUT=/root/gretacore/artifacts/alignment/.../b3_27_stage.jsonl`  
+  JSONL output path for stage trace.
+- `GRETA_TRACE_STAGE_LAYERS="0,1,2,15,31"`  
+  Select layers for stage trace.
+- `GRETA_TRACE_STAGE_POINTS="x_in,attn_out,x_after_attn,mlp_out,x_after_mlp,final_norm,lm_head_in,logits"`  
+  Select tensors for stage trace.
+- `GRETA_TRACE_STAGE_PHASES="prefill_last,decode0"`  
+  Select phases for stage trace.
+- `GRETA_TRACE_STAGE_DEBUG_INPUT=1`  
+  Adds input semantics fields (`x_in_src_kind`, `x_in_token_index_used`, `x_in_offset_bytes`, `x_in_ptr`, `x_in_alloc_bytes`, `prompt_tokens`, `kv_pos`, `decode_step`).
 
 **B3.23 note:** QK and softmax match FP64 in decode0 (layer 31 head 0, windowed). Divergence is more likely in V accumulation / `attn_out` path.
+**B3.27 note:** First divergence appears at layer-0 `x_in`, indicating decode input semantics mismatch (before attention/MLP).
 
 ## Recommended Debug Flow
 1. **Baseline**: run p4_sys and p5_ba with delta traces.
