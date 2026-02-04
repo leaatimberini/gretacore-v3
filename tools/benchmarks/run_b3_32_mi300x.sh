@@ -37,6 +37,7 @@ pkill -f "vllm" || true
 pkill -f "open-webui" || true
 pkill -f "python.*vllm" || true
 pkill -f "python.*gpt-oss" || true
+pkill -f "python" || true
 pkill -f "greta_infer" || true
 pkill -f "greta_server" || true
 sleep 2
@@ -49,9 +50,10 @@ make -B -j$(nproc)
 
 OUTDIR=/root/gretacore/artifacts/alignment/2026-02-03
 mkdir -p "$OUTDIR"
+rm -f "$OUTDIR"/b3_32_* || true
 
 export GRETA_INT4_WEIGHTS=1
-export GRETA_MAX_SEQ_LEN=1024
+export GRETA_MAX_SEQ_LEN=768
 export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_NORM=1
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
