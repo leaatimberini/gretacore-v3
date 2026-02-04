@@ -33,12 +33,14 @@ def summarize_vacc(rows):
         pv_max = max([it.get("pv_max_diff", 0.0) for it in items] + [0.0])
         attn_mae = mean([it.get("attn_out_mae", 0.0) for it in items])
         attn_max = max([it.get("attn_out_max_diff", 0.0) for it in items] + [0.0])
+        pv_scope = items[-1].get("pv_scope", "")
         summary[key] = {
             "v_layout_best": v_layout,
             "pv_mae": pv_mae,
             "pv_max_diff": pv_max,
             "attn_out_mae": attn_mae,
             "attn_out_max_diff": attn_max,
+            "pv_scope": pv_scope,
         }
     return summary
 
@@ -118,7 +120,7 @@ def main():
     lines.append(f"VACC JSONL: {args.vacc_jsonl}")
     lines.append(f"VADDR JSONL: {args.vaddr_jsonl}")
     lines.append(
-        "prompt_id\tv_layout_best\tpv_mae\tpv_max_diff\tattn_out_mae\tattn_out_max_diff\tmae_v_pos\tmae_v_prev\tmae_v_next\tmae_v_col\tvaddr_best\tprefill_last_top1\tdecode0_top1\tverdict"
+        "prompt_id\tv_layout_best\tpv_scope\tpv_mae\tpv_max_diff\tattn_out_mae\tattn_out_max_diff\tmae_v_pos\tmae_v_prev\tmae_v_next\tmae_v_col\tvaddr_best\tprefill_last_top1\tdecode0_top1\tverdict"
     )
 
     keys = set(vacc_summary.keys()) | set(vaddr_summary.keys())
@@ -130,6 +132,7 @@ def main():
         lines.append(
             f"{key}\t"
             f"{vacc.get('v_layout_best','')}\t"
+            f"{vacc.get('pv_scope','')}\t"
             f"{vacc.get('pv_mae',0.0):.6g}\t"
             f"{vacc.get('pv_max_diff',0.0):.6g}\t"
             f"{vacc.get('attn_out_mae',0.0):.6g}\t"
