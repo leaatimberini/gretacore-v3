@@ -239,6 +239,52 @@ static const char *attn_l0_pipe_out_path() {
   return nullptr;
 }
 
+static const char *qkv_force_route_env() {
+  const char *v = std::getenv("GRETA_QKV_FORCE_ROUTE");
+  if (!v || !*v)
+    return nullptr;
+  if (std::strcmp(v, "auto") == 0 || std::strcmp(v, "AUTO") == 0)
+    return nullptr;
+  return v;
+}
+
+static bool qkv_force_gemm_enabled() {
+  return env_flag("GRETA_QKV_FORCE_GEMM");
+}
+
+static std::string to_route_label(const char *v) {
+  if (!v || !*v)
+    return "auto";
+  std::string s(v);
+  if (s == "mfma" || s == "MFMA")
+    return "MFMA";
+  if (s == "valu" || s == "VALU")
+    return "VALU";
+  return s;
+}
+
+static std::string qkv_route_used(uint32_t m, bool is_decode_step,
+                                  bool use_fused, const char *force_route) {
+  if (use_fused)
+    return "FUSED_GEMV";
+
+  if (force_route && *force_route)
+    return to_route_label(force_route);
+
+  const char *force_gemm = std::getenv("GRETA_GEMM_FORCE");
+  if (force_gemm && *force_gemm)
+    return to_route_label(force_gemm);
+
+  if (is_decode_step) {
+    const char *attn_force = std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL");
+    if (attn_force && *attn_force)
+      return to_route_label(attn_force);
+  }
+
+  const uint32_t GEMM_MFMA_THRESHOLD = 32;
+  return (m > GEMM_MFMA_THRESHOLD) ? "MFMA" : "VALU";
+}
+
 static bool trace_v_addr_enabled() {
   return env_flag("GRETA_TRACE_V_ADDR");
 }
@@ -1212,6 +1258,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   bool use_fused =
       (use_fused_env && std::string(use_fused_env) == "1") && (S == 1) &&
       (Hkv == Hq);
+  const char *qkv_force_route = qkv_force_route_env();
+  const bool qkv_force_gemm = qkv_force_gemm_enabled();
+  if (is_decode_step && qkv_force_gemm) {
+    use_fused = false;
+  }
+
+  std::string q_route_used = "unknown";
+  std::string k_route_used = "unknown";
+  std::string v_route_used = "unknown";
 
   if (use_fused) {
     CHECK_HIP_KERNEL(launch_fused_rmsnorm_qkv_gemv_f16(
@@ -1221,6 +1276,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                          static_cast<const __half *>(b.wv.data()), q, k, v, D,
                          config_.rms_eps),
                      "Fused RMSNorm+QKV");
+    q_route_used = "FUSED_GEMV";
+    k_route_used = "FUSED_GEMV";
+    v_route_used = "FUSED_GEMV";
 
     if (trace_layer) {
       layer_tracer_.trace_tensor("q", trace_step_,
@@ -1253,10 +1311,20 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       ev_q_start->record(stream_);
     gcore::compute::GretaCompute::set_op_label(
         is_decode_step ? "attn_q_decode" : "attn_q_prefill");
-    CHECK_GRETA(
-        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &b.wq, &activations_.q, S, D, D),
-        "GEMM Q");
+    if (is_decode_step && qkv_force_route) {
+      const std::string forced = to_route_label(qkv_force_route);
+      EnvOverride guard("GRETA_GEMM_FORCE", forced.c_str());
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wq, &activations_.q, S, D, D),
+          "GEMM Q");
+    } else {
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wq, &activations_.q, S, D, D),
+          "GEMM Q");
+    }
+    q_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_q_end->record(stream_);
@@ -1265,11 +1333,22 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       ev_k_start->record(stream_);
     gcore::compute::GretaCompute::set_op_label(
         is_decode_step ? "attn_k_decode" : "attn_k_prefill");
-    CHECK_GRETA(
-        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &b.wk, &activations_.k, S, kv_dim,
-                                           D),
-        "GEMM K");
+    if (is_decode_step && qkv_force_route) {
+      const std::string forced = to_route_label(qkv_force_route);
+      EnvOverride guard("GRETA_GEMM_FORCE", forced.c_str());
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wk, &activations_.k, S, kv_dim,
+                                             D),
+          "GEMM K");
+    } else {
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wk, &activations_.k, S, kv_dim,
+                                             D),
+          "GEMM K");
+    }
+    k_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_k_end->record(stream_);
@@ -1278,11 +1357,22 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       ev_v_start->record(stream_);
     gcore::compute::GretaCompute::set_op_label(
         is_decode_step ? "attn_v_decode" : "attn_v_prefill");
-    CHECK_GRETA(
-        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &b.wv, &activations_.v, S, kv_dim,
-                                           D),
-        "GEMM V");
+    if (is_decode_step && qkv_force_route) {
+      const std::string forced = to_route_label(qkv_force_route);
+      EnvOverride guard("GRETA_GEMM_FORCE", forced.c_str());
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wv, &activations_.v, S, kv_dim,
+                                             D),
+          "GEMM V");
+    } else {
+      CHECK_GRETA(
+          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
+                                             &b.wv, &activations_.v, S, kv_dim,
+                                             D),
+          "GEMM V");
+    }
+    v_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_v_end->record(stream_);
@@ -1774,6 +1864,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"kv_pos\":" << pos_id_used
             << ",\"token_index\":" << token_index_used
             << ",\"scale_used\":" << scale
+            << ",\"q_route_used\":\"" << q_route_used << "\""
+            << ",\"k_route_used\":\"" << k_route_used << "\""
+            << ",\"v_route_used\":\"" << v_route_used << "\""
+            << ",\"qkv_force_route\":\""
+            << (qkv_force_route ? qkv_force_route : "auto") << "\""
+            << ",\"qkv_force_gemm\":" << (qkv_force_gemm ? "true" : "false")
             << ",\"q_hash\":" << q_hash
             << ",\"q_min\":" << q_stats.min
             << ",\"q_max\":" << q_stats.max
