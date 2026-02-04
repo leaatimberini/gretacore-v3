@@ -48,6 +48,15 @@ static const char *prefill_qkv_layout_env() {
   return v;
 }
 
+static bool prefill_force_wo_row() {
+  const char *layout = prefill_qkv_layout_env();
+  if (layout && (std::strcmp(layout, "row") == 0 ||
+                 std::strcmp(layout, "ROW") == 0)) {
+    return true;
+  }
+  return false;
+}
+
 static bool trace_lmhead_enabled() {
   static const bool enabled =
       env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA") ||
@@ -89,6 +98,10 @@ static bool is_attn_v_prefill_label(const std::string &label) {
 
 static bool is_attn_o_label(const std::string &label) {
   return label == "attn_o_prefill" || label == "attn_o_decode";
+}
+
+static bool is_attn_o_prefill_label(const std::string &label) {
+  return label == "attn_o_prefill";
 }
 
 static gcore::compute::GemmAuditInfo &last_gemm_audit() {
@@ -321,6 +334,10 @@ GretaResult GretaCompute::gemm(GretaStream *stream, GretaMemory *A,
     }
     if (is_attn_v_prefill_label(op_label)) {
       if (prefill_force_wv_row())
+        force_gemv = true;
+    }
+    if (is_attn_o_prefill_label(op_label)) {
+      if (prefill_force_wo_row())
         force_gemv = true;
     }
     if (is_attn_o_label(op_label)) {
