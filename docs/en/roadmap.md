@@ -31,7 +31,11 @@ It is optimized for correctness, performance, and sustainability.
 - B3.21: `fused+mfma` stabilized (Hkv fix + alignment guard rails). MFMA==VALU at decode0, but ref divergence at layer 31 and decode0 collapse persist.
 - B3.22: high-layer attention precision audit; divergence vs FP64 ref persists at layer 31 independent of accumulation mode.
 - B3.23: softmax isolation at decode0 (layer 31 head 0). QK and softmax match FP64; focus shifts to V accumulation / attn_out path.
-- Next: B3.24 isolate V accumulation and attention output path for decode0.
+- B3.24–B3.26: V layout/addressing in decode fixed; P·V consistent; decode0 collapse persists.
+- B3.27–B3.29: post-x_in stage trace; first mismatch localized at `attn_out` (layer 0).
+- B3.30–B3.32: layer0 isolation; `attn_norm_out` ok; first mismatch at Q; not MFMA/VALU route-dependent.
+- B3.33: Wq layout verification: prefill_last=col, decode0=row for context prompts.
+- B3.34: **in progress** — fix prefill Wq layout (GEMM) to align with decode (row).
 - MI300X validation ongoing; evidence under `docs/AMD/`.
 
 ## Phase 0 – Foundations
