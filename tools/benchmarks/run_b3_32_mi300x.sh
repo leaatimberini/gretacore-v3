@@ -30,6 +30,18 @@ git checkout main
 git pull --rebase
 git rev-parse HEAD
 
+echo "=== ROCM-SMI PRE ==="
+command -v rocm-smi >/dev/null && rocm-smi --showmemuse --showuse --showpids || true
+echo "=== KILL CANDIDATES ==="
+pkill -f "vllm" || true
+pkill -f "open-webui" || true
+pkill -f "python.*vllm" || true
+pkill -f "greta_infer" || true
+pkill -f "greta_server" || true
+sleep 2
+echo "=== ROCM-SMI POST ==="
+command -v rocm-smi >/dev/null && rocm-smi --showmemuse --showuse --showpids || true
+
 cmake -S /root/gretacore/tools/inference -B /root/gretacore/tools/inference/build
 cd /root/gretacore/tools/inference/build
 make -B -j$(nproc)
@@ -76,7 +88,8 @@ mkdir -p /root
 
 tar -czf /root/gretacore_b3_32_artifacts.tgz \
   $OUTDIR/b3_32_*.log \
-  $OUTDIR/b3_32_attn_l0_pipe_*.jsonl
+  $OUTDIR/b3_32_attn_l0_pipe_*.jsonl \
+  2>/dev/null || true
 
 ls -lh /root/gretacore_b3_32_artifacts.tgz
 
