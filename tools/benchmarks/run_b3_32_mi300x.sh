@@ -36,6 +36,7 @@ echo "=== KILL CANDIDATES ==="
 pkill -f "vllm" || true
 pkill -f "open-webui" || true
 pkill -f "python.*vllm" || true
+pkill -f "python.*gpt-oss" || true
 pkill -f "greta_infer" || true
 pkill -f "greta_server" || true
 sleep 2
@@ -50,7 +51,7 @@ OUTDIR=/root/gretacore/artifacts/alignment/2026-02-03
 mkdir -p "$OUTDIR"
 
 export GRETA_INT4_WEIGHTS=1
-export GRETA_MAX_SEQ_LEN=256
+export GRETA_MAX_SEQ_LEN=1024
 export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_NORM=1
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
