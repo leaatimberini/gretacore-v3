@@ -9,10 +9,13 @@
 #include "gcore/rt/hip/kernels/fused_compute_kernels.hpp"
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -32,6 +35,224 @@ namespace gcore::inference {
 static bool env_flag(const char *k) {
   const char *v = std::getenv(k);
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
+}
+
+enum class AttnTracePoint : uint32_t {
+  Q = 1u << 0,
+  K = 1u << 1,
+  V = 1u << 2,
+  ATTN_OUT = 1u << 3,
+  X_OUT = 1u << 4,
+};
+
+static uint32_t attn_point_mask_from_list(const char *v) {
+  if (!v || !*v)
+    return static_cast<uint32_t>(AttnTracePoint::Q) |
+           static_cast<uint32_t>(AttnTracePoint::K) |
+           static_cast<uint32_t>(AttnTracePoint::V) |
+           static_cast<uint32_t>(AttnTracePoint::ATTN_OUT) |
+           static_cast<uint32_t>(AttnTracePoint::X_OUT);
+  std::string s(v);
+  uint32_t mask = 0;
+  size_t start = 0;
+  while (start < s.size()) {
+    size_t end = s.find(',', start);
+    std::string token =
+        s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                    : end - start);
+    if (token == "q")
+      mask |= static_cast<uint32_t>(AttnTracePoint::Q);
+    else if (token == "k")
+      mask |= static_cast<uint32_t>(AttnTracePoint::K);
+    else if (token == "v")
+      mask |= static_cast<uint32_t>(AttnTracePoint::V);
+    else if (token == "attn_out")
+      mask |= static_cast<uint32_t>(AttnTracePoint::ATTN_OUT);
+    else if (token == "x_out")
+      mask |= static_cast<uint32_t>(AttnTracePoint::X_OUT);
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  if (mask == 0) {
+    mask = static_cast<uint32_t>(AttnTracePoint::Q) |
+           static_cast<uint32_t>(AttnTracePoint::K) |
+           static_cast<uint32_t>(AttnTracePoint::V) |
+           static_cast<uint32_t>(AttnTracePoint::ATTN_OUT) |
+           static_cast<uint32_t>(AttnTracePoint::X_OUT);
+  }
+  return mask;
+}
+
+static std::vector<int> parse_layers(const char *v) {
+  std::vector<int> layers;
+  if (!v || !*v)
+    return layers;
+  std::string s(v);
+  if (s == "all" || s == "ALL" || s == "*")
+    return layers;
+  size_t start = 0;
+  while (start < s.size()) {
+    size_t end = s.find(',', start);
+    std::string token =
+        s.substr(start, (end == std::string::npos) ? s.size() - start
+                                                    : end - start);
+    if (!token.empty()) {
+      char *e = nullptr;
+      int val = std::strtol(token.c_str(), &e, 10);
+      if (e != token.c_str())
+        layers.push_back(val);
+    }
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  return layers;
+}
+
+static bool attn_trace_layer_selected(size_t layer_idx, size_t num_layers) {
+  const char *layers_env = std::getenv("GRETA_TRACE_ATTN_LAYERS");
+  std::vector<int> layers = parse_layers(layers_env);
+  if (layers.empty()) {
+    const int last = num_layers > 0 ? static_cast<int>(num_layers - 1) : 0;
+    const int defaults[] = {0, 1, 2, last};
+    for (int l : defaults) {
+      if (l == static_cast<int>(layer_idx))
+        return true;
+    }
+    return false;
+  }
+  for (int l : layers) {
+    if (l == static_cast<int>(layer_idx))
+      return true;
+  }
+  return false;
+}
+
+static const char *attn_trace_out_path() {
+  const char *out = std::getenv("GRETA_TRACE_ATTN_DECODE_OUT");
+  if (out && *out)
+    return out;
+  return std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+}
+
+static bool trace_attn_decode_verify_enabled() {
+  return env_flag("GRETA_TRACE_ATTN_DECODE_VERIFY");
+}
+
+static bool attn_decode_ref_enabled() {
+  return env_flag("GRETA_ATTN_DECODE_REF");
+}
+
+static double mae_f32(const float *a, const float *b, size_t n) {
+  if (n == 0)
+    return 0.0;
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    sum += std::abs(static_cast<double>(a[i]) - static_cast<double>(b[i]));
+  }
+  return sum / static_cast<double>(n);
+}
+
+static void compute_attention_ref(const float *q, const float *k_cache,
+                                  const float *v_cache, uint32_t num_heads,
+                                  uint32_t num_heads_kv, uint32_t head_dim,
+                                  uint32_t seq_len, uint32_t max_seq_len,
+                                  float scale, std::vector<float> &out) {
+  if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
+    return;
+  out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
+  const uint32_t group =
+      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  for (uint32_t h = 0; h < num_heads; ++h) {
+    const uint32_t kv_head = (group > 0) ? (h / group) : 0;
+    const float *q_ptr = q + h * head_dim;
+    const float *k_ptr =
+        k_cache + kv_head * max_seq_len * head_dim;
+    const float *v_ptr =
+        v_cache + kv_head * max_seq_len * head_dim;
+
+    std::vector<float> scores(seq_len, 0.0f);
+    float max_score = -INFINITY;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      const float *k_t = k_ptr + t * head_dim;
+      float dot = 0.0f;
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        dot += q_ptr[d] * k_t[d];
+      }
+      float s = dot * scale;
+      scores[t] = s;
+      if (s > max_score)
+        max_score = s;
+    }
+    double sum = 0.0;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      scores[t] = std::exp(scores[t] - max_score);
+      sum += scores[t];
+    }
+    const double inv_sum = sum > 0.0 ? (1.0 / sum) : 0.0;
+
+    float *o_ptr = out.data() + h * head_dim;
+    for (uint32_t d = 0; d < head_dim; ++d) {
+      double acc = 0.0;
+      for (uint32_t t = 0; t < seq_len; ++t) {
+        const float *v_t = v_ptr + t * head_dim;
+        acc += static_cast<double>(scores[t]) * static_cast<double>(v_t[d]);
+      }
+      o_ptr[d] = static_cast<float>(acc * inv_sum);
+    }
+  }
+}
+
+static void stats_hash_kv_subset(const float *base, uint32_t num_heads_kv,
+                                 uint32_t head_dim, uint32_t max_seq_len,
+                                 uint32_t seq_len, F32Stats *stats,
+                                 uint64_t *hash) {
+  if (!base || !stats || !hash || num_heads_kv == 0 || head_dim == 0 ||
+      seq_len == 0) {
+    return;
+  }
+  stats->min = std::numeric_limits<float>::infinity();
+  stats->max = -std::numeric_limits<float>::infinity();
+  stats->mean = 0.0f;
+  stats->nan = 0;
+  stats->inf = 0;
+  double sum = 0.0;
+  size_t count = 0;
+  uint64_t h = 1469598103934665603ull;
+  size_t hash_count = 0;
+  for (uint32_t kv = 0; kv < num_heads_kv; ++kv) {
+    const float *head_base = base + kv * max_seq_len * head_dim;
+    for (uint32_t t = 0; t < seq_len; ++t) {
+      const float *p = head_base + t * head_dim;
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        float v = p[d];
+        if (std::isnan(v)) {
+          stats->nan++;
+          continue;
+        }
+        if (std::isinf(v)) {
+          stats->inf++;
+          continue;
+        }
+        if (v < stats->min)
+          stats->min = v;
+        if (v > stats->max)
+          stats->max = v;
+        sum += v;
+        count++;
+        if (hash_count < 256) {
+          uint32_t vv;
+          std::memcpy(&vv, &v, sizeof(uint32_t));
+          h ^= static_cast<uint64_t>(vv);
+          h *= 1099511628211ull;
+          hash_count++;
+        }
+      }
+    }
+  }
+  stats->mean = count > 0 ? static_cast<float>(sum / count) : 0.0f;
+  *hash = h;
 }
 
 struct F32Stats {
@@ -958,6 +1179,181 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   if (TRACE_ON(layer_idx)) {
     launch_debug_tensor_stats(hip_stream, "L.residual.x", x, n_x);
+  }
+
+  if (trace_attn_decode_verify_enabled() && seq_len == 1 &&
+      trace_step_ == 1 &&
+      attn_trace_layer_selected(layer_idx, config_.num_layers)) {
+    const char *out = attn_trace_out_path();
+    if (out && *out) {
+      const uint32_t point_mask =
+          attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
+      const uint32_t seq_len_used =
+          static_cast<uint32_t>(seq_start + 1);
+      const uint32_t pos_id_used = static_cast<uint32_t>(seq_start);
+      const uint32_t max_seq_len =
+          static_cast<uint32_t>(config_.max_seq_len);
+
+      std::vector<float> q_host;
+      std::vector<float> attn_out_host;
+      std::vector<float> x_out_host;
+      if (point_mask & static_cast<uint32_t>(AttnTracePoint::Q)) {
+        q_host.resize(D);
+        hipMemcpy(q_host.data(), q, D * sizeof(float),
+                  hipMemcpyDeviceToHost);
+      }
+      if (point_mask & static_cast<uint32_t>(AttnTracePoint::ATTN_OUT)) {
+        attn_out_host.resize(D);
+        hipMemcpy(attn_out_host.data(), attn_out, D * sizeof(float),
+                  hipMemcpyDeviceToHost);
+      }
+      if (point_mask & static_cast<uint32_t>(AttnTracePoint::X_OUT)) {
+        x_out_host.resize(D);
+        hipMemcpy(x_out_host.data(), x, D * sizeof(float),
+                  hipMemcpyDeviceToHost);
+      }
+
+      const size_t kv_layer_stride_elems =
+          static_cast<size_t>(config_.max_seq_len) * Hkv * Dh;
+      const size_t kv_layer_stride_bytes =
+          kv_layer_stride_elems * sizeof(float);
+      const size_t kv_layer_offset_elems =
+          static_cast<size_t>(layer_idx) * kv_layer_stride_elems;
+      const float *k_cache_layer =
+          static_cast<const float *>(activations_.kv_cache_k.data()) +
+          kv_layer_offset_elems;
+      const float *v_cache_layer =
+          static_cast<const float *>(activations_.kv_cache_v.data()) +
+          kv_layer_offset_elems;
+
+      std::vector<float> k_cache_host;
+      std::vector<float> v_cache_host;
+      bool need_kv = attn_decode_ref_enabled() ||
+                     (point_mask & static_cast<uint32_t>(AttnTracePoint::K)) ||
+                     (point_mask & static_cast<uint32_t>(AttnTracePoint::V));
+      if (need_kv) {
+        k_cache_host.resize(kv_layer_stride_elems);
+        v_cache_host.resize(kv_layer_stride_elems);
+        hipMemcpy(k_cache_host.data(), k_cache_layer,
+                  kv_layer_stride_bytes, hipMemcpyDeviceToHost);
+        hipMemcpy(v_cache_host.data(), v_cache_layer,
+                  kv_layer_stride_bytes, hipMemcpyDeviceToHost);
+      }
+
+      F32Stats q_stats{};
+      uint64_t q_hash = 0;
+      if (!q_host.empty()) {
+        q_stats = stats_f32(q_host.data(), q_host.size());
+        q_hash = hash_f32(q_host.data(), q_host.size());
+      }
+
+      F32Stats k_stats{};
+      F32Stats v_stats{};
+      uint64_t k_hash = 0;
+      uint64_t v_hash = 0;
+      if (!k_cache_host.empty()) {
+        stats_hash_kv_subset(k_cache_host.data(), Hkv, Dh, max_seq_len,
+                             seq_len_used, &k_stats, &k_hash);
+      }
+      if (!v_cache_host.empty()) {
+        stats_hash_kv_subset(v_cache_host.data(), Hkv, Dh, max_seq_len,
+                             seq_len_used, &v_stats, &v_hash);
+      }
+
+      F32Stats attn_stats{};
+      uint64_t attn_hash = 0;
+      if (!attn_out_host.empty()) {
+        attn_stats = stats_f32(attn_out_host.data(), attn_out_host.size());
+        attn_hash = hash_f32(attn_out_host.data(), attn_out_host.size());
+      }
+
+      F32Stats x_stats{};
+      uint64_t x_hash = 0;
+      if (!x_out_host.empty()) {
+        x_stats = stats_f32(x_out_host.data(), x_out_host.size());
+        x_hash = hash_f32(x_out_host.data(), x_out_host.size());
+      }
+
+      std::vector<float> attn_ref;
+      uint64_t attn_ref_hash = 0;
+      double attn_mae = 0.0;
+      if (attn_decode_ref_enabled() && !q_host.empty() &&
+          !k_cache_host.empty() && !v_cache_host.empty() &&
+          !attn_out_host.empty()) {
+        const float scale = 1.0f / sqrtf(static_cast<float>(Dh));
+        compute_attention_ref(q_host.data(), k_cache_host.data(),
+                              v_cache_host.data(), Hq, Hkv, Dh, seq_len_used,
+                              max_seq_len, scale, attn_ref);
+        if (!attn_ref.empty()) {
+          attn_ref_hash = hash_f32(attn_ref.data(), attn_ref.size());
+          attn_mae = mae_f32(attn_out_host.data(), attn_ref.data(),
+                             attn_out_host.size());
+        }
+      }
+
+      const uint32_t kv_head = 0;
+      const size_t kv_head_stride_elems =
+          static_cast<size_t>(max_seq_len) * Dh;
+      const size_t kv_pos = pos_id_used;
+      const size_t k_read_offset_elems =
+          kv_head * kv_head_stride_elems + kv_pos * Dh;
+      const size_t v_read_offset_elems = k_read_offset_elems;
+      const size_t k_read_offset_bytes =
+          k_read_offset_elems * sizeof(float);
+      const size_t v_read_offset_bytes =
+          v_read_offset_elems * sizeof(float);
+
+      std::ostringstream oss;
+      oss << "{\"event\":\"attn_decode_verify\""
+          << ",\"phase\":\"decode0\""
+          << ",\"layer\":" << layer_idx
+          << ",\"seq_len_used\":" << seq_len_used
+          << ",\"pos_id_used\":" << pos_id_used
+          << ",\"kernel_path\":\"" << (use_fused_attn ? "fused" : "manual")
+          << "\""
+          << ",\"matmul_route\":\""
+          << (std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
+                  ? std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
+                  : "auto")
+          << "\""
+          << ",\"num_heads\":" << Hq
+          << ",\"num_heads_kv\":" << Hkv
+          << ",\"head_dim\":" << Dh
+          << ",\"q_hash\":" << q_hash
+          << ",\"q_min\":" << q_stats.min
+          << ",\"q_max\":" << q_stats.max
+          << ",\"q_mean\":" << q_stats.mean
+          << ",\"k_hash\":" << k_hash
+          << ",\"k_min\":" << k_stats.min
+          << ",\"k_max\":" << k_stats.max
+          << ",\"k_mean\":" << k_stats.mean
+          << ",\"v_hash\":" << v_hash
+          << ",\"v_min\":" << v_stats.min
+          << ",\"v_max\":" << v_stats.max
+          << ",\"v_mean\":" << v_stats.mean
+          << ",\"attn_out_hash\":" << attn_hash
+          << ",\"attn_out_min\":" << attn_stats.min
+          << ",\"attn_out_max\":" << attn_stats.max
+          << ",\"attn_out_mean\":" << attn_stats.mean
+          << ",\"attn_out_ref_hash\":" << attn_ref_hash
+          << ",\"attn_out_mae\":" << attn_mae
+          << ",\"x_out_hash\":" << x_hash
+          << ",\"x_out_min\":" << x_stats.min
+          << ",\"x_out_max\":" << x_stats.max
+          << ",\"x_out_mean\":" << x_stats.mean
+          << ",\"kv_base_ptr_k\":"
+          << reinterpret_cast<uintptr_t>(activations_.kv_cache_k.data())
+          << ",\"kv_base_ptr_v\":"
+          << reinterpret_cast<uintptr_t>(activations_.kv_cache_v.data())
+          << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
+          << ",\"kv_pos\":" << kv_pos
+          << ",\"k_read_offset_bytes\":" << k_read_offset_bytes
+          << ",\"v_read_offset_bytes\":" << v_read_offset_bytes
+          << ",\"k_write_offset_bytes\":" << k_read_offset_bytes
+          << ",\"v_write_offset_bytes\":" << v_read_offset_bytes
+          << "}";
+      append_line(out, oss.str());
+    }
   }
 
   if (env_flag("GRETA_TRACE_LAYER_DELTA") && seq_len == 1 &&
