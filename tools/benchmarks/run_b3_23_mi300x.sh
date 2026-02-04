@@ -23,7 +23,8 @@ git push origin HEAD
 git ls-remote origin HEAD
 
 # Remote pull + build + run
-ssh root@"$IP" "set -euo pipefail
+ssh root@"$IP" <<'EOS'
+set -euo pipefail
 cd /root/gretacore
 
 git fetch origin
@@ -33,10 +34,10 @@ git pull --rebase
 git rev-parse HEAD
 
 cd /root/gretacore/tools/inference/build
-make -B -j\$(nproc)
+make -B -j$(nproc)
 
-OUTDIR=/root/gretacore/artifacts/alignment/$DATE
-mkdir -p \"$OUTDIR\"
+OUTDIR=/root/gretacore/artifacts/alignment/2026-02-03
+mkdir -p "$OUTDIR"
 
 export GRETA_INT4_WEIGHTS=1
 export GRETA_MAX_SEQ_LEN=256
@@ -45,23 +46,23 @@ export GRETA_TRACE_ATTN_LAYER=31
 export GRETA_TRACE_ATTN_HEAD=0
 export GRETA_TRACE_ATTN_KEYS_WINDOW=64
 export GRETA_TRACE_ATTN_OUT=$OUTDIR/b3_23_attn_softmax.jsonl
-export GRETA_TRACE_ATTN_POINTS=\"q,k,v,attn_out\"
+export GRETA_TRACE_ATTN_POINTS="q,k,v,attn_out"
 
 MODEL=/root/gretacore/models/llama3_8b_q4/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 BIN=/root/gretacore/tools/inference/build/greta_infer
 
-P4=\"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\\nYou are a helpful assistant.\\n<|eot_id|><|start_header_id|>user<|end_header_id|>\\nHi\\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\"
-P5=\"Write one short sentence about Buenos Aires.\"
+P4="<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are a helpful assistant.\n<|eot_id|><|start_header_id|>user<|end_header_id|>\nHi\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
+P5="Write one short sentence about Buenos Aires."
 
-rm -f \"$OUTDIR/b3_23_attn_softmax.jsonl\"
+rm -f "$OUTDIR/b3_23_attn_softmax.jsonl"
 
 export GRETA_TRACE_PROMPT_ID=p4_sys
-$BIN --model \"$MODEL\" --prompt \"$P4\" --max-tokens 2 --greedy --debug-decode 1 \
-  2>&1 | tee \"$OUTDIR/b3_23_p4.log\"
+$BIN --model "$MODEL" --prompt "$P4" --max-tokens 2 --greedy --debug-decode 1 \
+  2>&1 | tee "$OUTDIR/b3_23_p4.log"
 
 export GRETA_TRACE_PROMPT_ID=p5_ba
-$BIN --model \"$MODEL\" --prompt \"$P5\" --max-tokens 2 --greedy --debug-decode 1 \
-  2>&1 | tee \"$OUTDIR/b3_23_p5.log\"
+$BIN --model "$MODEL" --prompt "$P5" --max-tokens 2 --greedy --debug-decode 1 \
+  2>&1 | tee "$OUTDIR/b3_23_p5.log"
 
 unset GRETA_TRACE_PROMPT_ID
 
@@ -71,7 +72,7 @@ tar -czf /root/gretacore_b3_23_artifacts.tgz \
   $OUTDIR/b3_23_p5.log
 
 ls -lh /root/gretacore_b3_23_artifacts.tgz
-"
+EOS
 
 mkdir -p "$OUTDIR_LOCAL"
 scp root@"$IP":/root/gretacore_b3_23_artifacts.tgz "$OUTDIR_LOCAL/"
