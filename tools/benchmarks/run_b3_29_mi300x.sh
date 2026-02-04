@@ -52,11 +52,11 @@ BIN=/root/gretacore/tools/inference/build/greta_infer
 rm -f "$OUTDIR/b3_29_stage.jsonl"
 
 export GRETA_TRACE_PROMPT_ID=p4_sys
-$BIN --model "$MODEL" --prompt-file /root/gretacore/tools/benchmarks/prompts/p4_sys.txt --max-tokens 1 --greedy \
+$BIN --model "$MODEL" --prompt-file /root/gretacore/tools/benchmarks/prompts/p4_sys.txt --max-tokens 2 --greedy \
   2>&1 | tee "$OUTDIR/b3_29_p4.log"
 
 export GRETA_TRACE_PROMPT_ID=p5_ba
-$BIN --model "$MODEL" --prompt-file /root/gretacore/tools/benchmarks/prompts/p5_ba.txt --max-tokens 1 --greedy \
+$BIN --model "$MODEL" --prompt-file /root/gretacore/tools/benchmarks/prompts/p5_ba.txt --max-tokens 2 --greedy \
   2>&1 | tee "$OUTDIR/b3_29_p5.log"
 
 unset GRETA_TRACE_PROMPT_ID
