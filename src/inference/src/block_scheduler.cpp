@@ -1724,6 +1724,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
                        static_cast<uint32_t>(seq_len), stage_tokens_total, x,
                        D, stage_token_index, hip_stream);
+    if (stage_trace_point_enabled("x_out")) {
+      stage_trace_tensor("x_out", stage_phase, stage_prompt_id, layer_idx,
+                         static_cast<uint32_t>(trace_step_), stage_pos_id,
+                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
+                         D, stage_token_index, hip_stream);
+    }
   }
 
   if (PROFILE_ON()) {
@@ -2871,6 +2877,13 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
 
       if (stage_trace_point_enabled("final_norm")) {
         stage_trace_tensor("final_norm", stage_phase, stage_prompt_id,
+                           final_layer, static_cast<uint32_t>(trace_step_),
+                           stage_pos_id, static_cast<uint32_t>(seq_len),
+                           stage_tokens_total, norm_out, stride_elems,
+                           stage_token_index, hip_stream);
+      }
+      if (stage_trace_point_enabled("final_rms")) {
+        stage_trace_tensor("final_rms", stage_phase, stage_prompt_id,
                            final_layer, static_cast<uint32_t>(trace_step_),
                            stage_pos_id, static_cast<uint32_t>(seq_len),
                            stage_tokens_total, norm_out, stride_elems,
