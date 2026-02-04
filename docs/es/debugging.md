@@ -52,6 +52,11 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
 - `GRETA_TRACE_POST_WO_LAYERS="0"`  
 - `GRETA_TRACE_POST_WO_SAMPLE=1024`  
 - `GRETA_TRACE_POST_WO_PHASES="prefill_last,decode0"`  
+- `GRETA_TRACE_RMSNORM=1`  
+- `GRETA_TRACE_RMSNORM_OUT=/root/gretacore/artifacts/alignment/.../b3_42_rmsnorm.jsonl`  
+- `GRETA_TRACE_RMSNORM_LAYERS="0"`  
+- `GRETA_TRACE_RMSNORM_SAMPLE=1024`  
+- `GRETA_TRACE_RMSNORM_PHASES="prefill_last,decode0"`  
   Verifica el layout/packing de pesos WO en layer0 (row vs col) entre `prefill_last` y `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Fuerza la proyección Q en prefill a usar layout row (B3.34).

@@ -153,6 +153,18 @@ export GRETA_TRACE_POST_WO_SAMPLE=1024
 export GRETA_TRACE_POST_WO_PHASES="prefill_last,decode0"
 ```
 
+## Debug Tracing (RMSNorm Pre-MLP)
+
+```bash
+# RMSNorm pre-MLP trace (B3.42)
+export GRETA_TRACE_RMSNORM=1
+export GRETA_TRACE_RMSNORM_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_42_rmsnorm.jsonl
+# Optional filters
+export GRETA_TRACE_RMSNORM_LAYERS="0"
+export GRETA_TRACE_RMSNORM_SAMPLE=1024
+export GRETA_TRACE_RMSNORM_PHASES="prefill_last,decode0"
+```
+
 ## Debug Tracing (Layer0 Attention Pipeline)
 
 ```bash

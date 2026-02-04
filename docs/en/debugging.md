@@ -52,6 +52,11 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
 - `GRETA_TRACE_POST_WO_LAYERS="0"`  
 - `GRETA_TRACE_POST_WO_SAMPLE=1024`  
 - `GRETA_TRACE_POST_WO_PHASES="prefill_last,decode0"`  
+- `GRETA_TRACE_RMSNORM=1`  
+- `GRETA_TRACE_RMSNORM_OUT=/root/gretacore/artifacts/alignment/.../b3_42_rmsnorm.jsonl`  
+- `GRETA_TRACE_RMSNORM_LAYERS="0"`  
+- `GRETA_TRACE_RMSNORM_SAMPLE=1024`  
+- `GRETA_TRACE_RMSNORM_PHASES="prefill_last,decode0"`  
   Verifies WO weight layout/packing for layer0 (row vs col) during `prefill_last` vs `decode0`.
 - `GRETA_PREFILL_FORCE_WQ_ROW=1`  
   Forces prefill Q projection to use the row-major interpretation (B3.34).
