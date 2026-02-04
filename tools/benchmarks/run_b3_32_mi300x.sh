@@ -53,7 +53,6 @@ mkdir -p "$OUTDIR"
 rm -f "$OUTDIR"/b3_32_* || true
 
 export GRETA_INT4_WEIGHTS=1
-export GRETA_MAX_SEQ_LEN=768
 export GRETA_TRACE_ATTN_L0_PIPE=1
 export GRETA_TRACE_ATTN_L0_NORM=1
 export GRETA_TRACE_STAGE_DEBUG_INPUT=1
@@ -64,7 +63,9 @@ BIN=/root/gretacore/tools/inference/build/greta_infer
 run_one () {
   local prompt_id="$1"
   local prompt_file="$2"
+  local max_seq="$3"
   local rc=0
+  export GRETA_MAX_SEQ_LEN="$max_seq"
   export GRETA_TRACE_PROMPT_ID="$prompt_id"
   export GRETA_TRACE_ATTN_L0_PIPE_OUT="$OUTDIR/b3_32_attn_l0_pipe_${prompt_id}.jsonl"
   rm -f "$OUTDIR/b3_32_attn_l0_pipe_${prompt_id}.jsonl"
@@ -80,10 +81,10 @@ run_one () {
 }
 
 fail=0
-run_one p0_short /root/gretacore/tools/benchmarks/prompts/p0_short_hi.txt || fail=1
-run_one p4_sys   /root/gretacore/tools/benchmarks/prompts/p4_sys.txt || fail=1
-run_one p5_ba    /root/gretacore/tools/benchmarks/prompts/p5_ba.txt || fail=1
-run_one p6_long  /root/gretacore/tools/benchmarks/prompts/p6_long.txt || fail=1
+run_one p0_short /root/gretacore/tools/benchmarks/prompts/p0_short_hi.txt 256 || fail=1
+run_one p4_sys   /root/gretacore/tools/benchmarks/prompts/p4_sys.txt 256 || fail=1
+run_one p5_ba    /root/gretacore/tools/benchmarks/prompts/p5_ba.txt 256 || fail=1
+run_one p6_long  /root/gretacore/tools/benchmarks/prompts/p6_long.txt 768 || fail=1
 
 unset GRETA_TRACE_PROMPT_ID
 
