@@ -824,13 +824,15 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const int landscape_topk = 64;
   const bool trace_stage = stage_trace_enabled();
   const bool trace_stage_debug_input = stage_trace_debug_input();
+  const bool trace_post_wo = trace_post_wo_enabled();
   const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape ||
                          trace_delta || trace_lmhead_w_verify || trace_hidden_equiv ||
-                         trace_stage;
+                         trace_stage || trace_post_wo;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify || trace_hidden_equiv || trace_stage) {
+  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify ||
+      trace_hidden_equiv || trace_stage || trace_post_wo) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
