@@ -2026,6 +2026,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         float q_weight_max_row = 0.0f;
         float q_weight_max_col = 0.0f;
         uint32_t q_weight_sample = 0;
+        std::string k_weight_layout =
+            qkv_w_verify ? std::string("unavailable") : std::string("disabled");
+        double k_weight_mae_row = 0.0;
+        double k_weight_mae_col = 0.0;
+        float k_weight_max_row = 0.0f;
+        float k_weight_max_col = 0.0f;
+        uint32_t k_weight_sample = 0;
         if (qkv_w_verify && norm_out_valid &&
             norm_out_host.size() >= static_cast<size_t>(D)) {
           q_weight_sample = std::min<uint32_t>(
@@ -2097,6 +2104,80 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                   (q_weight_mae_row <= q_weight_mae_col) ? "row" : "col";
             } else {
               q_weight_layout = "error";
+            }
+          }
+
+          if (q_weight_sample > 0 && Dh > 0 && kv_dim > 0) {
+            k_weight_sample = q_weight_sample;
+            static QkvWeightHostCache wk_cache;
+            const size_t wk_elems = static_cast<size_t>(D) * kv_dim;
+            if (ensure_qkv_weight_cache(b.wk, b.s_wk, b.sh_wk, wk_elems,
+                                        &wk_cache)) {
+              std::vector<float> k_row(static_cast<size_t>(Dh), 0.0f);
+              std::vector<float> k_col(static_cast<size_t>(Dh), 0.0f);
+              const float *x_vec = norm_out_host.data();
+              const uint32_t row_base = kv_head * Dh;
+              for (uint32_t j = 0; j < Dh; ++j) {
+                const uint32_t row = row_base + j;
+                double sum_row = 0.0;
+                double sum_col = 0.0;
+                for (uint32_t i = 0; i < D; ++i) {
+                  const float x_i = x_vec[i];
+                  const size_t idx_row =
+                      static_cast<size_t>(row) * D + i;
+                  const size_t idx_col =
+                      static_cast<size_t>(i) * kv_dim + row;
+                  sum_row += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wk_cache,
+                                                                  idx_row));
+                  sum_col += static_cast<double>(x_i) *
+                             static_cast<double>(read_weight_value(wk_cache,
+                                                                  idx_col));
+                }
+                float h_scale = 1.0f;
+                if (!wk_cache.head_scales.empty() && Dh > 0) {
+                  const size_t h_idx = row / Dh;
+                  if (h_idx < wk_cache.head_scales.size()) {
+                    h_scale = wk_cache.head_scales[h_idx];
+                  }
+                }
+                k_row[j] = static_cast<float>(sum_row * h_scale);
+                k_col[j] = static_cast<float>(sum_col * h_scale);
+              }
+              if (Dh % 2 == 0) {
+                for (uint32_t pair = 0; pair < Dh / 2; ++pair) {
+                  const float base = static_cast<float>(config_.rope_base);
+                  const float theta =
+                      static_cast<float>(pos_id_used) *
+                      std::pow(base, -2.0f *
+                                         (static_cast<float>(pair) /
+                                          static_cast<float>(Dh)));
+                  const float cos_val = std::cos(theta);
+                  const float sin_val = std::sin(theta);
+
+                  float v0 = k_row[pair];
+                  float v1 = k_row[pair + Dh / 2];
+                  float out0 = v0 * cos_val - v1 * sin_val;
+                  float out1 = v0 * sin_val + v1 * cos_val;
+                  k_row[pair] = out0;
+                  k_row[pair + Dh / 2] = out1;
+
+                  v0 = k_col[pair];
+                  v1 = k_col[pair + Dh / 2];
+                  out0 = v0 * cos_val - v1 * sin_val;
+                  out1 = v0 * sin_val + v1 * cos_val;
+                  k_col[pair] = out0;
+                  k_col[pair + Dh / 2] = out1;
+                }
+              }
+              mae_max_f32(k_row.data(), k_vec, k_weight_sample, &k_weight_mae_row,
+                          &k_weight_max_row);
+              mae_max_f32(k_col.data(), k_vec, k_weight_sample, &k_weight_mae_col,
+                          &k_weight_max_col);
+              k_weight_layout =
+                  (k_weight_mae_row <= k_weight_mae_col) ? "row" : "col";
+            } else {
+              k_weight_layout = "error";
             }
           }
         }
@@ -2188,6 +2269,19 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"q_weight_head_dim\":" << Dh
             << ",\"q_weight_kv_heads\":" << Hkv
             << ",\"q_weight_sample_dims\":" << q_weight_sample
+            << ",\"k_weight\":\"K\""
+            << ",\"k_weight_layout_best\":\"" << k_weight_layout << "\""
+            << ",\"k_weight_mae_row\":" << k_weight_mae_row
+            << ",\"k_weight_mae_col\":" << k_weight_mae_col
+            << ",\"k_weight_max_row\":" << k_weight_max_row
+            << ",\"k_weight_max_col\":" << k_weight_max_col
+            << ",\"k_weight_dtype\":\"" << dtype_label(b.wk.data_type()) << "\""
+            << ",\"k_weight_quant_mode\":\""
+            << dtype_label(b.wk.data_type()) << "\""
+            << ",\"k_weight_stride_used\":" << D
+            << ",\"k_weight_head_dim\":" << Dh
+            << ",\"k_weight_kv_heads\":" << Hkv
+            << ",\"k_weight_sample_dims\":" << k_weight_sample
             << ",\"k_layout_used\":\"row_major\""
             << ",\"v_layout_used\":\"row_major\""
             << ",\"q_ptr\":" << reinterpret_cast<uintptr_t>(q)
