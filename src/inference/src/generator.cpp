@@ -1,25 +1,24 @@
 #include "gcore/inference/generator.hpp"
-#include "gcore/inference/stage_trace.hpp"
+#include "gcore/compute/greta_compute.hpp"
 #include "gcore/inference/block_scheduler.hpp"
+#include "gcore/inference/layer_trace.hpp"
+#include "gcore/inference/stage_trace.hpp"
 #include "gcore/inference/tokenizer.hpp"
 #include "gcore/inference/trace.hpp"
-#include "gcore/inference/layer_trace.hpp"
-#include "gcore/compute/greta_compute.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <chrono>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <iostream>
-#include <sstream>
-#include <random>
 #include <hip/hip_fp16.h>
+#include <iostream>
+#include <random>
+#include <sstream>
 
 namespace gcore::inference {
-
 
 struct F32Stats {
   float min = 0.0f;
@@ -151,8 +150,8 @@ static std::vector<int> topk_ids(const float *logits, size_t n, int k) {
 }
 
 static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
-                              const std::vector<float> &rms_vec,
-                              size_t dim, const std::vector<int> &ids,
+                              const std::vector<float> &rms_vec, size_t dim,
+                              const std::vector<int> &ids,
                               std::vector<float> &out_logits,
                               int &out_top1_id) {
   if (weights.data_type() != gcore::rt::GretaDataType::FP16)
@@ -171,8 +170,8 @@ static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
     size_t offset = static_cast<size_t>(id) * dim * sizeof(uint16_t);
     if (offset + dim * sizeof(uint16_t) > weights.size())
       continue;
-    if (!weights.copy_to_host_offset(row.data(), offset,
-                                     dim * sizeof(uint16_t), nullptr))
+    if (!weights.copy_to_host_offset(row.data(), offset, dim * sizeof(uint16_t),
+                                     nullptr))
       continue;
     double sum = 0.0;
     for (size_t i = 0; i < dim; ++i) {
@@ -193,10 +192,11 @@ static bool cpu_probe_lm_head(const gcore::rt::hip::Buffer &weights,
 
 static void append_line(const char *path, const std::string &line);
 
-static bool trace_lmhead_w_verify_once(
-    const gcore::rt::hip::Buffer &weights, const std::vector<float> &rms_host,
-    const std::vector<float> &logits_host, const ModelConfig &config,
-    const char *out_path, std::string *err) {
+static bool trace_lmhead_w_verify_once(const gcore::rt::hip::Buffer &weights,
+                                       const std::vector<float> &rms_host,
+                                       const std::vector<float> &logits_host,
+                                       const ModelConfig &config,
+                                       const char *out_path, std::string *err) {
   static bool done = false;
   if (done)
     return true;
@@ -206,7 +206,8 @@ static bool trace_lmhead_w_verify_once(
 
   if (weights.data_type() != gcore::rt::GretaDataType::FP16) {
     std::ostringstream oss;
-    oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"unsupported_dtype\",\"dtype\":\""
+    oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"unsupported_dtype\","
+           "\"dtype\":\""
         << dtype_name(weights.data_type()) << "\"}";
     append_line(out_path, oss.str());
     return true;
@@ -235,34 +236,39 @@ static bool trace_lmhead_w_verify_once(
     size_t row_offset = static_cast<size_t>(token_id) * dim * elem_size;
     if (row_offset + dim * elem_size > total_bytes) {
       std::ostringstream oss;
-      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"row_oob\",\"token_id\":" << token_id
-          << ",\"row_offset_bytes\":" << row_offset
+      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"row_oob\",\"token_"
+             "id\":"
+          << token_id << ",\"row_offset_bytes\":" << row_offset
           << ",\"total_bytes\":" << total_bytes << "}";
       append_line(out_path, oss.str());
       continue;
     }
-    if (!weights.copy_to_host_offset(row_dim.data(), row_offset, dim * elem_size, err))
+    if (!weights.copy_to_host_offset(row_dim.data(), row_offset,
+                                     dim * elem_size, err))
       return false;
 
     std::vector<__half> col_dim(dim);
     size_t max_d = 0;
-    if (vocab > 0 && static_cast<size_t>(token_id) < vocab && total_elems > static_cast<size_t>(token_id)) {
+    if (vocab > 0 && static_cast<size_t>(token_id) < vocab &&
+        total_elems > static_cast<size_t>(token_id)) {
       max_d = (total_elems - static_cast<size_t>(token_id) - 1) / vocab;
     }
     const size_t d_limit = (max_d + 1 < dim) ? (max_d + 1) : dim;
     if (d_limit < dim) {
       std::ostringstream oss;
-      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_truncated\",\"token_id\":" << token_id
-          << ",\"d_limit\":" << d_limit
-          << ",\"dim\":" << dim << "}";
+      oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_truncated\","
+             "\"token_id\":"
+          << token_id << ",\"d_limit\":" << d_limit << ",\"dim\":" << dim
+          << "}";
       append_line(out_path, oss.str());
     }
     for (size_t d = 0; d < d_limit; ++d) {
       size_t col_offset = (d * vocab + static_cast<size_t>(token_id));
       if (!copy_elem(col_offset, &col_dim[d])) {
         std::ostringstream oss;
-        oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_oob\",\"token_id\":" << token_id
-            << ",\"d\":" << d
+        oss << "{\"event\":\"lmhead_w_verify\",\"status\":\"col_oob\",\"token_"
+               "id\":"
+            << token_id << ",\"d\":" << d
             << ",\"col_offset_elems\":" << col_offset
             << ",\"total_elems\":" << total_elems << "}";
         append_line(out_path, oss.str());
@@ -283,7 +289,8 @@ static bool trace_lmhead_w_verify_once(
     float gpu_logit = logits_host[static_cast<size_t>(token_id)];
     float abs_err_row = std::fabs(row_logit - gpu_logit);
     float abs_err_col = std::fabs(col_logit - gpu_logit);
-    const char *best_layout = (abs_err_row <= abs_err_col) ? "row_major_match" : "col_major_match";
+    const char *best_layout =
+        (abs_err_row <= abs_err_col) ? "row_major_match" : "col_major_match";
 
     std::vector<float> row_win;
     std::vector<float> col_win;
@@ -298,16 +305,12 @@ static bool trace_lmhead_w_verify_once(
 
     std::ostringstream oss;
     oss << "{\"event\":\"lmhead_w_verify\",\"token_id\":" << token_id
-        << ",\"vocab\":" << vocab
-        << ",\"dim\":" << dim
-        << ",\"gpu_logit\":" << gpu_logit
-        << ",\"row_logit\":" << row_logit
-        << ",\"col_logit\":" << col_logit
-        << ",\"abs_err_row\":" << abs_err_row
-        << ",\"abs_err_col\":" << abs_err_col
-        << ",\"best_layout\":\"" << best_layout << "\""
-        << ",\"row_hash\":" << row_hash
-        << ",\"col_hash\":" << col_hash
+        << ",\"vocab\":" << vocab << ",\"dim\":" << dim
+        << ",\"gpu_logit\":" << gpu_logit << ",\"row_logit\":" << row_logit
+        << ",\"col_logit\":" << col_logit << ",\"abs_err_row\":" << abs_err_row
+        << ",\"abs_err_col\":" << abs_err_col << ",\"best_layout\":\""
+        << best_layout << "\""
+        << ",\"row_hash\":" << row_hash << ",\"col_hash\":" << col_hash
         << ",\"row_window\":[";
     for (size_t i = 0; i < row_win.size(); ++i) {
       if (i)
@@ -326,7 +329,6 @@ static bool trace_lmhead_w_verify_once(
 
   return true;
 }
-
 
 static void append_line(const char *path, const std::string &line) {
   if (!path || !*path)
@@ -378,12 +380,12 @@ struct ReadoutTrace {
 static void log_readout(const char *path, const ReadoutTrace &t) {
   std::ostringstream oss;
   oss << "{\"phase\":\"" << (t.phase ? t.phase : "") << "\""
-      << ",\"readout_buffer_kind\":\"" << (t.readout_buffer_kind ? t.readout_buffer_kind : "") << "\""
-      << ",\"hidden_source_tag\":\"" << (t.hidden_source_tag ? t.hidden_source_tag : "") << "\""
-      << ",\"step\":" << t.step
-      << ",\"tokens_total\":" << t.tokens_total
-      << ",\"seq_len\":" << t.seq_len
-      << ",\"pos_id\":" << t.pos_id
+      << ",\"readout_buffer_kind\":\""
+      << (t.readout_buffer_kind ? t.readout_buffer_kind : "") << "\""
+      << ",\"hidden_source_tag\":\""
+      << (t.hidden_source_tag ? t.hidden_source_tag : "") << "\""
+      << ",\"step\":" << t.step << ",\"tokens_total\":" << t.tokens_total
+      << ",\"seq_len\":" << t.seq_len << ",\"pos_id\":" << t.pos_id
       << ",\"token_index\":" << t.token_index
       << ",\"used_index\":" << t.used_index
       << ",\"logical_last_index\":" << t.logical_last_index
@@ -402,8 +404,7 @@ static void log_readout(const char *path, const ReadoutTrace &t) {
       << ",\"rms_out_ptr\":" << t.rms_out_ptr
       << ",\"lm_in_ptr\":" << t.lm_in_ptr
       << ",\"rms_offset_bytes\":" << t.rms_offset_bytes
-      << ",\"rms_hash\":" << t.rms_hash
-      << ",\"rms_min\":" << t.rms_stats.min
+      << ",\"rms_hash\":" << t.rms_hash << ",\"rms_min\":" << t.rms_stats.min
       << ",\"rms_max\":" << t.rms_stats.max
       << ",\"rms_mean\":" << t.rms_stats.mean
       << ",\"logits_offset_bytes\":" << t.logits_offset_bytes
@@ -412,16 +413,11 @@ static void log_readout(const char *path, const ReadoutTrace &t) {
       << ",\"logits_min\":" << t.logits_stats.min
       << ",\"logits_max\":" << t.logits_stats.max
       << ",\"logits_mean\":" << t.logits_stats.mean
-      << ",\"top1_id\":" << t.top1_id
-      << ",\"top1_logit\":" << t.top1_logit
-      << ",\"top2_id\":" << t.top2_id
-      << ",\"top2_logit\":" << t.top2_logit
-      << ",\"gap\":" << t.gap
-      << ",\"vocab\":" << t.vocab
-      << "}";
+      << ",\"top1_id\":" << t.top1_id << ",\"top1_logit\":" << t.top1_logit
+      << ",\"top2_id\":" << t.top2_id << ",\"top2_logit\":" << t.top2_logit
+      << ",\"gap\":" << t.gap << ",\"vocab\":" << t.vocab << "}";
   append_line(path, oss.str());
 }
-
 
 struct DeltaTrace {
   const char *phase = nullptr;
@@ -483,10 +479,8 @@ static void log_delta(const char *path, const DeltaTrace &t) {
     return;
   std::ostringstream oss;
   oss << "{\"phase\":\"" << (t.phase ? t.phase : "") << "\""
-      << ",\"step\":" << t.step
-      << ",\"tokens_total\":" << t.tokens_total
-      << ",\"seq_len\":" << t.seq_len
-      << ",\"pos_id\":" << t.pos_id
+      << ",\"step\":" << t.step << ",\"tokens_total\":" << t.tokens_total
+      << ",\"seq_len\":" << t.seq_len << ",\"pos_id\":" << t.pos_id
       << ",\"hidden_ptr\":" << t.hidden_ptr
       << ",\"hidden_offset_bytes\":" << t.hidden_offset_bytes
       << ",\"hidden_token_index_used\":" << t.hidden_token_index_used
@@ -494,29 +488,26 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"hidden_min\":" << t.hidden_stats.min
       << ",\"hidden_max\":" << t.hidden_stats.max
       << ",\"hidden_mean\":" << t.hidden_stats.mean
-      << ",\"rms_hash\":" << t.rms_hash
-      << ",\"rms_min\":" << t.rms_stats.min
+      << ",\"rms_hash\":" << t.rms_hash << ",\"rms_min\":" << t.rms_stats.min
       << ",\"rms_max\":" << t.rms_stats.max
       << ",\"rms_mean\":" << t.rms_stats.mean
-      << ",\"rms_sumsq\":" << t.rms_sumsq
-      << ",\"rms_eps\":" << t.rms_eps
-      << ",\"rms_weight_dtype\":\"" << (t.rms_weight_dtype ? t.rms_weight_dtype : "") << "\""
-      << ",\"rms_input_dtype\":\"" << (t.rms_input_dtype ? t.rms_input_dtype : "") << "\""
-      << ",\"logits_hash\":" << t.logits_hash
-      << ",\"top1_id\":" << t.top1_id
-      << ",\"top1_logit\":" << t.top1_logit
-      << ",\"top2_id\":" << t.top2_id
-      << ",\"top2_logit\":" << t.top2_logit
-      << ",\"gap\":" << t.gap
+      << ",\"rms_sumsq\":" << t.rms_sumsq << ",\"rms_eps\":" << t.rms_eps
+      << ",\"rms_weight_dtype\":\""
+      << (t.rms_weight_dtype ? t.rms_weight_dtype : "") << "\""
+      << ",\"rms_input_dtype\":\""
+      << (t.rms_input_dtype ? t.rms_input_dtype : "") << "\""
+      << ",\"logits_hash\":" << t.logits_hash << ",\"top1_id\":" << t.top1_id
+      << ",\"top1_logit\":" << t.top1_logit << ",\"top2_id\":" << t.top2_id
+      << ",\"top2_logit\":" << t.top2_logit << ",\"gap\":" << t.gap
       << ",\"lm_head_route\":\"" << t.lm_head_route << "\""
       << ",\"lm_head_force_route\":\"" << t.lm_head_force_route << "\""
-      << ",\"lm_head_force_route_decode\":\"" << t.lm_head_force_route_decode << "\""
+      << ",\"lm_head_force_route_decode\":\"" << t.lm_head_force_route_decode
+      << "\""
       << ",\"lm_head_quant_mode\":\"" << t.lm_head_quant_mode << "\""
       << ",\"lm_head_layout_used\":\"" << t.lm_head_layout_used << "\""
       << ",\"lm_head_layout_assumed\":\"" << t.lm_head_layout_assumed << "\""
       << ",\"lm_head_layout_actual\":\"" << t.lm_head_layout_actual << "\""
-      << ",\"lm_head_m\":" << t.lm_head_m
-      << ",\"lm_head_n\":" << t.lm_head_n
+      << ",\"lm_head_m\":" << t.lm_head_m << ",\"lm_head_n\":" << t.lm_head_n
       << ",\"lm_head_k\":" << t.lm_head_k
       << ",\"lm_head_vocab\":" << t.lm_head_vocab
       << ",\"lm_head_lda\":" << t.lm_head_lda
@@ -529,16 +520,17 @@ static void log_delta(const char *path, const DeltaTrace &t) {
       << ",\"lm_head_dtype_a\":" << t.lm_head_dtype_a
       << ",\"lm_head_dtype_b\":" << t.lm_head_dtype_b
       << ",\"lm_head_accum_dtype\":" << t.lm_head_accum_dtype
-      << ",\"lm_head_perhead_enabled\":" << (t.lm_head_perhead_enabled ? "true" : "false")
+      << ",\"lm_head_perhead_enabled\":"
+      << (t.lm_head_perhead_enabled ? "true" : "false")
       << ",\"lm_head_scales_ptr\":" << t.lm_head_scales_ptr
       << ",\"lm_head_scales_hash\":" << t.lm_head_scales_hash
       << ",\"lm_head_head_scales_ptr\":" << t.lm_head_head_scales_ptr
       << ",\"lm_head_head_scales_hash\":" << t.lm_head_head_scales_hash
       << ",\"cpu_probe_top1_id\":" << t.cpu_probe_top1_id
-      << ",\"cpu_probe_agrees_gpu\":" << (t.cpu_probe_agrees_gpu ? "true" : "false")
+      << ",\"cpu_probe_agrees_gpu\":"
+      << (t.cpu_probe_agrees_gpu ? "true" : "false")
       << ",\"cpu_probe_prefill_top1\":" << t.cpu_probe_prefill_top1
-      << ",\"cpu_probe_decode0_top1\":" << t.cpu_probe_decode0_top1
-      << "}";
+      << ",\"cpu_probe_decode0_top1\":" << t.cpu_probe_decode0_top1 << "}";
   append_line(path, oss.str());
 }
 
@@ -573,8 +565,7 @@ static void log_hidden_equiv(const char *path, const HiddenEquivTrace &t) {
       << ",\"decode_hash\":" << t.decode_hash
       << ",\"decode_min\":" << t.decode_stats.min
       << ",\"decode_max\":" << t.decode_stats.max
-      << ",\"decode_mean\":" << t.decode_stats.mean
-      << "}";
+      << ",\"decode_mean\":" << t.decode_stats.mean << "}";
   append_line(path, oss.str());
 }
 static void log_landscape(const char *path, int step,
@@ -602,12 +593,10 @@ static void log_landscape(const char *path, int step,
   }
 
   std::ostringstream oss;
-  oss << "{\"step\":" << step
-      << ",\"top1\":{\"id\":" << v[0].second << ",\"logit\":" << v[0].first
-      << "},\"top2\":{\"id\":" << v[1].second << ",\"logit\":" << v[1].first
-      << "},\"gap\":" << gap
-      << ",\"entropy_topk\":" << entropy
-      << ",\"top5\":[";
+  oss << "{\"step\":" << step << ",\"top1\":{\"id\":" << v[0].second
+      << ",\"logit\":" << v[0].first << "},\"top2\":{\"id\":" << v[1].second
+      << ",\"logit\":" << v[1].first << "},\"gap\":" << gap
+      << ",\"entropy_topk\":" << entropy << ",\"top5\":[";
   for (int i = 0; i < 5 && i < (int)v.size(); ++i) {
     if (i)
       oss << ",";
@@ -622,9 +611,7 @@ static bool env_flag(const char *k) {
   return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
-static bool trace_post_wo_enabled() {
-  return env_flag("GRETA_TRACE_POST_WO");
-}
+static bool trace_post_wo_enabled() { return env_flag("GRETA_TRACE_POST_WO"); }
 
 static const char *post_wo_out_path() {
   const char *out = std::getenv("GRETA_TRACE_POST_WO_OUT");
@@ -655,15 +642,15 @@ static bool validate_trace_shapes(const ModelConfig &config, std::string *err) {
     return fail("head_dim=0");
 
   if (config.dim % config.num_heads != 0) {
-    return fail("dim not divisible by num_heads: dim=" +
-                std::to_string(config.dim) +
-                " num_heads=" + std::to_string(config.num_heads));
+    return fail(
+        "dim not divisible by num_heads: dim=" + std::to_string(config.dim) +
+        " num_heads=" + std::to_string(config.num_heads));
   }
   const uint32_t expected_head_dim = config.dim / config.num_heads;
   if (config.head_dim != expected_head_dim) {
-    return fail("head_dim mismatch: head_dim=" +
-                std::to_string(config.head_dim) +
-                " expected=" + std::to_string(expected_head_dim));
+    return fail(
+        "head_dim mismatch: head_dim=" + std::to_string(config.head_dim) +
+        " expected=" + std::to_string(expected_head_dim));
   }
   if (config.num_heads_kv > config.num_heads) {
     return fail("num_heads_kv greater than num_heads: num_heads_kv=" +
@@ -687,12 +674,9 @@ static void log_d2h_trace(bool enabled, const char *tensor_name, int step,
   std::ostringstream oss;
   oss << "[GRETA_TRACE_D2H]"
       << " tensor=" << (tensor_name ? tensor_name : "unknown")
-      << " step=" << step
-      << " layer=" << layer
-      << " src_ptr=0x" << std::hex
+      << " step=" << step << " layer=" << layer << " src_ptr=0x" << std::hex
       << reinterpret_cast<uintptr_t>(buffer.data()) << std::dec
-      << " alloc_bytes=" << buffer.size()
-      << " offset_bytes=" << offset_bytes
+      << " alloc_bytes=" << buffer.size() << " offset_bytes=" << offset_bytes
       << " size_bytes=" << size_bytes;
   std::cerr << oss.str() << std::endl;
 }
@@ -811,7 +795,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_readout = env_flag("GRETA_TRACE_READOUT");
   const char *trace_readout_out = std::getenv("GRETA_TRACE_READOUT_OUT");
   const bool trace_prefill_decode = env_flag("GRETA_TRACE_PREFILL_DECODE");
-  const char *trace_prefill_decode_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
+  const char *trace_prefill_decode_out =
+      std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
   const bool trace_delta = env_flag("GRETA_TRACE_PREFILL_DECODE_DELTA");
   const char *trace_delta_out = std::getenv("GRETA_TRACE_PREFILL_DECODE_OUT");
   const bool trace_hidden_equiv = env_flag("GRETA_TRACE_HIDDEN_EQUIV");
@@ -825,14 +810,16 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   const bool trace_stage = stage_trace_enabled();
   const bool trace_stage_debug_input = stage_trace_debug_input();
   const bool trace_post_wo = trace_post_wo_enabled();
-  const bool trace_any = trace_readout || trace_prefill_decode || trace_landscape ||
-                         trace_delta || trace_lmhead_w_verify || trace_hidden_equiv ||
+  const bool trace_any = trace_readout || trace_prefill_decode ||
+                         trace_landscape || trace_delta ||
+                         trace_lmhead_w_verify || trace_hidden_equiv ||
                          trace_stage || trace_post_wo;
 
   std::vector<float> hidden_host;
   std::vector<float> rms_host;
-  if (trace_readout || trace_prefill_decode || trace_delta || trace_lmhead_w_verify ||
-      trace_hidden_equiv || trace_stage || trace_post_wo) {
+  if (trace_readout || trace_prefill_decode || trace_delta ||
+      trace_lmhead_w_verify || trace_hidden_equiv || trace_stage ||
+      trace_post_wo) {
     hidden_host.resize(config_.dim);
     rms_host.resize(config_.dim);
   }
@@ -860,8 +847,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   // Sample first generated token from the last set of logits in the prefill
   size_t last_token_offset = 0;
   if (!prompt_tokens.empty()) {
-    last_token_offset = (prompt_tokens.size() - 1) * config_.vocab_size *
-                        sizeof(float);
+    last_token_offset =
+        (prompt_tokens.size() - 1) * config_.vocab_size * sizeof(float);
   }
   const auto &logits_buf = scheduler_->get_logits();
   log_d2h_trace(trace_any, "logits", 0, -1, logits_buf, last_token_offset,
@@ -888,8 +875,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     log_d2h_trace(trace_any, "hidden", 0, -1, hidden_buf, hidden_offset,
                   config_.dim * sizeof(float));
     if (!scheduler_->get_hidden_state().copy_to_host_offset(
-            hidden_host.data(), hidden_offset,
-            config_.dim * sizeof(float), err)) {
+            hidden_host.data(), hidden_offset, config_.dim * sizeof(float),
+            err)) {
       return output;
     }
     const size_t rms_offset = hidden_token_index_used * hidden_stride_bytes;
@@ -905,12 +892,9 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
     const Top2Logits top2 = top2_logits(logits_host.data(), config_.vocab_size);
     const float gap = top2.top1_logit - top2.top2_logit;
-    const uintptr_t hidden_ptr =
-        reinterpret_cast<uintptr_t>(hidden_buf.data());
-    const uintptr_t rms_ptr =
-        reinterpret_cast<uintptr_t>(rms_buf.data());
-    const uintptr_t logits_ptr =
-        reinterpret_cast<uintptr_t>(logits_buf.data());
+    const uintptr_t hidden_ptr = reinterpret_cast<uintptr_t>(hidden_buf.data());
+    const uintptr_t rms_ptr = reinterpret_cast<uintptr_t>(rms_buf.data());
+    const uintptr_t logits_ptr = reinterpret_cast<uintptr_t>(logits_buf.data());
     const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
 
     if (trace_stage && stage_trace_phase_enabled("prefill_last")) {
@@ -940,32 +924,28 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         if (stage_prompt_id && *stage_prompt_id)
           oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
         oss << ",\"phase\":\"prefill_last\""
-            << ",\"pos_id\":" << pos_id
-            << ",\"seq_len\":" << seq_len
+            << ",\"pos_id\":" << pos_id << ",\"seq_len\":" << seq_len
             << ",\"tokens_total\":" << tokens_total
             << ",\"token_index\":" << token_index
-            << ",\"logits_hash\":" << lhash
-            << ",\"logits_min\":" << lstats.min
+            << ",\"logits_hash\":" << lhash << ",\"logits_min\":" << lstats.min
             << ",\"logits_max\":" << lstats.max
             << ",\"logits_mean\":" << lstats.mean
             << ",\"top1_id\":" << top2.top1_id
             << ",\"top1_logit\":" << top2.top1_logit
             << ",\"top2_id\":" << top2.top2_id
-            << ",\"top2_logit\":" << top2.top2_logit
-            << ",\"gap\":" << gap
+            << ",\"top2_logit\":" << top2.top2_logit << ",\"gap\":" << gap
             << ",\"logits_ptr\":" << logits_ptr
             << ",\"logits_offset_bytes\":" << last_token_offset
-            << ",\"vocab\":" << config_.vocab_size
-            << "}";
+            << ",\"vocab\":" << config_.vocab_size << "}";
         append_line(out, oss.str());
       }
     }
 
     const bool readout_is_single_token = false;
     const bool readout_mismatch =
-        readout_is_single_token
-            ? (logical_last_index != (tokens_total > 0 ? (tokens_total - 1) : 0))
-            : (used_index != logical_last_index);
+        readout_is_single_token ? (logical_last_index !=
+                                   (tokens_total > 0 ? (tokens_total - 1) : 0))
+                                : (used_index != logical_last_index);
 
     ReadoutTrace trace{};
     trace.phase = "prefill_last";
@@ -1082,8 +1062,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     }
     if (trace_lmhead_w_verify && trace_lmhead_w_out) {
       const auto &lm_head_w = scheduler_->get_output_weight();
-      if (!trace_lmhead_w_verify_once(lm_head_w, rms_host, logits_host,
-                                      config_, trace_lmhead_w_out, err)) {
+      if (!trace_lmhead_w_verify_once(lm_head_w, rms_host, logits_host, config_,
+                                      trace_lmhead_w_out, err)) {
         return output;
       }
     }
@@ -1097,7 +1077,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
   output.push_back(next_token);
 
   if (env_flag("GRETA_TRACE_LAYER")) {
-    const size_t pos_id = prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
+    const size_t pos_id =
+        prompt_tokens.size() > 0 ? (prompt_tokens.size() - 1) : 0;
     const size_t seq_len = prompt_tokens.size();
     const size_t tokens_total = output.size();
     const int32_t token_in = prompt_tokens.empty() ? -1 : prompt_tokens.back();
@@ -1155,13 +1136,15 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
     if (trace_stage_debug_input && i == 1 && !prompt_tokens.empty()) {
       last_token_id = prompt_tokens.back();
       decode_seq_start = prompt_tokens.size() - 1;
+      setenv("GRETA_TRACE_DEBUG_INPUT_TOKEN_ID",
+             std::to_string(last_token_id).c_str(), 1);
     }
     if (!scheduler_->forward(&last_token_id, decode_seq_start, 1, err)) {
       break;
     }
-    const bool need_logits_host = !params.greedy || align_callback || trace_readout ||
-                                  trace_landscape || trace_prefill_decode ||
-                                  trace_delta || trace_stage || trace_post_wo;
+    const bool need_logits_host =
+        !params.greedy || align_callback || trace_readout || trace_landscape ||
+        trace_prefill_decode || trace_delta || trace_stage || trace_post_wo;
     const size_t decode_logits_offset =
         decode_seq_start * config_.vocab_size * sizeof(float);
     if (params.greedy && !align_callback && !need_logits_host) {
@@ -1180,7 +1163,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           trace_lmhead_w_verify || trace_stage || trace_post_wo) {
         const size_t tokens_total = output.size();
         const size_t token_index = tokens_total > 0 ? (tokens_total - 1) : 0;
-        const size_t logical_last_index = tokens_total > 0 ? (tokens_total - 1) : 0;
+        const size_t logical_last_index =
+            tokens_total > 0 ? (tokens_total - 1) : 0;
         const size_t hidden_token_index_used = 0;
         const size_t used_index = hidden_token_index_used;
         const size_t seq_len = 1;
@@ -1193,8 +1177,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         log_d2h_trace(trace_any, "hidden", i, -1, hidden_buf, hidden_offset,
                       config_.dim * sizeof(float));
         if (!scheduler_->get_hidden_state().copy_to_host_offset(
-                hidden_host.data(), hidden_offset,
-                config_.dim * sizeof(float), err)) {
+                hidden_host.data(), hidden_offset, config_.dim * sizeof(float),
+                err)) {
           break;
         }
         const size_t rms_offset = hidden_token_index_used * hidden_stride_bytes;
@@ -1208,15 +1192,13 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         const uint64_t rhash = hash_f32(rms_host.data(), config_.dim);
         const F32Stats lstats =
             stats_f32(logits_host.data(), config_.vocab_size);
-        const uint64_t lhash =
-            hash_f32(logits_host.data(), config_.vocab_size);
+        const uint64_t lhash = hash_f32(logits_host.data(), config_.vocab_size);
         const Top2Logits top2 =
             top2_logits(logits_host.data(), config_.vocab_size);
         const float gap = top2.top1_logit - top2.top2_logit;
         const uintptr_t hidden_ptr =
             reinterpret_cast<uintptr_t>(hidden_buf.data());
-        const uintptr_t rms_ptr =
-            reinterpret_cast<uintptr_t>(rms_buf.data());
+        const uintptr_t rms_ptr = reinterpret_cast<uintptr_t>(rms_buf.data());
         const uintptr_t logits_ptr =
             reinterpret_cast<uintptr_t>(logits_buf.data());
         const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
@@ -1235,11 +1217,10 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           stage_stats.logits_ptr = logits_ptr;
           stage_stats.logits_offset_bytes = decode_logits_offset;
           stage_stats.vocab = config_.vocab_size;
-          stage_trace_logits("decode0", stage_prompt_id,
-                             static_cast<uint32_t>(i),
-                             static_cast<uint32_t>(pos_id),
-                             static_cast<uint32_t>(seq_len),
-                             static_cast<uint32_t>(tokens_total), stage_stats);
+          stage_trace_logits(
+              "decode0", stage_prompt_id, static_cast<uint32_t>(i),
+              static_cast<uint32_t>(pos_id), static_cast<uint32_t>(seq_len),
+              static_cast<uint32_t>(tokens_total), stage_stats);
         }
         if (trace_post_wo_enabled() && i == 1) {
           const char *out = post_wo_out_path();
@@ -1249,8 +1230,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             if (stage_prompt_id && *stage_prompt_id)
               oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
             oss << ",\"phase\":\"decode0\""
-                << ",\"pos_id\":" << pos_id
-                << ",\"seq_len\":" << seq_len
+                << ",\"pos_id\":" << pos_id << ",\"seq_len\":" << seq_len
                 << ",\"tokens_total\":" << tokens_total
                 << ",\"token_index\":" << hidden_token_index_used
                 << ",\"logits_hash\":" << lhash
@@ -1260,12 +1240,10 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
                 << ",\"top1_id\":" << top2.top1_id
                 << ",\"top1_logit\":" << top2.top1_logit
                 << ",\"top2_id\":" << top2.top2_id
-                << ",\"top2_logit\":" << top2.top2_logit
-                << ",\"gap\":" << gap
+                << ",\"top2_logit\":" << top2.top2_logit << ",\"gap\":" << gap
                 << ",\"logits_ptr\":" << logits_ptr
                 << ",\"logits_offset_bytes\":" << decode_logits_offset
-                << ",\"vocab\":" << config_.vocab_size
-                << "}";
+                << ",\"vocab\":" << config_.vocab_size << "}";
             append_line(out, oss.str());
           }
         }
@@ -1273,7 +1251,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
         const bool readout_is_single_token = true;
         const bool readout_mismatch =
             readout_is_single_token
-                ? (logical_last_index != (tokens_total > 0 ? (tokens_total - 1) : 0))
+                ? (logical_last_index !=
+                   (tokens_total > 0 ? (tokens_total - 1) : 0))
                 : (used_index != logical_last_index);
 
         ReadoutTrace trace{};
@@ -1390,7 +1369,8 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             const auto &lm_head_w = scheduler_->get_output_weight();
             std::vector<float> tmp_logits;
             if (cpu_probe_lm_head(lm_head_w, prefill_rms_copy, config_.dim,
-                                  candidate_ids, tmp_logits, cpu_prefill_top1)) {
+                                  candidate_ids, tmp_logits,
+                                  cpu_prefill_top1)) {
               prefill_delta.cpu_probe_top1_id = cpu_prefill_top1;
               prefill_delta.cpu_probe_agrees_gpu =
                   (cpu_prefill_top1 == prefill_delta.top1_id);
@@ -1398,8 +1378,7 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
             if (cpu_probe_lm_head(lm_head_w, rms_host, config_.dim,
                                   candidate_ids, tmp_logits, cpu_decode_top1)) {
               delta.cpu_probe_top1_id = cpu_decode_top1;
-              delta.cpu_probe_agrees_gpu =
-                  (cpu_decode_top1 == delta.top1_id);
+              delta.cpu_probe_agrees_gpu = (cpu_decode_top1 == delta.top1_id);
             }
             prefill_delta.cpu_probe_prefill_top1 = cpu_prefill_top1;
             prefill_delta.cpu_probe_decode0_top1 = cpu_decode_top1;
@@ -1429,7 +1408,6 @@ Generator::generate_tokens(const std::vector<int32_t> &prompt_tokens,
           log_hidden_equiv(trace_delta_out, eq);
         }
       }
-
 
       if (trace_landscape && trace_landscape_out) {
         log_landscape(trace_landscape_out, i, logits_host, landscape_topk);

@@ -28,6 +28,8 @@ struct StageInputMeta {
   uint32_t prompt_tokens = 0;
   uint32_t kv_pos = 0;
   uint32_t decode_step = 0;
+  uint32_t token_id = 0;
+  const char *route = nullptr;
 };
 
 struct StageLogitsStats {

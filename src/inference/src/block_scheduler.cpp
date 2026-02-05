@@ -11,10 +11,10 @@
 #include "gcore/rt/hip/kernels/gemm_kernels.hpp"
 #include <algorithm>
 #include <cmath>
-#include <hip/hip_fp16.h>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <hip/hip_fp16.h>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -68,9 +68,8 @@ static uint32_t attn_point_mask_from_list(const char *v) {
   size_t start = 0;
   while (start < s.size()) {
     size_t end = s.find(',', start);
-    std::string token =
-        s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                    : end - start);
+    std::string token = s.substr(
+        start, (end == std::string::npos) ? s.size() - start : end - start);
     if (token == "q")
       mask |= static_cast<uint32_t>(AttnTracePoint::Q);
     else if (token == "k")
@@ -105,9 +104,8 @@ static std::vector<int> parse_layers(const char *v) {
   size_t start = 0;
   while (start < s.size()) {
     size_t end = s.find(',', start);
-    std::string token =
-        s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                    : end - start);
+    std::string token = s.substr(
+        start, (end == std::string::npos) ? s.size() - start : end - start);
     if (!token.empty()) {
       char *e = nullptr;
       int val = std::strtol(token.c_str(), &e, 10);
@@ -244,9 +242,7 @@ static bool trace_wo_w_verify_enabled() {
   return env_flag("GRETA_TRACE_WO_W_VERIFY");
 }
 
-static bool trace_post_wo_enabled() {
-  return env_flag("GRETA_TRACE_POST_WO");
-}
+static bool trace_post_wo_enabled() { return env_flag("GRETA_TRACE_POST_WO"); }
 
 static const char *post_wo_out_path() {
   const char *out = std::getenv("GRETA_TRACE_POST_WO_OUT");
@@ -293,9 +289,8 @@ static std::vector<int> post_wo_layers() {
       size_t start = 0;
       while (start < s.size()) {
         size_t end = s.find(',', start);
-        std::string token =
-            s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                       : end - start);
+        std::string token = s.substr(
+            start, (end == std::string::npos) ? s.size() - start : end - start);
         if (!token.empty()) {
           char *e = nullptr;
           long val = std::strtol(token.c_str(), &e, 10);
@@ -338,9 +333,8 @@ static bool post_wo_phase_enabled(const char *phase) {
   size_t start = 0;
   while (start < s.size()) {
     size_t end = s.find(',', start);
-    std::string token =
-        s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                   : end - start);
+    std::string token = s.substr(
+        start, (end == std::string::npos) ? s.size() - start : end - start);
     if (!token.empty() && token == phase)
       return true;
     if (end == std::string::npos)
@@ -350,9 +344,7 @@ static bool post_wo_phase_enabled(const char *phase) {
   return false;
 }
 
-static bool trace_rmsnorm_enabled() {
-  return env_flag("GRETA_TRACE_RMSNORM");
-}
+static bool trace_rmsnorm_enabled() { return env_flag("GRETA_TRACE_RMSNORM"); }
 
 static const char *rmsnorm_out_path() {
   const char *out = std::getenv("GRETA_TRACE_RMSNORM_OUT");
@@ -399,9 +391,8 @@ static std::vector<int> rmsnorm_layers() {
       size_t start = 0;
       while (start < s.size()) {
         size_t end = s.find(',', start);
-        std::string token =
-            s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                       : end - start);
+        std::string token = s.substr(
+            start, (end == std::string::npos) ? s.size() - start : end - start);
         if (!token.empty()) {
           char *e = nullptr;
           long val = std::strtol(token.c_str(), &e, 10);
@@ -444,9 +435,8 @@ static bool rmsnorm_phase_enabled(const char *phase) {
   size_t start = 0;
   while (start < s.size()) {
     size_t end = s.find(',', start);
-    std::string token =
-        s.substr(start, (end == std::string::npos) ? s.size() - start
-                                                   : end - start);
+    std::string token = s.substr(
+        start, (end == std::string::npos) ? s.size() - start : end - start);
     if (!token.empty() && token == phase)
       return true;
     if (end == std::string::npos)
@@ -509,9 +499,7 @@ static std::string qkv_route_used(uint32_t m, bool is_decode_step,
   return (m > GEMM_MFMA_THRESHOLD) ? "MFMA" : "VALU";
 }
 
-static bool trace_v_addr_enabled() {
-  return env_flag("GRETA_TRACE_V_ADDR");
-}
+static bool trace_v_addr_enabled() { return env_flag("GRETA_TRACE_V_ADDR"); }
 
 static const char *v_addr_out_path() {
   const char *out = std::getenv("GRETA_TRACE_V_ADDR_OUT");
@@ -638,8 +626,8 @@ static bool ensure_qkv_weight_cache(const gcore::rt::hip::Buffer &w,
   if (head_scales.size() > 0) {
     size_t count = head_scales.size() / sizeof(float);
     cache->head_scales.assign(count, 0.0f);
-    if (!head_scales.copy_to_host(cache->head_scales.data(),
-                                  head_scales.size(), nullptr)) {
+    if (!head_scales.copy_to_host(cache->head_scales.data(), head_scales.size(),
+                                  nullptr)) {
       return false;
     }
   }
@@ -731,24 +719,19 @@ static inline float round_fp16_host(float x) {
 }
 
 static void compute_attention_ref_fp32(const float *q, const float *k_cache,
-                                       const float *v_cache,
-                                       uint32_t num_heads,
-                                       uint32_t num_heads_kv,
-                                       uint32_t head_dim, uint32_t seq_len,
-                                       uint32_t max_seq_len, float scale,
-                                       std::vector<float> &out) {
+                                       const float *v_cache, uint32_t num_heads,
+                                       uint32_t num_heads_kv, uint32_t head_dim,
+                                       uint32_t seq_len, uint32_t max_seq_len,
+                                       float scale, std::vector<float> &out) {
   if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
     return;
   out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
-  const uint32_t group =
-      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  const uint32_t group = (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
   for (uint32_t h = 0; h < num_heads; ++h) {
     const uint32_t kv_head = (group > 0) ? (h / group) : 0;
     const float *q_ptr = q + h * head_dim;
-    const float *k_ptr =
-        k_cache + kv_head * max_seq_len * head_dim;
-    const float *v_ptr =
-        v_cache + kv_head * max_seq_len * head_dim;
+    const float *k_ptr = k_cache + kv_head * max_seq_len * head_dim;
+    const float *v_ptr = v_cache + kv_head * max_seq_len * head_dim;
 
     std::vector<float> scores(seq_len, 0.0f);
     float max_score = -INFINITY;
@@ -782,16 +765,16 @@ static void compute_attention_ref_fp32(const float *q, const float *k_cache,
   }
 }
 
-static void compute_attention_ref_fp16_accum(
-    const float *q, const float *k_cache, const float *v_cache,
-    uint32_t num_heads, uint32_t num_heads_kv, uint32_t head_dim,
-    uint32_t seq_len, uint32_t max_seq_len, float scale,
-    std::vector<float> &out) {
+static void
+compute_attention_ref_fp16_accum(const float *q, const float *k_cache,
+                                 const float *v_cache, uint32_t num_heads,
+                                 uint32_t num_heads_kv, uint32_t head_dim,
+                                 uint32_t seq_len, uint32_t max_seq_len,
+                                 float scale, std::vector<float> &out) {
   if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
     return;
   out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
-  const uint32_t group =
-      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  const uint32_t group = (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
   for (uint32_t h = 0; h < num_heads; ++h) {
     const uint32_t kv_head = (group > 0) ? (h / group) : 0;
     const float *q_ptr = q + h * head_dim;
@@ -834,17 +817,14 @@ static void compute_attention_ref_fp16_accum(
 }
 
 static void compute_attention_ref_fp64(const float *q, const float *k_cache,
-                                       const float *v_cache,
-                                       uint32_t num_heads,
-                                       uint32_t num_heads_kv,
-                                       uint32_t head_dim, uint32_t seq_len,
-                                       uint32_t max_seq_len, double scale,
-                                       std::vector<float> &out) {
+                                       const float *v_cache, uint32_t num_heads,
+                                       uint32_t num_heads_kv, uint32_t head_dim,
+                                       uint32_t seq_len, uint32_t max_seq_len,
+                                       double scale, std::vector<float> &out) {
   if (!q || !k_cache || !v_cache || num_heads == 0 || head_dim == 0)
     return;
   out.assign(static_cast<size_t>(num_heads) * head_dim, 0.0f);
-  const uint32_t group =
-      (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
+  const uint32_t group = (num_heads_kv > 0) ? (num_heads / num_heads_kv) : 0;
   for (uint32_t h = 0; h < num_heads; ++h) {
     const uint32_t kv_head = (group > 0) ? (h / group) : 0;
     const float *q_ptr = q + h * head_dim;
@@ -857,8 +837,7 @@ static void compute_attention_ref_fp64(const float *q, const float *k_cache,
       const float *k_t = k_ptr + t * head_dim;
       double dot = 0.0;
       for (uint32_t d = 0; d < head_dim; ++d) {
-        dot += static_cast<double>(q_ptr[d]) *
-               static_cast<double>(k_t[d]);
+        dot += static_cast<double>(q_ptr[d]) * static_cast<double>(k_t[d]);
       }
       double s = dot * scale;
       scores[t] = s;
@@ -897,8 +876,7 @@ static std::vector<double> per_head_mae_f32(const float *a, const float *b,
     const float *pa = a + h * head_size;
     const float *pb = b + h * head_size;
     for (uint32_t d = 0; d < head_dim; ++d) {
-      sum += std::abs(static_cast<double>(pa[d]) -
-                      static_cast<double>(pb[d]));
+      sum += std::abs(static_cast<double>(pa[d]) - static_cast<double>(pb[d]));
     }
     out[h] = sum / static_cast<double>(head_dim);
   }
@@ -1024,8 +1002,7 @@ static void post_wo_trace_tensor(const char *point, const char *phase,
   const size_t offset_elems = token_index * stride_elems;
   const float *ptr = base + offset_elems;
   const uint32_t sample_n =
-      std::min<uint32_t>(post_wo_sample(),
-                         static_cast<uint32_t>(stride_elems));
+      std::min<uint32_t>(post_wo_sample(), static_cast<uint32_t>(stride_elems));
   std::vector<float> host(sample_n, 0.0f);
   if (sample_n > 0) {
     hipMemcpyAsync(host.data(), ptr, sample_n * sizeof(float),
@@ -1041,23 +1018,17 @@ static void post_wo_trace_tensor(const char *point, const char *phase,
     oss << ",\"prompt_id\":\"" << prompt_id << "\"";
   oss << ",\"phase\":\"" << phase << "\""
       << ",\"point\":\"" << point << "\""
-      << ",\"layer\":" << layer
-      << ",\"step\":" << step
-      << ",\"pos_id\":" << pos_id
-      << ",\"seq_len\":" << seq_len
+      << ",\"layer\":" << layer << ",\"step\":" << step
+      << ",\"pos_id\":" << pos_id << ",\"seq_len\":" << seq_len
       << ",\"tokens_total\":" << tokens_total
       << ",\"token_index\":" << token_index
       << ",\"ptr\":" << reinterpret_cast<uintptr_t>(ptr)
       << ",\"base_ptr\":" << reinterpret_cast<uintptr_t>(base)
       << ",\"offset_bytes\":" << (offset_elems * sizeof(float))
-      << ",\"alloc_bytes\":" << alloc_bytes
-      << ",\"sample_n\":" << sample_n
-      << ",\"hash\":" << hash
-      << ",\"min\":" << stats.min
-      << ",\"max\":" << stats.max
-      << ",\"mean\":" << stats.mean
-      << ",\"nan\":" << stats.nan
-      << ",\"inf\":" << stats.inf
+      << ",\"alloc_bytes\":" << alloc_bytes << ",\"sample_n\":" << sample_n
+      << ",\"hash\":" << hash << ",\"min\":" << stats.min
+      << ",\"max\":" << stats.max << ",\"mean\":" << stats.mean
+      << ",\"nan\":" << stats.nan << ",\"inf\":" << stats.inf
       << ",\"sample\":[";
   for (size_t i = 0; i < host.size(); ++i) {
     if (i)
@@ -1068,15 +1039,12 @@ static void post_wo_trace_tensor(const char *point, const char *phase,
   append_line(out, oss.str());
 }
 
-static void trace_rmsnorm(const char *phase, const char *prompt_id,
-                          size_t layer, size_t num_layers, uint32_t step,
-                          uint32_t pos_id, uint32_t seq_len,
-                          uint32_t tokens_total, const float *input,
-                          const float *output, size_t stride_elems,
-                          size_t token_index, size_t input_alloc_bytes,
-                          size_t output_alloc_bytes,
-                          const gcore::rt::hip::Buffer &weight, float eps,
-                          hipStream_t stream) {
+static void trace_rmsnorm(
+    const char *phase, const char *prompt_id, size_t layer, size_t num_layers,
+    uint32_t step, uint32_t pos_id, uint32_t seq_len, uint32_t tokens_total,
+    const float *input, const float *output, size_t stride_elems,
+    size_t token_index, size_t input_alloc_bytes, size_t output_alloc_bytes,
+    const gcore::rt::hip::Buffer &weight, float eps, hipStream_t stream) {
   if (!trace_rmsnorm_enabled())
     return;
   const char *out = rmsnorm_out_path();
@@ -1093,8 +1061,7 @@ static void trace_rmsnorm(const char *phase, const char *prompt_id,
   const float *in_ptr = input + offset_elems;
   const float *out_ptr = output + offset_elems;
   const uint32_t sample_n =
-      std::min<uint32_t>(rmsnorm_sample(),
-                         static_cast<uint32_t>(stride_elems));
+      std::min<uint32_t>(rmsnorm_sample(), static_cast<uint32_t>(stride_elems));
   std::vector<float> in_host(sample_n, 0.0f);
   std::vector<float> out_host(sample_n, 0.0f);
   std::vector<float> w_host(sample_n, 0.0f);
@@ -1122,39 +1089,28 @@ static void trace_rmsnorm(const char *phase, const char *prompt_id,
     sumsq += static_cast<double>(v) * static_cast<double>(v);
   }
   double mean_sq = (in_host.empty()) ? 0.0 : (sumsq / in_host.size());
-  double inv_rms = (mean_sq + eps) > 0.0
-                       ? (1.0 / std::sqrt(mean_sq + eps))
-                       : 0.0;
+  double inv_rms =
+      (mean_sq + eps) > 0.0 ? (1.0 / std::sqrt(mean_sq + eps)) : 0.0;
 
   std::ostringstream oss;
   oss << "{\"event\":\"rmsnorm_trace\"";
   if (prompt_id && *prompt_id)
     oss << ",\"prompt_id\":\"" << prompt_id << "\"";
   oss << ",\"phase\":\"" << phase << "\""
-      << ",\"layer\":" << layer
-      << ",\"step\":" << step
-      << ",\"pos_id\":" << pos_id
-      << ",\"seq_len\":" << seq_len
+      << ",\"layer\":" << layer << ",\"step\":" << step
+      << ",\"pos_id\":" << pos_id << ",\"seq_len\":" << seq_len
       << ",\"tokens_total\":" << tokens_total
-      << ",\"token_index\":" << token_index
-      << ",\"eps\":" << eps
-      << ",\"sumsq\":" << mean_sq
-      << ",\"inv_rms\":" << inv_rms
-      << ",\"input_hash\":" << inhash
-      << ",\"input_min\":" << instats.min
-      << ",\"input_max\":" << instats.max
-      << ",\"input_mean\":" << instats.mean
-      << ",\"input_nan\":" << instats.nan
-      << ",\"input_inf\":" << instats.inf
-      << ",\"output_hash\":" << outhash
-      << ",\"output_min\":" << outstats.min
+      << ",\"token_index\":" << token_index << ",\"eps\":" << eps
+      << ",\"sumsq\":" << mean_sq << ",\"inv_rms\":" << inv_rms
+      << ",\"input_hash\":" << inhash << ",\"input_min\":" << instats.min
+      << ",\"input_max\":" << instats.max << ",\"input_mean\":" << instats.mean
+      << ",\"input_nan\":" << instats.nan << ",\"input_inf\":" << instats.inf
+      << ",\"output_hash\":" << outhash << ",\"output_min\":" << outstats.min
       << ",\"output_max\":" << outstats.max
       << ",\"output_mean\":" << outstats.mean
       << ",\"output_nan\":" << outstats.nan
-      << ",\"output_inf\":" << outstats.inf
-      << ",\"weight_hash\":" << whash
-      << ",\"weight_min\":" << wstats.min
-      << ",\"weight_max\":" << wstats.max
+      << ",\"output_inf\":" << outstats.inf << ",\"weight_hash\":" << whash
+      << ",\"weight_min\":" << wstats.min << ",\"weight_max\":" << wstats.max
       << ",\"weight_mean\":" << wstats.mean
       << ",\"input_ptr\":" << reinterpret_cast<uintptr_t>(in_ptr)
       << ",\"output_ptr\":" << reinterpret_cast<uintptr_t>(out_ptr)
@@ -1165,12 +1121,13 @@ static void trace_rmsnorm(const char *phase, const char *prompt_id,
       << ",\"output_alloc_bytes\":" << output_alloc_bytes
       << ",\"weight_bytes\":" << weight.size()
       << ",\"stride_bytes\":" << (stride_elems * sizeof(float))
-      << ",\"input_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32) << "\""
-      << ",\"output_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32) << "\""
+      << ",\"input_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32)
+      << "\""
+      << ",\"output_dtype\":\"" << dtype_label(gcore::rt::GretaDataType::FP32)
+      << "\""
       << ",\"weight_dtype\":\"" << dtype_label(weight.data_type()) << "\""
       << ",\"kernel\":\"rmsnorm_naive\""
-      << ",\"sample_n\":" << sample_n
-      << ",\"input_sample\":[";
+      << ",\"sample_n\":" << sample_n << ",\"input_sample\":[";
   for (size_t i = 0; i < in_host.size(); ++i) {
     if (i)
       oss << ",";
@@ -1237,9 +1194,9 @@ private:
 };
 
 static bool trace_kernel_sync_enabled() {
-  static const bool enabled =
-      env_flag("GRETA_TRACE_READOUT") || env_flag("GRETA_TRACE_PREFILL_DECODE") ||
-      env_flag("GRETA_TRACE_LANDSCAPE");
+  static const bool enabled = env_flag("GRETA_TRACE_READOUT") ||
+                              env_flag("GRETA_TRACE_PREFILL_DECODE") ||
+                              env_flag("GRETA_TRACE_LANDSCAPE");
   return enabled;
 }
 
@@ -1262,8 +1219,8 @@ static bool trace_hip_check_and_sync(const char *name, std::string *err) {
   hipError_t err_code = hipGetLastError();
   if (err_code != hipSuccess) {
     if (err)
-      *err =
-          std::string(name) + " hipGetLastError: " + hipGetErrorString(err_code);
+      *err = std::string(name) +
+             " hipGetLastError: " + hipGetErrorString(err_code);
     return false;
   }
   return trace_hip_sync(name, err);
@@ -1324,8 +1281,9 @@ static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
 
   std::vector<float> row(dim);
   size_t row_offset = static_cast<size_t>(token) * dim * sizeof(float);
-  if (!token_embd.copy_to_host_offset(
-          row.data(), row_offset, static_cast<size_t>(dim) * sizeof(float), err))
+  if (!token_embd.copy_to_host_offset(row.data(), row_offset,
+                                      static_cast<size_t>(dim) * sizeof(float),
+                                      err))
     return false;
 
   std::vector<float> col(dim);
@@ -1333,7 +1291,8 @@ static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
     size_t col_offset =
         (static_cast<size_t>(d) * vocab_size + static_cast<size_t>(token)) *
         sizeof(float);
-    if (!token_embd.copy_to_host_offset(&col[d], col_offset, sizeof(float), err))
+    if (!token_embd.copy_to_host_offset(&col[d], col_offset, sizeof(float),
+                                        err))
       return false;
   }
 
@@ -1357,10 +1316,10 @@ static bool trace_embed_verify_once(const int32_t *tokens, size_t seq_len,
   const char *layout_probe_best =
       (mae_row <= mae_col) ? "row_major_match" : "col_major_match";
   const char *layout_used = layout_row_major ? "row" : "col";
-  std::cout << "[GRETA_TRACE_EMBED_VERIFY] token=" << token
-            << " seq_idx=" << s << " mae_row=" << mae_row
-            << " mae_col=" << mae_col << " max_row=" << max_row
-            << " max_col=" << max_col << " layout_used=" << layout_used
+  std::cout << "[GRETA_TRACE_EMBED_VERIFY] token=" << token << " seq_idx=" << s
+            << " mae_row=" << mae_row << " mae_col=" << mae_col
+            << " max_row=" << max_row << " max_col=" << max_col
+            << " layout_used=" << layout_used
             << " layout_probe_best=" << layout_probe_best << std::endl;
 
   return true;
@@ -1738,15 +1697,17 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     const size_t x_stride_elems = D;
     const size_t x_offset_bytes =
         static_cast<size_t>(stage_token_index) * x_stride_elems * sizeof(float);
-    const uint32_t prompt_tokens =
-        (seq_start == 0) ? static_cast<uint32_t>(seq_len)
-                         : static_cast<uint32_t>(seq_start);
-    const char *src_kind =
-        (seq_len > 1) ? "prefill_hidden_buffer" : "decode_hidden_buffer";
-    const bool debug_input = stage_trace_debug_input();
-    if (debug_input && stage_phase && std::strcmp(stage_phase, "decode0") == 0) {
+    const uint32_t prompt_tokens = (seq_start == 0)
+                                       ? static_cast<uint32_t>(seq_len)
+                                       : static_cast<uint32_t>(seq_start);
+    const char *route_label =
+        (seq_len > 1) ? "EMBED_LOOKUP_PREFILL" : "EMBED_LOOKUP_DECODE";
+    if (debug_input && stage_phase &&
+        std::strcmp(stage_phase, "decode0") == 0) {
       src_kind = "decode0_input_override";
+      route_label = "DEBUG_INPUT_INJECT";
     }
+
     StageInputMeta input_meta{};
     input_meta.src_kind = src_kind;
     input_meta.token_index_used = stage_token_index;
@@ -1756,11 +1717,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     input_meta.prompt_tokens = prompt_tokens;
     input_meta.kv_pos = stage_pos_id;
     input_meta.decode_step = static_cast<uint32_t>(trace_step_);
+    input_meta.token_id =
+        0; // Will be set in x_in probe if possible, or left as 0
+    input_meta.route = route_label;
 
     stage_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
-                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
-                       D, stage_token_index, hip_stream, &input_meta);
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x, D,
+                       stage_token_index, hip_stream, &input_meta);
   }
   if (post_wo_layer) {
     post_wo_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
@@ -1806,9 +1770,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   }
 
   const char *use_fused_env = std::getenv("GRETA_USE_FUSED_RMSNORM");
-  bool use_fused =
-      (use_fused_env && std::string(use_fused_env) == "1") && (S == 1) &&
-      (Hkv == Hq);
+  bool use_fused = (use_fused_env && std::string(use_fused_env) == "1") &&
+                   (S == 1) && (Hkv == Hq);
   const char *qkv_force_route = qkv_force_route_env();
   const bool qkv_force_gemm = qkv_force_gemm_enabled();
   if (is_decode_step && qkv_force_gemm) {
@@ -1835,15 +1798,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     v_route_used = "FUSED_GEMV";
 
     if (trace_layer) {
-      layer_tracer_.trace_tensor("q", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 q, n_x);
-      layer_tracer_.trace_tensor("k", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 k, n_kv);
-      layer_tracer_.trace_tensor("v", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 v, n_kv);
+      layer_tracer_.trace_tensor("q", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, q, n_x);
+      layer_tracer_.trace_tensor("k", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, k, n_kv);
+      layer_tracer_.trace_tensor("v", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, v, n_kv);
     }
   } else {
     CHECK_HIP_KERNEL(launch_rmsnorm_naive(hip_stream, x, attn_norm, norm_out, S,
@@ -1878,7 +1838,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                                              &b.wq, &activations_.q, S, D, D),
           "GEMM Q");
     }
-    q_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
+    q_route_used =
+        qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_q_end->record(stream_);
@@ -1890,19 +1851,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     if (is_decode_step && qkv_force_route) {
       const std::string forced = to_route_label(qkv_force_route);
       EnvOverride guard("GRETA_GEMM_FORCE", forced.c_str());
-      CHECK_GRETA(
-          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                             &b.wk, &activations_.k, S, kv_dim,
-                                             D),
-          "GEMM K");
+      CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                      stream_, &activations_.norm_out, &b.wk, &activations_.k,
+                      S, kv_dim, D),
+                  "GEMM K");
     } else {
-      CHECK_GRETA(
-          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                             &b.wk, &activations_.k, S, kv_dim,
-                                             D),
-          "GEMM K");
+      CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                      stream_, &activations_.norm_out, &b.wk, &activations_.k,
+                      S, kv_dim, D),
+                  "GEMM K");
     }
-    k_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
+    k_route_used =
+        qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_k_end->record(stream_);
@@ -1914,33 +1874,29 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     if (is_decode_step && qkv_force_route) {
       const std::string forced = to_route_label(qkv_force_route);
       EnvOverride guard("GRETA_GEMM_FORCE", forced.c_str());
-      CHECK_GRETA(
-          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                             &b.wv, &activations_.v, S, kv_dim,
-                                             D),
-          "GEMM V");
+      CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                      stream_, &activations_.norm_out, &b.wv, &activations_.v,
+                      S, kv_dim, D),
+                  "GEMM V");
     } else {
-      CHECK_GRETA(
-          gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                             &b.wv, &activations_.v, S, kv_dim,
-                                             D),
-          "GEMM V");
+      CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                      stream_, &activations_.norm_out, &b.wv, &activations_.v,
+                      S, kv_dim, D),
+                  "GEMM V");
     }
-    v_route_used = qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
+    v_route_used =
+        qkv_route_used(S, is_decode_step, use_fused, qkv_force_route);
     gcore::compute::GretaCompute::set_op_label(nullptr);
     if (profile_attn)
       ev_v_end->record(stream_);
 
     if (trace_layer) {
-      layer_tracer_.trace_tensor("q", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 q, n_x);
-      layer_tracer_.trace_tensor("k", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 k, n_kv);
-      layer_tracer_.trace_tensor("v", trace_step_,
-                                 static_cast<int>(layer_idx), hip_stream,
-                                 v, n_kv);
+      layer_tracer_.trace_tensor("q", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, q, n_x);
+      layer_tracer_.trace_tensor("k", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, k, n_kv);
+      layer_tracer_.trace_tensor("v", trace_step_, static_cast<int>(layer_idx),
+                                 hip_stream, v, n_kv);
     }
   }
 
@@ -2023,13 +1979,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     ev_core_start->record(stream_);
 
   if (S == 1) {
-    const int accum_mode =
-        (attn_accum_mode() == AttnAccumMode::Fp16) ? 1 : 0;
-    CHECK_HIP_KERNEL(
-        launch_flash_attention_decode(
-            hip_stream, q, cache_k, cache_v, attn_out, Hq, Hkv, d_pos,
-            static_cast<uint32_t>(config_.max_seq_len), Dh, scale, accum_mode),
-        "Attention Core (Decode)");
+    const int accum_mode = (attn_accum_mode() == AttnAccumMode::Fp16) ? 1 : 0;
+    CHECK_HIP_KERNEL(launch_flash_attention_decode(
+                         hip_stream, q, cache_k, cache_v, attn_out, Hq, Hkv,
+                         d_pos, static_cast<uint32_t>(config_.max_seq_len), Dh,
+                         scale, accum_mode),
+                     "Attention Core (Decode)");
   } else {
     CHECK_HIP_KERNEL(launch_flash_attention_prefill(hip_stream, q, k, v,
                                                     attn_out, S, Hq, Hkv, Dh,
@@ -2104,11 +2059,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           v_shadow.allocate(kv_bytes, Usage::DeviceOnly,
                             gcore::rt::GretaDataType::FP32, &shadow_err) &&
           attn_out_mfma.allocate(q_bytes, Usage::DeviceOnly,
-                                 gcore::rt::GretaDataType::FP32,
-                                 &shadow_err) &&
+                                 gcore::rt::GretaDataType::FP32, &shadow_err) &&
           attn_out_valu.allocate(q_bytes, Usage::DeviceOnly,
-                                 gcore::rt::GretaDataType::FP32,
-                                 &shadow_err) &&
+                                 gcore::rt::GretaDataType::FP32, &shadow_err) &&
           kv_shadow_k.allocate(kv_layer_stride_bytes, Usage::DeviceOnly,
                                gcore::rt::GretaDataType::FP32, &shadow_err) &&
           kv_shadow_v.allocate(kv_layer_stride_bytes, Usage::DeviceOnly,
@@ -2146,39 +2099,35 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           gcore::compute::GretaCompute::set_op_label(nullptr);
 
           if (use_fused_attn) {
-            CHECK_HIP_KERNEL(launch_fused_rope_kv_update_decode(
-                                 hip_stream,
-                                 static_cast<float *>(q_shadow.data()),
-                                 static_cast<float *>(k_shadow.data()),
-                                 static_cast<float *>(v_shadow.data()),
-                                 static_cast<float *>(kv_shadow_k.data()),
-                                 static_cast<float *>(kv_shadow_v.data()),
-                                 d_pos, config_.max_seq_len, Hkv, Dh,
-                                 config_.rope_base),
-                             "Fused RoPE+KV Update (Shadow)");
             CHECK_HIP_KERNEL(
-                launch_rope(hip_stream,
-                            static_cast<float *>(q_shadow.data()), S, Hq, Dh,
-                            config_.rope_base, d_pos),
-                "RoPE Q (Shadow)");
+                launch_fused_rope_kv_update_decode(
+                    hip_stream, static_cast<float *>(q_shadow.data()),
+                    static_cast<float *>(k_shadow.data()),
+                    static_cast<float *>(v_shadow.data()),
+                    static_cast<float *>(kv_shadow_k.data()),
+                    static_cast<float *>(kv_shadow_v.data()), d_pos,
+                    config_.max_seq_len, Hkv, Dh, config_.rope_base),
+                "Fused RoPE+KV Update (Shadow)");
+            CHECK_HIP_KERNEL(launch_rope(hip_stream,
+                                         static_cast<float *>(q_shadow.data()),
+                                         S, Hq, Dh, config_.rope_base, d_pos),
+                             "RoPE Q (Shadow)");
           } else {
-            CHECK_HIP_KERNEL(
-                launch_rope(hip_stream,
-                            static_cast<float *>(q_shadow.data()), S, Hq, Dh,
-                            config_.rope_base, d_pos),
-                "RoPE Q (Shadow)");
-            CHECK_HIP_KERNEL(
-                launch_rope(hip_stream,
-                            static_cast<float *>(k_shadow.data()), S, Hkv, Dh,
-                            config_.rope_base, d_pos),
-                "RoPE K (Shadow)");
+            CHECK_HIP_KERNEL(launch_rope(hip_stream,
+                                         static_cast<float *>(q_shadow.data()),
+                                         S, Hq, Dh, config_.rope_base, d_pos),
+                             "RoPE Q (Shadow)");
+            CHECK_HIP_KERNEL(launch_rope(hip_stream,
+                                         static_cast<float *>(k_shadow.data()),
+                                         S, Hkv, Dh, config_.rope_base, d_pos),
+                             "RoPE K (Shadow)");
             CHECK_HIP_KERNEL(
                 launch_kv_update(hip_stream,
-                                  static_cast<float *>(kv_shadow_k.data()),
-                                  static_cast<float *>(kv_shadow_v.data()),
-                                  static_cast<float *>(k_shadow.data()),
-                                  static_cast<float *>(v_shadow.data()), d_pos,
-                                  config_.max_seq_len, Hkv, Dh),
+                                 static_cast<float *>(kv_shadow_k.data()),
+                                 static_cast<float *>(kv_shadow_v.data()),
+                                 static_cast<float *>(k_shadow.data()),
+                                 static_cast<float *>(v_shadow.data()), d_pos,
+                                 config_.max_seq_len, Hkv, Dh),
                 "KV Update (Shadow)");
           }
 
@@ -2235,15 +2184,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         std::ofstream ofs(out, std::ios::app);
         if (ofs) {
           ofs << "{\"phase\":\"decode0_shadow\",\"step\":" << trace_step_
-              << ",\"layer\":" << layer_idx << ",\"mfma_ok\":"
-              << (ok_mfma ? "true" : "false") << ",\"valu_ok\":"
-              << (ok_valu ? "true" : "false")
+              << ",\"layer\":" << layer_idx
+              << ",\"mfma_ok\":" << (ok_mfma ? "true" : "false")
+              << ",\"valu_ok\":" << (ok_valu ? "true" : "false")
               << ",\"attn_out_mfma_hash\":" << hash_mfma
               << ",\"attn_out_valu_hash\":" << hash_valu
               << ",\"attn_out_mae\":" << mae
-              << ",\"attn_out_max_diff\":" << max_diff
-              << ",\"head_dim\":" << Dh << ",\"kv_heads\":" << Hkv
-              << ",\"seq_len\":" << (seq_start + 1)
+              << ",\"attn_out_max_diff\":" << max_diff << ",\"head_dim\":" << Dh
+              << ",\"kv_heads\":" << Hkv << ",\"seq_len\":" << (seq_start + 1)
               << ",\"use_fused_attn\":" << (use_fused_attn ? "true" : "false")
               << "}\n";
         }
@@ -2264,28 +2212,24 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     if (out && *out && phase) {
       const bool qkv_w_verify = trace_qkv_w_verify_enabled();
       const uint32_t head = 0;
-      const uint32_t max_seq_len =
-          static_cast<uint32_t>(config_.max_seq_len);
+      const uint32_t max_seq_len = static_cast<uint32_t>(config_.max_seq_len);
       uint32_t seq_len_used = (seq_len == 1)
                                   ? static_cast<uint32_t>(seq_start + 1)
                                   : static_cast<uint32_t>(seq_len);
       if (seq_len_used > max_seq_len)
         seq_len_used = max_seq_len;
       uint32_t pos_id_used =
-          (seq_len == 1)
-              ? static_cast<uint32_t>(seq_start)
-              : static_cast<uint32_t>(seq_start + seq_len - 1);
+          (seq_len == 1) ? static_cast<uint32_t>(seq_start)
+                         : static_cast<uint32_t>(seq_start + seq_len - 1);
       const uint32_t token_index_used =
           (seq_len == 1) ? 0 : static_cast<uint32_t>(seq_len - 1);
       if (seq_len_used > 0 && pos_id_used >= seq_len_used) {
         pos_id_used = seq_len_used - 1;
       }
       const uint32_t group = (Hkv > 0) ? (Hq / Hkv) : 0;
-      const uint32_t kv_head =
-          (group > 0 && head < Hq) ? (head / group) : 0;
+      const uint32_t kv_head = (group > 0 && head < Hq) ? (head / group) : 0;
       if (kv_head < Hkv && Dh > 0 && seq_len_used > 0) {
-        const float *q_token =
-            q + static_cast<size_t>(token_index_used) * D;
+        const float *q_token = q + static_cast<size_t>(token_index_used) * D;
         const float *q_head = q_token + head * Dh;
 
         const bool want_norm = trace_attn_l0_norm_enabled() || qkv_w_verify;
@@ -2306,7 +2250,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             kv_head_stride_elems * sizeof(float);
         const size_t kv_layer_stride_bytes =
             kv_layer_stride_elems * sizeof(float);
-        const size_t kv_pos_stride_bytes = static_cast<size_t>(Dh) * sizeof(float);
+        const size_t kv_pos_stride_bytes =
+            static_cast<size_t>(Dh) * sizeof(float);
 
         const float *k_head_base =
             cache_k + static_cast<size_t>(kv_head) * kv_head_stride_elems;
@@ -2320,19 +2265,18 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
         if (want_norm && norm_sample > 0) {
           norm_in_host.assign(norm_sample, 0.0f);
-          const float *x_token =
-              x + static_cast<size_t>(token_index_used) * D;
+          const float *x_token = x + static_cast<size_t>(token_index_used) * D;
           hipMemcpyAsync(norm_in_host.data(), x_token,
-                         norm_sample * sizeof(float),
-                         hipMemcpyDeviceToHost, hip_stream);
+                         norm_sample * sizeof(float), hipMemcpyDeviceToHost,
+                         hip_stream);
           if (!use_fused) {
             norm_out_valid = true;
             norm_out_host.assign(norm_sample, 0.0f);
             const float *norm_token =
                 norm_out + static_cast<size_t>(token_index_used) * D;
             hipMemcpyAsync(norm_out_host.data(), norm_token,
-                           norm_sample * sizeof(float),
-                           hipMemcpyDeviceToHost, hip_stream);
+                           norm_sample * sizeof(float), hipMemcpyDeviceToHost,
+                           hip_stream);
           }
         }
 
@@ -2360,7 +2304,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         const F32Stats q_stats = stats_f32(q_host.data(), q_host.size());
         const F32Stats k_stats = stats_f32(k_vec, Dh);
         const F32Stats v_stats = stats_f32(v_vec, Dh);
-        const F32Stats attn_stats = stats_f32(attn_host.data(), attn_host.size());
+        const F32Stats attn_stats =
+            stats_f32(attn_host.data(), attn_host.size());
 
         const uint64_t q_hash = hash_f32(q_host.data(), q_host.size());
         const uint64_t k_hash = hash_f32(k_vec, Dh);
@@ -2378,8 +2323,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         if (norm_out_valid && !norm_out_host.empty()) {
           norm_out_stats =
               stats_f32(norm_out_host.data(), norm_out_host.size());
-          norm_out_hash =
-              hash_f32(norm_out_host.data(), norm_out_host.size());
+          norm_out_hash = hash_f32(norm_out_host.data(), norm_out_host.size());
         }
 
         const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
@@ -2390,8 +2334,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           const float *k_t = k_host.data() + static_cast<size_t>(t) * Dh;
           double dot = 0.0;
           for (uint32_t d = 0; d < Dh; ++d) {
-            dot += static_cast<double>(q_host[d]) *
-                   static_cast<double>(k_t[d]);
+            dot += static_cast<double>(q_host[d]) * static_cast<double>(k_t[d]);
           }
           const double qk = dot * static_cast<double>(scale);
           qk_row[t] = static_cast<float>(qk);
@@ -2404,10 +2347,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         }
         const double inv_sum = sumexp > 0.0 ? (1.0 / sumexp) : 0.0;
         for (uint32_t t = 0; t < seq_len_used; ++t) {
-          soft_row[t] =
-              static_cast<float>(std::exp(static_cast<double>(qk_row[t]) -
-                                          max_qk) *
-                                 inv_sum);
+          soft_row[t] = static_cast<float>(
+              std::exp(static_cast<double>(qk_row[t]) - max_qk) * inv_sum);
         }
 
         const F32Stats qk_stats = stats_f32(qk_row.data(), qk_row.size());
@@ -2459,8 +2400,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         uint32_t v_weight_sample = 0;
         if (qkv_w_verify && norm_out_valid &&
             norm_out_host.size() >= static_cast<size_t>(D)) {
-          q_weight_sample = std::min<uint32_t>(
-              attn_vacc_dims_sample(), static_cast<uint32_t>(Dh));
+          q_weight_sample = std::min<uint32_t>(attn_vacc_dims_sample(),
+                                               static_cast<uint32_t>(Dh));
           if (q_weight_sample > 0 && Dh > 0) {
             static QkvWeightHostCache wq_cache;
             const size_t wq_elems = static_cast<size_t>(D) * D;
@@ -2474,16 +2415,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 double sum_col = 0.0;
                 for (uint32_t i = 0; i < D; ++i) {
                   const float x_i = x_vec[i];
-                  const size_t idx_row =
-                      static_cast<size_t>(j) * D + i;
-                  const size_t idx_col =
-                      static_cast<size_t>(i) * D + j;
-                  sum_row += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wq_cache,
-                                                                  idx_row));
-                  sum_col += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wq_cache,
-                                                                  idx_col));
+                  const size_t idx_row = static_cast<size_t>(j) * D + i;
+                  const size_t idx_col = static_cast<size_t>(i) * D + j;
+                  sum_row +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wq_cache, idx_row));
+                  sum_col +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wq_cache, idx_col));
                 }
                 float h_scale = 1.0f;
                 if (!wq_cache.head_scales.empty() && Dh > 0) {
@@ -2498,10 +2437,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               if (Dh % 2 == 0) {
                 for (uint32_t pair = 0; pair < Dh / 2; ++pair) {
                   const float base = static_cast<float>(config_.rope_base);
-                  const float theta = static_cast<float>(pos_id_used) *
-                                      std::pow(base, -2.0f *
-                                                         (static_cast<float>(pair) /
-                                                          static_cast<float>(Dh)));
+                  const float theta =
+                      static_cast<float>(pos_id_used) *
+                      std::pow(base, -2.0f * (static_cast<float>(pair) /
+                                              static_cast<float>(Dh)));
                   const float cos_val = std::cos(theta);
                   const float sin_val = std::sin(theta);
 
@@ -2547,16 +2486,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 double sum_col = 0.0;
                 for (uint32_t i = 0; i < D; ++i) {
                   const float x_i = x_vec[i];
-                  const size_t idx_row =
-                      static_cast<size_t>(row) * D + i;
-                  const size_t idx_col =
-                      static_cast<size_t>(i) * kv_dim + row;
-                  sum_row += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wk_cache,
-                                                                  idx_row));
-                  sum_col += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wk_cache,
-                                                                  idx_col));
+                  const size_t idx_row = static_cast<size_t>(row) * D + i;
+                  const size_t idx_col = static_cast<size_t>(i) * kv_dim + row;
+                  sum_row +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wk_cache, idx_row));
+                  sum_col +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wk_cache, idx_col));
                 }
                 float h_scale = 1.0f;
                 if (!wk_cache.head_scales.empty() && Dh > 0) {
@@ -2573,9 +2510,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                   const float base = static_cast<float>(config_.rope_base);
                   const float theta =
                       static_cast<float>(pos_id_used) *
-                      std::pow(base, -2.0f *
-                                         (static_cast<float>(pair) /
-                                          static_cast<float>(Dh)));
+                      std::pow(base, -2.0f * (static_cast<float>(pair) /
+                                              static_cast<float>(Dh)));
                   const float cos_val = std::cos(theta);
                   const float sin_val = std::sin(theta);
 
@@ -2594,10 +2530,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                   k_col[pair + Dh / 2] = out1;
                 }
               }
-              mae_max_f32(k_row.data(), k_vec, k_weight_sample, &k_weight_mae_row,
-                          &k_weight_max_row);
-              mae_max_f32(k_col.data(), k_vec, k_weight_sample, &k_weight_mae_col,
-                          &k_weight_max_col);
+              mae_max_f32(k_row.data(), k_vec, k_weight_sample,
+                          &k_weight_mae_row, &k_weight_max_row);
+              mae_max_f32(k_col.data(), k_vec, k_weight_sample,
+                          &k_weight_mae_col, &k_weight_max_col);
               k_weight_layout =
                   (k_weight_mae_row <= k_weight_mae_col) ? "row" : "col";
             } else {
@@ -2621,16 +2557,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 double sum_col = 0.0;
                 for (uint32_t i = 0; i < D; ++i) {
                   const float x_i = x_vec[i];
-                  const size_t idx_row =
-                      static_cast<size_t>(row) * D + i;
-                  const size_t idx_col =
-                      static_cast<size_t>(i) * kv_dim + row;
-                  sum_row += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wv_cache,
-                                                                  idx_row));
-                  sum_col += static_cast<double>(x_i) *
-                             static_cast<double>(read_weight_value(wv_cache,
-                                                                  idx_col));
+                  const size_t idx_row = static_cast<size_t>(row) * D + i;
+                  const size_t idx_col = static_cast<size_t>(i) * kv_dim + row;
+                  sum_row +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wv_cache, idx_row));
+                  sum_col +=
+                      static_cast<double>(x_i) *
+                      static_cast<double>(read_weight_value(wv_cache, idx_col));
                 }
                 float h_scale = 1.0f;
                 if (!wv_cache.head_scales.empty() && Dh > 0) {
@@ -2642,10 +2576,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 v_row[j] = static_cast<float>(sum_row * h_scale);
                 v_col[j] = static_cast<float>(sum_col * h_scale);
               }
-              mae_max_f32(v_row.data(), v_vec, v_weight_sample, &v_weight_mae_row,
-                          &v_weight_max_row);
-              mae_max_f32(v_col.data(), v_vec, v_weight_sample, &v_weight_mae_col,
-                          &v_weight_max_col);
+              mae_max_f32(v_row.data(), v_vec, v_weight_sample,
+                          &v_weight_mae_row, &v_weight_max_row);
+              mae_max_f32(v_col.data(), v_vec, v_weight_sample,
+                          &v_weight_mae_col, &v_weight_max_col);
               v_weight_layout =
                   (v_weight_mae_row <= v_weight_mae_col) ? "row" : "col";
             } else {
@@ -2654,8 +2588,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           }
         }
 
-        auto append_span = [&](const char *name, const float *data,
-                               size_t n) {
+        auto append_span = [&](const char *name, const float *data, size_t n) {
           std::ostringstream tmp;
           tmp << ",\"" << name << "\":[";
           for (size_t i = 0; i < n; ++i) {
@@ -2673,16 +2606,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         if (prompt_id && *prompt_id)
           oss << ",\"prompt_id\":\"" << prompt_id << "\"";
         oss << ",\"phase\":\"" << phase << "\""
-            << ",\"layer\":" << layer_idx
-            << ",\"head\":" << head
+            << ",\"layer\":" << layer_idx << ",\"head\":" << head
             << ",\"seq_len\":" << seq_len
             << ",\"seq_len_used\":" << seq_len_used
             << ",\"tokens_total\":" << (seq_start + seq_len)
-            << ",\"pos_id\":" << pos_id_used
-            << ",\"kv_pos\":" << pos_id_used
+            << ",\"pos_id\":" << pos_id_used << ",\"kv_pos\":" << pos_id_used
             << ",\"token_index\":" << token_index_used
-            << ",\"scale_used\":" << scale
-            << ",\"q_route_used\":\"" << q_route_used << "\""
+            << ",\"scale_used\":" << scale << ",\"q_route_used\":\""
+            << q_route_used << "\""
             << ",\"k_route_used\":\"" << k_route_used << "\""
             << ",\"v_route_used\":\"" << v_route_used << "\""
             << ",\"qkv_force_route\":\""
@@ -2692,34 +2623,27 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"attn_norm_in_min\":" << norm_in_stats.min
             << ",\"attn_norm_in_max\":" << norm_in_stats.max
             << ",\"attn_norm_in_mean\":" << norm_in_stats.mean
-            << ",\"attn_norm_out_valid\":" << (norm_out_valid ? "true" : "false")
+            << ",\"attn_norm_out_valid\":"
+            << (norm_out_valid ? "true" : "false")
             << ",\"attn_norm_out_hash\":" << norm_out_hash
             << ",\"attn_norm_out_min\":" << norm_out_stats.min
             << ",\"attn_norm_out_max\":" << norm_out_stats.max
             << ",\"attn_norm_out_mean\":" << norm_out_stats.mean
             << ",\"attn_norm_sample_n\":" << norm_sample
-            << ",\"q_hash\":" << q_hash
-            << ",\"q_min\":" << q_stats.min
-            << ",\"q_max\":" << q_stats.max
-            << ",\"q_mean\":" << q_stats.mean
-            << ",\"k_hash\":" << k_hash
-            << ",\"k_min\":" << k_stats.min
-            << ",\"k_max\":" << k_stats.max
-            << ",\"k_mean\":" << k_stats.mean
-            << ",\"v_hash\":" << v_hash
-            << ",\"v_min\":" << v_stats.min
-            << ",\"v_max\":" << v_stats.max
-            << ",\"v_mean\":" << v_stats.mean
-            << ",\"qk_hash\":" << qk_hash
-            << ",\"qk_min\":" << qk_stats.min
+            << ",\"q_hash\":" << q_hash << ",\"q_min\":" << q_stats.min
+            << ",\"q_max\":" << q_stats.max << ",\"q_mean\":" << q_stats.mean
+            << ",\"k_hash\":" << k_hash << ",\"k_min\":" << k_stats.min
+            << ",\"k_max\":" << k_stats.max << ",\"k_mean\":" << k_stats.mean
+            << ",\"v_hash\":" << v_hash << ",\"v_min\":" << v_stats.min
+            << ",\"v_max\":" << v_stats.max << ",\"v_mean\":" << v_stats.mean
+            << ",\"qk_hash\":" << qk_hash << ",\"qk_min\":" << qk_stats.min
             << ",\"qk_max\":" << qk_stats.max
             << ",\"qk_mean\":" << qk_stats.mean
             << ",\"softmax_hash\":" << soft_hash
             << ",\"softmax_min\":" << soft_stats.min
             << ",\"softmax_max\":" << soft_stats.max
             << ",\"softmax_mean\":" << soft_stats.mean
-            << ",\"pv_hash\":" << pv_hash
-            << ",\"pv_min\":" << pv_stats.min
+            << ",\"pv_hash\":" << pv_hash << ",\"pv_min\":" << pv_stats.min
             << ",\"pv_max\":" << pv_stats.max
             << ",\"pv_mean\":" << pv_stats.mean
             << ",\"attn_out_hash\":" << attn_hash
@@ -2727,16 +2651,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"attn_out_max\":" << attn_stats.max
             << ",\"attn_out_mean\":" << attn_stats.mean
             << ",\"pv_attn_mae\":" << pv_attn_mae
-            << ",\"pv_attn_max_diff\":" << pv_attn_max
-            << ",\"q_weight\":\"Q\""
+            << ",\"pv_attn_max_diff\":" << pv_attn_max << ",\"q_weight\":\"Q\""
             << ",\"q_weight_layout_best\":\"" << q_weight_layout << "\""
             << ",\"q_weight_mae_row\":" << q_weight_mae_row
             << ",\"q_weight_mae_col\":" << q_weight_mae_col
             << ",\"q_weight_max_row\":" << q_weight_max_row
             << ",\"q_weight_max_col\":" << q_weight_max_col
             << ",\"q_weight_dtype\":\"" << dtype_label(b.wq.data_type()) << "\""
-            << ",\"q_weight_quant_mode\":\""
-            << dtype_label(b.wq.data_type()) << "\""
+            << ",\"q_weight_quant_mode\":\"" << dtype_label(b.wq.data_type())
+            << "\""
             << ",\"q_weight_stride_used\":" << D
             << ",\"q_weight_head_dim\":" << Dh
             << ",\"q_weight_kv_heads\":" << Hkv
@@ -2748,8 +2671,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"k_weight_max_row\":" << k_weight_max_row
             << ",\"k_weight_max_col\":" << k_weight_max_col
             << ",\"k_weight_dtype\":\"" << dtype_label(b.wk.data_type()) << "\""
-            << ",\"k_weight_quant_mode\":\""
-            << dtype_label(b.wk.data_type()) << "\""
+            << ",\"k_weight_quant_mode\":\"" << dtype_label(b.wk.data_type())
+            << "\""
             << ",\"k_weight_stride_used\":" << D
             << ",\"k_weight_head_dim\":" << Dh
             << ",\"k_weight_kv_heads\":" << Hkv
@@ -2761,8 +2684,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"v_weight_max_row\":" << v_weight_max_row
             << ",\"v_weight_max_col\":" << v_weight_max_col
             << ",\"v_weight_dtype\":\"" << dtype_label(b.wv.data_type()) << "\""
-            << ",\"v_weight_quant_mode\":\""
-            << dtype_label(b.wv.data_type()) << "\""
+            << ",\"v_weight_quant_mode\":\"" << dtype_label(b.wv.data_type())
+            << "\""
             << ",\"v_weight_stride_used\":" << D
             << ",\"v_weight_head_dim\":" << Dh
             << ",\"v_weight_kv_heads\":" << Hkv
@@ -2779,15 +2702,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"k_head_base_ptr\":"
             << reinterpret_cast<uintptr_t>(k_head_base)
             << ",\"v_head_base_ptr\":"
-            << reinterpret_cast<uintptr_t>(v_head_base)
-            << ",\"k_pos_ptr\":"
-            << reinterpret_cast<uintptr_t>(k_head_base +
-                                           static_cast<size_t>(pos_id_used) *
-                                               Dh)
+            << reinterpret_cast<uintptr_t>(v_head_base) << ",\"k_pos_ptr\":"
+            << reinterpret_cast<uintptr_t>(
+                   k_head_base + static_cast<size_t>(pos_id_used) * Dh)
             << ",\"v_pos_ptr\":"
-            << reinterpret_cast<uintptr_t>(v_head_base +
-                                           static_cast<size_t>(pos_id_used) *
-                                               Dh)
+            << reinterpret_cast<uintptr_t>(
+                   v_head_base + static_cast<size_t>(pos_id_used) * Dh)
             << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
             << ",\"kv_head_stride_bytes\":" << kv_head_stride_bytes
             << ",\"kv_pos_stride_bytes\":" << kv_pos_stride_bytes;
@@ -2841,8 +2761,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                          activations_.attn_out.size(), hip_stream);
   }
 
-  gcore::compute::GretaCompute::set_op_label(
-      is_decode_step ? "attn_o_decode" : "attn_o_prefill");
+  gcore::compute::GretaCompute::set_op_label(is_decode_step ? "attn_o_decode"
+                                                            : "attn_o_prefill");
   CHECK_GRETA(
       gcore::compute::GretaCompute::gemm(stream_, &activations_.attn_out, &b.wo,
                                          &activations_.mlp_out, S, D, D),
@@ -2866,8 +2786,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (stage_layer && trace_wo_w_verify_enabled()) {
     const char *out = stage_trace_out_path();
     if (out && *out) {
-      const uint32_t wo_weight_sample = std::min<uint32_t>(
-          attn_vacc_dims_sample(), static_cast<uint32_t>(D));
+      const uint32_t wo_weight_sample =
+          std::min<uint32_t>(attn_vacc_dims_sample(), static_cast<uint32_t>(D));
       std::string wo_weight_layout = "disabled";
       double wo_weight_mae_row = 0.0;
       double wo_weight_mae_col = 0.0;
@@ -2879,16 +2799,14 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       if (wo_weight_sample > 0) {
         attn_out_host.resize(D);
         wo_out_host.resize(D);
-        const float *attn_vec = attn_out +
-                                static_cast<size_t>(stage_token_index) * D;
+        const float *attn_vec =
+            attn_out + static_cast<size_t>(stage_token_index) * D;
         const float *wo_vec =
             mlp_out + static_cast<size_t>(stage_token_index) * D;
-        hipError_t err_a =
-            hipMemcpy(attn_out_host.data(), attn_vec, D * sizeof(float),
-                      hipMemcpyDeviceToHost);
-        hipError_t err_b =
-            hipMemcpy(wo_out_host.data(), wo_vec, D * sizeof(float),
-                      hipMemcpyDeviceToHost);
+        hipError_t err_a = hipMemcpy(attn_out_host.data(), attn_vec,
+                                     D * sizeof(float), hipMemcpyDeviceToHost);
+        hipError_t err_b = hipMemcpy(wo_out_host.data(), wo_vec,
+                                     D * sizeof(float), hipMemcpyDeviceToHost);
         if (err_a != hipSuccess || err_b != hipSuccess) {
           attn_out_host.clear();
           wo_out_host.clear();
@@ -2901,23 +2819,23 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         const size_t wo_elems = static_cast<size_t>(D) * D;
         if (ensure_qkv_weight_cache(b.wo, b.s_wo, b.sh_wo, wo_elems,
                                     &wo_cache)) {
-          std::vector<float> wo_row(static_cast<size_t>(wo_weight_sample), 0.0f);
-          std::vector<float> wo_col(static_cast<size_t>(wo_weight_sample), 0.0f);
+          std::vector<float> wo_row(static_cast<size_t>(wo_weight_sample),
+                                    0.0f);
+          std::vector<float> wo_col(static_cast<size_t>(wo_weight_sample),
+                                    0.0f);
           for (uint32_t j = 0; j < wo_weight_sample; ++j) {
             double sum_row = 0.0;
             double sum_col = 0.0;
             for (uint32_t i = 0; i < D; ++i) {
               const float x_i = attn_out_host[i];
-              const size_t idx_row =
-                  static_cast<size_t>(j) * D + i;
-              const size_t idx_col =
-                  static_cast<size_t>(i) * D + j;
-              sum_row += static_cast<double>(x_i) *
-                         static_cast<double>(read_weight_value(wo_cache,
-                                                              idx_row));
-              sum_col += static_cast<double>(x_i) *
-                         static_cast<double>(read_weight_value(wo_cache,
-                                                              idx_col));
+              const size_t idx_row = static_cast<size_t>(j) * D + i;
+              const size_t idx_col = static_cast<size_t>(i) * D + j;
+              sum_row +=
+                  static_cast<double>(x_i) *
+                  static_cast<double>(read_weight_value(wo_cache, idx_row));
+              sum_col +=
+                  static_cast<double>(x_i) *
+                  static_cast<double>(read_weight_value(wo_cache, idx_col));
             }
             float h_scale = 1.0f;
             if (!wo_cache.head_scales.empty() && Dh > 0) {
@@ -2948,27 +2866,24 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       if (stage_prompt_id && *stage_prompt_id)
         oss << ",\"prompt_id\":\"" << stage_prompt_id << "\"";
       oss << ",\"phase\":\"" << stage_phase << "\""
-          << ",\"layer\":" << layer_idx
-          << ",\"head\":0"
-          << ",\"seq_len\":" << seq_len
-          << ",\"pos_id\":" << stage_pos_id
+          << ",\"layer\":" << layer_idx << ",\"head\":0"
+          << ",\"seq_len\":" << seq_len << ",\"pos_id\":" << stage_pos_id
           << ",\"token_index\":" << stage_token_index
-          << ",\"sample_n\":" << wo_weight_sample
-          << ",\"wo_layout_best\":\"" << wo_weight_layout << "\""
+          << ",\"sample_n\":" << wo_weight_sample << ",\"wo_layout_best\":\""
+          << wo_weight_layout << "\""
           << ",\"wo_layout_used\":\"" << wo_layout_used << "\""
           << ",\"wo_mae_row\":" << wo_weight_mae_row
           << ",\"wo_mae_col\":" << wo_weight_mae_col
           << ",\"wo_max_row\":" << wo_weight_max_row
           << ",\"wo_max_col\":" << wo_weight_max_col
           << ",\"wo_weight_dtype\":\"" << dtype_label(b.wo.data_type()) << "\""
-          << ",\"wo_weight_quant_mode\":\""
-          << dtype_label(b.wo.data_type()) << "\""
+          << ",\"wo_weight_quant_mode\":\"" << dtype_label(b.wo.data_type())
+          << "\""
           << ",\"wo_weight_stride_used\":" << D
           << ",\"wo_weight_head_dim\":" << Dh
           << ",\"wo_weight_kv_heads\":" << Hkv
           << ",\"wo_w_ptr\":" << reinterpret_cast<uintptr_t>(b.wo.data())
-          << ",\"wo_w_bytes\":" << b.wo.size()
-          << "}";
+          << ",\"wo_w_bytes\":" << b.wo.size() << "}";
       append_line(out, oss.str());
     }
   }
@@ -2979,15 +2894,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (stage_layer) {
     stage_trace_tensor("x_after_attn", stage_phase, stage_prompt_id, layer_idx,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
-                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
-                       D, stage_token_index, hip_stream);
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x, D,
+                       stage_token_index, hip_stream);
   }
   if (post_wo_layer) {
-    post_wo_trace_tensor("x_after_attn", stage_phase, stage_prompt_id, layer_idx,
-                         static_cast<uint32_t>(trace_step_), stage_pos_id,
-                         static_cast<uint32_t>(seq_len), stage_tokens_total, x,
-                         D, stage_token_index, activations_.x.size(),
-                         hip_stream);
+    post_wo_trace_tensor("x_after_attn", stage_phase, stage_prompt_id,
+                         layer_idx, static_cast<uint32_t>(trace_step_),
+                         stage_pos_id, static_cast<uint32_t>(seq_len),
+                         stage_tokens_total, x, D, stage_token_index,
+                         activations_.x.size(), hip_stream);
   }
 
   CHECK_HIP_KERNEL(
@@ -3087,8 +3002,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
   if (trace_layer) {
     layer_tracer_.trace_tensor("mlp_out", trace_step_,
-                               static_cast<int>(layer_idx), hip_stream,
-                               mlp_out, n_x);
+                               static_cast<int>(layer_idx), hip_stream, mlp_out,
+                               n_x);
   }
 
   if (TRACE_ON(layer_idx)) {
@@ -3115,8 +3030,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   if (stage_layer) {
     stage_trace_tensor("x_after_mlp", stage_phase, stage_prompt_id, layer_idx,
                        static_cast<uint32_t>(trace_step_), stage_pos_id,
-                       static_cast<uint32_t>(seq_len), stage_tokens_total, x,
-                       D, stage_token_index, hip_stream);
+                       static_cast<uint32_t>(seq_len), stage_tokens_total, x, D,
+                       stage_token_index, hip_stream);
     if (stage_trace_point_enabled("x_out")) {
       stage_trace_tensor("x_out", stage_phase, stage_prompt_id, layer_idx,
                          static_cast<uint32_t>(trace_step_), stage_pos_id,
@@ -3147,8 +3062,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   }
   if (trace_layer) {
     layer_tracer_.trace_tensor("x_out", trace_step_,
-                               static_cast<int>(layer_idx), hip_stream,
-                               x, n_x);
+                               static_cast<int>(layer_idx), hip_stream, x, n_x);
   }
 
   if (PROFILE_ON()) {
@@ -3192,11 +3106,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         (trace_v_addr && out_v_addr && *out_v_addr)) {
       const uint32_t point_mask =
           attn_point_mask_from_list(std::getenv("GRETA_TRACE_ATTN_POINTS"));
-      const uint32_t seq_len_used =
-          static_cast<uint32_t>(seq_start + 1);
+      const uint32_t seq_len_used = static_cast<uint32_t>(seq_start + 1);
       const uint32_t pos_id_used = static_cast<uint32_t>(seq_start);
-      const uint32_t max_seq_len =
-          static_cast<uint32_t>(config_.max_seq_len);
+      const uint32_t max_seq_len = static_cast<uint32_t>(config_.max_seq_len);
 
       std::vector<float> q_host;
       std::vector<float> attn_out_host;
@@ -3204,8 +3116,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       if (trace_attn_softmax || trace_attn_vacc ||
           (point_mask & static_cast<uint32_t>(AttnTracePoint::Q))) {
         q_host.resize(D);
-        hipMemcpy(q_host.data(), q, D * sizeof(float),
-                  hipMemcpyDeviceToHost);
+        hipMemcpy(q_host.data(), q, D * sizeof(float), hipMemcpyDeviceToHost);
       }
       if (trace_attn_vacc ||
           (point_mask & static_cast<uint32_t>(AttnTracePoint::ATTN_OUT))) {
@@ -3238,20 +3149,16 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           (group > 0 && trace_head < Hq) ? (trace_head / group) : 0;
       const size_t kv_head_stride_elems =
           static_cast<size_t>(config_.max_seq_len) * Dh;
-      const size_t kv_head_stride_bytes =
-          kv_head_stride_elems * sizeof(float);
+      const size_t kv_head_stride_bytes = kv_head_stride_elems * sizeof(float);
 
       std::vector<float> k_cache_host;
       std::vector<float> v_cache_host;
       bool kv_head_only = false;
-      bool need_kv_full = attn_decode_ref_enabled() || trace_attn_ref ||
-                          trace_attn_verify ||
-                          (point_mask &
-                           static_cast<uint32_t>(AttnTracePoint::K)) ||
-                          (point_mask &
-                           static_cast<uint32_t>(AttnTracePoint::V));
-      bool need_kv_head =
-          trace_attn_softmax || trace_attn_vacc || trace_v_addr;
+      bool need_kv_full =
+          attn_decode_ref_enabled() || trace_attn_ref || trace_attn_verify ||
+          (point_mask & static_cast<uint32_t>(AttnTracePoint::K)) ||
+          (point_mask & static_cast<uint32_t>(AttnTracePoint::V));
+      bool need_kv_head = trace_attn_softmax || trace_attn_vacc || trace_v_addr;
       if (need_kv_full) {
         k_cache_host.resize(kv_layer_stride_elems);
         v_cache_host.resize(kv_layer_stride_elems);
@@ -3339,10 +3246,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       const size_t k_read_offset_elems =
           kv_head * kv_head_stride_elems + kv_pos * Dh;
       const size_t v_read_offset_elems = k_read_offset_elems;
-      const size_t k_read_offset_bytes =
-          k_read_offset_elems * sizeof(float);
-      const size_t v_read_offset_bytes =
-          v_read_offset_elems * sizeof(float);
+      const size_t k_read_offset_bytes = k_read_offset_elems * sizeof(float);
+      const size_t v_read_offset_bytes = v_read_offset_elems * sizeof(float);
       bool kv_invariant_ok = true;
       std::string kv_error;
       if (env_flag("GRETA_TRACE_KV_INVARIANTS")) {
@@ -3373,40 +3278,30 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"phase\":\"decode0\""
             << ",\"layer\":" << layer_idx
             << ",\"seq_len_used\":" << seq_len_used
-            << ",\"pos_id_used\":" << pos_id_used
-            << ",\"kernel_path\":\"" << (use_fused_attn ? "fused" : "manual")
-            << "\""
+            << ",\"pos_id_used\":" << pos_id_used << ",\"kernel_path\":\""
+            << (use_fused_attn ? "fused" : "manual") << "\""
             << ",\"matmul_route\":\""
             << (std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
                     ? std::getenv("GRETA_FORCE_ATTN_DECODE_MATMUL")
                     : "auto")
             << "\""
-            << ",\"num_heads\":" << Hq
-            << ",\"num_heads_kv\":" << Hkv
-            << ",\"head_dim\":" << Dh
-            << ",\"q_hash\":" << q_hash
-            << ",\"q_min\":" << q_stats.min
-            << ",\"q_max\":" << q_stats.max
-            << ",\"q_mean\":" << q_stats.mean
-            << ",\"k_hash\":" << k_hash
-            << ",\"k_min\":" << k_stats.min
-            << ",\"k_max\":" << k_stats.max
-            << ",\"k_mean\":" << k_stats.mean
-            << ",\"v_hash\":" << v_hash
-            << ",\"v_min\":" << v_stats.min
-            << ",\"v_max\":" << v_stats.max
+            << ",\"num_heads\":" << Hq << ",\"num_heads_kv\":" << Hkv
+            << ",\"head_dim\":" << Dh << ",\"q_hash\":" << q_hash
+            << ",\"q_min\":" << q_stats.min << ",\"q_max\":" << q_stats.max
+            << ",\"q_mean\":" << q_stats.mean << ",\"k_hash\":" << k_hash
+            << ",\"k_min\":" << k_stats.min << ",\"k_max\":" << k_stats.max
+            << ",\"k_mean\":" << k_stats.mean << ",\"v_hash\":" << v_hash
+            << ",\"v_min\":" << v_stats.min << ",\"v_max\":" << v_stats.max
             << ",\"v_mean\":" << v_stats.mean
             << ",\"attn_out_hash\":" << attn_hash
             << ",\"attn_out_min\":" << attn_stats.min
             << ",\"attn_out_max\":" << attn_stats.max
             << ",\"attn_out_mean\":" << attn_stats.mean
             << ",\"attn_out_ref_hash\":" << attn_ref_hash
-            << ",\"attn_out_mae\":" << attn_mae
-            << ",\"x_out_hash\":" << x_hash
+            << ",\"attn_out_mae\":" << attn_mae << ",\"x_out_hash\":" << x_hash
             << ",\"x_out_min\":" << x_stats.min
             << ",\"x_out_max\":" << x_stats.max
-            << ",\"x_out_mean\":" << x_stats.mean
-            << ",\"kv_base_ptr_k\":"
+            << ",\"x_out_mean\":" << x_stats.mean << ",\"kv_base_ptr_k\":"
             << reinterpret_cast<uintptr_t>(activations_.kv_cache_k.data())
             << ",\"kv_base_ptr_v\":"
             << reinterpret_cast<uintptr_t>(activations_.kv_cache_v.data())
@@ -3416,23 +3311,20 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"v_read_offset_bytes\":" << v_read_offset_bytes
             << ",\"k_write_offset_bytes\":" << k_read_offset_bytes
             << ",\"v_write_offset_bytes\":" << v_read_offset_bytes
-            << ",\"kv_invariant_ok\":"
-            << (kv_invariant_ok ? "true" : "false")
+            << ",\"kv_invariant_ok\":" << (kv_invariant_ok ? "true" : "false")
             << ",\"kv_error\":\"" << kv_error << "\""
             << "}";
         append_line(out, oss.str());
       }
 
       if (trace_attn_ref && trace_attn_layer && out_ref && *out_ref &&
-          !q_host.empty() &&
-          !k_cache_host.empty() && !v_cache_host.empty() &&
+          !q_host.empty() && !k_cache_host.empty() && !v_cache_host.empty() &&
           !attn_out_host.empty()) {
         const double scale_d = 1.0 / std::sqrt(static_cast<double>(Dh));
         std::vector<float> attn_ref_hp;
-        compute_attention_ref_fp64(q_host.data(), k_cache_host.data(),
-                                   v_cache_host.data(), Hq, Hkv, Dh,
-                                   seq_len_used, max_seq_len, scale_d,
-                                   attn_ref_hp);
+        compute_attention_ref_fp64(
+            q_host.data(), k_cache_host.data(), v_cache_host.data(), Hq, Hkv,
+            Dh, seq_len_used, max_seq_len, scale_d, attn_ref_hp);
 
         std::vector<float> attn_ref_accum;
         const AttnAccumMode mode = attn_accum_mode();
@@ -3475,8 +3367,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"phase\":\"decode0\""
             << ",\"layer\":" << layer_idx
             << ",\"seq_len_used\":" << seq_len_used
-            << ",\"pos_id_used\":" << pos_id_used
-            << ",\"attn_accum_mode\":\""
+            << ",\"pos_id_used\":" << pos_id_used << ",\"attn_accum_mode\":\""
             << (mode == AttnAccumMode::Fp16 ? "fp16" : "fp32") << "\""
             << ",\"attn_out_hash\":" << attn_hash
             << ",\"attn_ref_hp_hash\":" << ref_hp_hash
@@ -3528,15 +3419,15 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           attn_softmax_layer_selected(layer_idx, config_.num_layers);
 
       const uint32_t head = attn_softmax_head();
-      const float *q_head =
-          (!q_host.empty() && head < Hq) ? (q_host.data() + head * Dh) : nullptr;
+      const float *q_head = (!q_host.empty() && head < Hq)
+                                ? (q_host.data() + head * Dh)
+                                : nullptr;
       const float *k_head = nullptr;
       if (!k_cache_host.empty() && trace_kv_head < Hkv) {
-        k_head = kv_head_only
-                     ? k_cache_host.data()
-                     : k_cache_host.data() +
-                           static_cast<size_t>(trace_kv_head) *
-                               config_.max_seq_len * Dh;
+        k_head = kv_head_only ? k_cache_host.data()
+                              : k_cache_host.data() +
+                                    static_cast<size_t>(trace_kv_head) *
+                                        config_.max_seq_len * Dh;
       }
 
       if (need_softmax_window && q_head && k_head) {
@@ -3555,7 +3446,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           bool alloc_ok =
               qk_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
                               gcore::rt::GretaDataType::FP32, &err) &&
-              softmax_dev.allocate(window_len * sizeof(float), Usage::DeviceOnly,
+              softmax_dev.allocate(window_len * sizeof(float),
+                                   Usage::DeviceOnly,
                                    gcore::rt::GretaDataType::FP32, &err) &&
               stats_dev.allocate(5 * sizeof(float), Usage::DeviceOnly,
                                  gcore::rt::GretaDataType::FP32, &err);
@@ -3584,8 +3476,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             qk_gpu.assign(window_len, 0.0f);
             softmax_gpu.assign(window_len, 0.0f);
             stats_gpu.assign(5, 0.0f);
-            hipMemcpy(qk_gpu.data(), qk_dev.data(),
-                      window_len * sizeof(float), hipMemcpyDeviceToHost);
+            hipMemcpy(qk_gpu.data(), qk_dev.data(), window_len * sizeof(float),
+                      hipMemcpyDeviceToHost);
             hipMemcpy(softmax_gpu.data(), softmax_dev.data(),
                       window_len * sizeof(float), hipMemcpyDeviceToHost);
             hipMemcpy(stats_gpu.data(), stats_dev.data(),
@@ -3629,9 +3521,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             top2_prob = (sumexp > 0.0 && std::isfinite(second_qk))
                             ? std::exp(second_qk - max_qk) * inv_sum
                             : 0.0;
-            entropy = (sumexp > 0.0)
-                          ? (std::log(sumexp) - sumexp_log / sumexp)
-                          : 0.0;
+            entropy =
+                (sumexp > 0.0) ? (std::log(sumexp) - sumexp_log / sumexp) : 0.0;
 
             qk_cpu.assign(window_len, 0.0);
             softmax_cpu.assign(window_len, 0.0);
@@ -3641,15 +3532,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
                 break;
               double qk = qk_full[t];
               qk_cpu[i] = qk;
-              double p = (sumexp > 0.0)
-                             ? std::exp(qk - max_qk) * inv_sum
-                             : 0.0;
+              double p = (sumexp > 0.0) ? std::exp(qk - max_qk) * inv_sum : 0.0;
               softmax_cpu[i] = p;
             }
 
             for (uint32_t i = 0; i < window_len; ++i) {
-              double dq =
-                  std::abs(static_cast<double>(qk_gpu[i]) - qk_cpu[i]);
+              double dq = std::abs(static_cast<double>(qk_gpu[i]) - qk_cpu[i]);
               qk_mae += dq;
               if (dq > qk_max_diff)
                 qk_max_diff = dq;
@@ -3676,15 +3564,11 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           oss << ",\"prompt_id\":\"" << prompt_id << "\"";
         }
         oss << ",\"phase\":\"decode0\""
-            << ",\"layer\":" << layer_idx
-            << ",\"head\":" << head
-            << ",\"pos_id\":" << pos_id_used
-            << ",\"seq_len\":" << seq_len_used
-            << ",\"kv_heads\":" << Hkv
-            << ",\"head_dim\":" << Dh
+            << ",\"layer\":" << layer_idx << ",\"head\":" << head
+            << ",\"pos_id\":" << pos_id_used << ",\"seq_len\":" << seq_len_used
+            << ",\"kv_heads\":" << Hkv << ",\"head_dim\":" << Dh
             << ",\"scale_used\":" << (1.0f / std::sqrt(static_cast<float>(Dh)))
-            << ",\"q_hash\":" << q_head_hash
-            << ",\"k_hash\":" << k_head_hash
+            << ",\"q_hash\":" << q_head_hash << ",\"k_hash\":" << k_head_hash
             << ",\"q_sample\":[";
         for (size_t i = 0; i < q_sample.size(); ++i) {
           if (i)
@@ -3717,8 +3601,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"entropy\":" << stats_gpu[4] << "}"
             << ",\"softmax_cpu_stats\":{"
             << "\"max\":" << max_qk << ",\"sumexp\":" << sumexp
-            << ",\"top1_prob\":" << top1_prob
-            << ",\"top2_prob\":" << top2_prob
+            << ",\"top1_prob\":" << top1_prob << ",\"top2_prob\":" << top2_prob
             << ",\"entropy\":" << entropy << "}"
             << ",\"softmax_window_gpu\":[";
         for (size_t i = 0; i < softmax_gpu.size(); ++i) {
@@ -3739,8 +3622,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
 
       if (trace_attn_vacc && out_vacc && *out_vacc && softmax_window_ok &&
           !attn_out_host.empty() && head < Hq) {
-        const uint32_t dims_sample =
-            std::min(attn_vacc_dims_sample(), Dh);
+        const uint32_t dims_sample = std::min(attn_vacc_dims_sample(), Dh);
         if (dims_sample > 0 && window_len > 0) {
           using Usage = gcore::rt::hip::BufferUsage;
           gcore::rt::hip::Buffer v_row_dev;
@@ -3827,10 +3709,10 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             double v_max_row = 0.0;
             double v_max_col = 0.0;
             for (uint32_t d = 0; d < dims_sample; ++d) {
-              double dr = std::abs(static_cast<double>(pv_gpu_sample[d]) -
-                                   pv_row[d]);
-              double dc = std::abs(static_cast<double>(pv_gpu_sample[d]) -
-                                   pv_col[d]);
+              double dr =
+                  std::abs(static_cast<double>(pv_gpu_sample[d]) - pv_row[d]);
+              double dc =
+                  std::abs(static_cast<double>(pv_gpu_sample[d]) - pv_col[d]);
               v_mae_row += dr;
               v_mae_col += dc;
               if (dr > v_max_row)
@@ -3848,8 +3730,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             double pv_mae = 0.0;
             double pv_max_diff = 0.0;
             for (uint32_t d = 0; d < dims_sample; ++d) {
-              double diff = std::abs(static_cast<double>(pv_gpu_sample[d]) -
-                                     pv_best[d]);
+              double diff =
+                  std::abs(static_cast<double>(pv_gpu_sample[d]) - pv_best[d]);
               pv_mae += diff;
               if (diff > pv_max_diff)
                 pv_max_diff = diff;
@@ -3863,15 +3745,11 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               oss << ",\"prompt_id\":\"" << prompt_id << "\"";
             }
             oss << ",\"phase\":\"decode0\""
-                << ",\"layer\":" << layer_idx
-                << ",\"head\":" << head
+                << ",\"layer\":" << layer_idx << ",\"head\":" << head
                 << ",\"pos_id\":" << pos_id_used
-                << ",\"seq_len\":" << seq_len_used
-                << ",\"t\":" << pos_id_used
-                << ",\"window_len\":" << window_len
-                << ",\"head_dim\":" << Dh
-                << ",\"dims_sample\":" << dims_sample
-                << ",\"kv_heads\":" << Hkv
+                << ",\"seq_len\":" << seq_len_used << ",\"t\":" << pos_id_used
+                << ",\"window_len\":" << window_len << ",\"head_dim\":" << Dh
+                << ",\"dims_sample\":" << dims_sample << ",\"kv_heads\":" << Hkv
                 << ",\"scale_used\":"
                 << (1.0f / std::sqrt(static_cast<float>(Dh)))
                 << ",\"p_window_gpu\":[";
@@ -3911,8 +3789,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
               oss << pv_gpu_sample[d];
             }
             oss << "],\"pv_mae\":" << pv_mae
-                << ",\"pv_max_diff\":" << pv_max_diff
-                << ",\"pv_scope\":\"" << (pv_full ? "full" : "window") << "\""
+                << ",\"pv_max_diff\":" << pv_max_diff << ",\"pv_scope\":\""
+                << (pv_full ? "full" : "window") << "\""
                 << ",\"attn_out_scope\":\"per_head_concat\""
                 << ",\"attn_out_gpu_sample\":[";
             for (uint32_t d = 0; d < dims_sample; ++d) {
@@ -3934,15 +3812,13 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       }
 
       if (trace_v_addr && out_v_addr && *out_v_addr && trace_kv_head < Hkv) {
-        const uint32_t dims_sample =
-            std::min(attn_vacc_dims_sample(), Dh);
+        const uint32_t dims_sample = std::min(attn_vacc_dims_sample(), Dh);
         const uint32_t pos_cur = pos_id_used;
         const uint32_t pos_prev = (pos_cur > 0) ? (pos_cur - 1) : pos_cur;
         const uint32_t pos_next =
             (pos_cur + 1 < max_seq_len) ? (pos_cur + 1) : pos_cur;
         const size_t kv_pos_stride_elems = Dh;
-        const size_t kv_pos_stride_bytes =
-            kv_pos_stride_elems * sizeof(float);
+        const size_t kv_pos_stride_bytes = kv_pos_stride_elems * sizeof(float);
 
         const float *k_head_host = nullptr;
         const float *v_head_host = nullptr;
@@ -3951,12 +3827,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             k_head_host = k_cache_host.data();
             v_head_host = v_cache_host.data();
           } else {
-            k_head_host = k_cache_host.data() +
-                          static_cast<size_t>(trace_kv_head) *
-                              kv_head_stride_elems;
-            v_head_host = v_cache_host.data() +
-                          static_cast<size_t>(trace_kv_head) *
-                              kv_head_stride_elems;
+            k_head_host =
+                k_cache_host.data() +
+                static_cast<size_t>(trace_kv_head) * kv_head_stride_elems;
+            v_head_host =
+                v_cache_host.data() +
+                static_cast<size_t>(trace_kv_head) * kv_head_stride_elems;
           }
         }
 
@@ -4007,8 +3883,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             return 0.0;
           double sum = 0.0;
           for (size_t i = 0; i < a.size(); ++i) {
-            sum += std::abs(static_cast<double>(a[i]) -
-                            static_cast<double>(b[i]));
+            sum +=
+                std::abs(static_cast<double>(a[i]) - static_cast<double>(b[i]));
           }
           return sum / static_cast<double>(a.size());
         };
@@ -4029,9 +3905,11 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             k_base_ptr + kv_layer_offset_elems * sizeof(float);
         const uintptr_t v_layer_ptr =
             v_base_ptr + kv_layer_offset_elems * sizeof(float);
-        const uintptr_t k_head_ptr = k_layer_ptr +
+        const uintptr_t k_head_ptr =
+            k_layer_ptr +
             static_cast<uintptr_t>(trace_kv_head) * kv_head_stride_bytes;
-        const uintptr_t v_head_ptr = v_layer_ptr +
+        const uintptr_t v_head_ptr =
+            v_layer_ptr +
             static_cast<uintptr_t>(trace_kv_head) * kv_head_stride_bytes;
         const uintptr_t k_pos_ptr =
             k_head_ptr + static_cast<uintptr_t>(pos_cur) * kv_pos_stride_bytes;
@@ -4044,16 +3922,12 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
         if (prompt_id && *prompt_id) {
           oss << ",\"prompt_id\":\"" << prompt_id << "\"";
         }
-        oss
-            << ",\"phase\":\"decode0\""
-            << ",\"layer\":" << layer_idx
-            << ",\"head\":" << head
-            << ",\"kv_head\":" << trace_kv_head
-            << ",\"pos_id\":" << pos_id_used
+        oss << ",\"phase\":\"decode0\""
+            << ",\"layer\":" << layer_idx << ",\"head\":" << head
+            << ",\"kv_head\":" << trace_kv_head << ",\"pos_id\":" << pos_id_used
             << ",\"seq_len\":" << seq_len_used
             << ",\"tokens_total\":" << seq_len_used
-            << ",\"kv_pos_used\":" << pos_cur
-            << ",\"kv_pos_prev\":" << pos_prev
+            << ",\"kv_pos_used\":" << pos_cur << ",\"kv_pos_prev\":" << pos_prev
             << ",\"kv_pos_next\":" << pos_next
             << ",\"kv_layer_stride_bytes\":" << kv_layer_stride_bytes
             << ",\"kv_head_stride_bytes\":" << kv_head_stride_bytes
@@ -4065,8 +3939,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"v_base_ptr\":" << v_base_ptr
             << ",\"v_layer_ptr\":" << v_layer_ptr
             << ",\"v_head_ptr\":" << v_head_ptr
-            << ",\"v_pos_ptr\":" << v_pos_ptr
-            << ",\"k_elem_ptrs\":[";
+            << ",\"v_pos_ptr\":" << v_pos_ptr << ",\"k_elem_ptrs\":[";
         for (uint32_t d = 0; d < std::min<uint32_t>(4, Dh); ++d) {
           if (d)
             oss << ",";
@@ -4138,8 +4011,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
             << ",\"mae_v_pos\":" << mae_v_pos
             << ",\"mae_v_prev\":" << mae_v_prev
             << ",\"mae_v_next\":" << mae_v_next
-            << ",\"mae_v_col\":" << mae_v_col
-            << "}";
+            << ",\"mae_v_col\":" << mae_v_col << "}";
         append_line(out_v_addr, oss.str());
       }
     }
@@ -4178,10 +4050,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
       const size_t tokens_total = seq_start + seq_len;
       std::ostringstream oss;
       oss << "{\"event\":\"layer_delta\""
-          << ",\"step\":" << trace_step_
-          << ",\"layer\":" << layer_idx
-          << ",\"tokens_total\":" << tokens_total
-          << ",\"seq_len\":" << seq_len
+          << ",\"step\":" << trace_step_ << ",\"layer\":" << layer_idx
+          << ",\"tokens_total\":" << tokens_total << ",\"seq_len\":" << seq_len
           << ",\"attn_out_hash\":" << attn_hash
           << ",\"attn_out_min\":" << attn_stats.min
           << ",\"attn_out_max\":" << attn_stats.max
@@ -4190,11 +4060,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
           << ",\"mlp_out_min\":" << mlp_stats.min
           << ",\"mlp_out_max\":" << mlp_stats.max
           << ",\"mlp_out_mean\":" << mlp_stats.mean
-          << ",\"x_out_hash\":" << x_hash
-          << ",\"x_out_min\":" << x_stats.min
+          << ",\"x_out_hash\":" << x_hash << ",\"x_out_min\":" << x_stats.min
           << ",\"x_out_max\":" << x_stats.max
-          << ",\"x_out_mean\":" << x_stats.mean
-          << "}";
+          << ",\"x_out_mean\":" << x_stats.mean << "}";
       append_line(out, oss.str());
     }
   }
@@ -4247,6 +4115,46 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
                                            D, config_.vocab_size,
                                            embed_row_major),
                    "Embedding Lookup");
+
+  const bool stage_trace_on = stage_trace_enabled();
+  const char *stage_phase_fwd = nullptr;
+  if (stage_trace_on) {
+    if (S > 1 && trace_step_ == 0) {
+      stage_phase_fwd = "prefill_last";
+    } else if (S == 1 && trace_step_ == 1) {
+      stage_phase_fwd = "decode0";
+    }
+  }
+
+  if (stage_trace_on && stage_phase_fwd &&
+      stage_trace_point_enabled("embed_out")) {
+    const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+    const uint32_t stage_tokens_total = static_cast<uint32_t>(seq_start + S);
+    const uint32_t stage_token_index = S > 0 ? static_cast<uint32_t>(S - 1) : 0;
+    const uint32_t stage_pos_id =
+        static_cast<uint32_t>(seq_start + stage_token_index);
+    const int32_t token_id_val = tokens[stage_token_index];
+
+    StageInputMeta input_meta{};
+    input_meta.src_kind =
+        (S > 1) ? "EMBED_LOOKUP_PREFILL" : "EMBED_LOOKUP_DECODE";
+    input_meta.token_index_used = stage_token_index;
+    input_meta.offset_bytes =
+        static_cast<size_t>(stage_token_index) * D * sizeof(float);
+    input_meta.ptr = reinterpret_cast<uintptr_t>(x);
+    input_meta.alloc_bytes = activations_.x.size();
+    input_meta.prompt_tokens =
+        (seq_start == 0) ? S : static_cast<uint32_t>(seq_start);
+    input_meta.kv_pos = stage_pos_id;
+    input_meta.decode_step = static_cast<uint32_t>(trace_step_);
+    input_meta.token_id = static_cast<uint32_t>(token_id_val);
+    input_meta.route = input_meta.src_kind;
+
+    stage_trace_tensor("embed_out", stage_phase_fwd, stage_prompt_id, 0,
+                       static_cast<uint32_t>(trace_step_), stage_pos_id, S,
+                       stage_tokens_total, x, D, stage_token_index, hip_stream,
+                       &input_meta);
+  }
   if (!trace_embed_verify_once(tokens, seq_len, D, V, token_embd_,
                                activations_.x, embed_row_major, err))
     return false;
@@ -4369,13 +4277,13 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
     }
     GretaMemoryView logits_view(&logits_, logits_offset_bytes);
     const bool is_decode = (seq_len == 1 && seq_start > 0);
-    const char *lm_head_label = is_decode ? "lm_head_decode" : "lm_head_prefill";
+    const char *lm_head_label =
+        is_decode ? "lm_head_decode" : "lm_head_prefill";
     gcore::compute::GretaCompute::set_op_label(lm_head_label);
-    CHECK_GRETA(
-        gcore::compute::GretaCompute::gemm(stream_, &activations_.norm_out,
-                                           &output_weight_, &logits_view, S, V,
-                                           D),
-        "LM Head");
+    CHECK_GRETA(gcore::compute::GretaCompute::gemm(
+                    stream_, &activations_.norm_out, &output_weight_,
+                    &logits_view, S, V, D),
+                "LM Head");
     gcore::compute::GretaCompute::set_op_label(nullptr);
 
     if (use_graph && !graph_captured_) {
