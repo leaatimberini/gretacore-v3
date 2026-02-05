@@ -37,7 +37,7 @@ for prompt in "${PROMPTS[@]}"; do
     export GRETA_TRACE_STAGE_OUT="$OUT_DIR/traces/${prompt_name}_trace.jsonl"
     export GRETA_TRACE_PROMPT_ID="$prompt_name"
     
-    $BINARY --model models/llama3_8b.gguf --prompt-file "$prompt" --max-tokens 5 --greedy > "$OUT_DIR/run/${prompt_name}.log" 2>&1
+    $BINARY --model models/greta-v1.gguf --prompt-file "$prompt" --max-tokens 5 --greedy > "$OUT_DIR/run/${prompt_name}.log" 2>&1
 done
 
 echo "--- Generating report ---"
