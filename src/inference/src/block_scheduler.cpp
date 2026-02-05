@@ -1623,7 +1623,8 @@ bool BlockScheduler::load_weights(WeightLoader &loader, std::string *err) {
   } while (0)
 
 bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
-                                   size_t seq_len, std::string *err) {
+                                   size_t seq_len, const int32_t *tokens,
+                                   std::string *err) {
   auto &b = blocks_[layer_idx];
   uint32_t D = static_cast<uint32_t>(config_.dim);
   uint32_t Hq = static_cast<uint32_t>(config_.num_heads);
@@ -1669,6 +1670,7 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
   const bool stage_enabled = stage_trace_enabled();
   const bool post_wo_enabled = trace_post_wo_enabled();
   const bool rmsnorm_enabled = trace_rmsnorm_enabled();
+  const bool debug_input = stage_trace_debug_input();
   const char *stage_phase = nullptr;
   if (stage_enabled || post_wo_enabled || rmsnorm_enabled) {
     if (seq_len > 1 && trace_step_ == 0) {
@@ -1700,6 +1702,8 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     const uint32_t prompt_tokens = (seq_start == 0)
                                        ? static_cast<uint32_t>(seq_len)
                                        : static_cast<uint32_t>(seq_start);
+    const char *src_kind =
+        (seq_len > 1) ? "prefill_hidden_buffer" : "decode0_hidden_buffer";
     const char *route_label =
         (seq_len > 1) ? "EMBED_LOOKUP_PREFILL" : "EMBED_LOOKUP_DECODE";
     if (debug_input && stage_phase &&
@@ -4193,7 +4197,7 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
     }
 
     for (size_t i = 0; i < config_.num_layers; ++i) {
-      if (!execute_layer(i, seq_start, seq_len, err))
+      if (!execute_layer(i, seq_start, seq_len, tokens, err))
         return false;
     }
 

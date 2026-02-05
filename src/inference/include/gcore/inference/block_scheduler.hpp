@@ -1,8 +1,8 @@
 #pragma once
 
+#include "gcore/inference/layer_trace.hpp"
 #include "gcore/inference/model_config.hpp"
 #include "gcore/inference/trace.hpp"
-#include "gcore/inference/layer_trace.hpp"
 #include "gcore/rt/greta_runtime.hpp"
 #include "gcore/rt/hip/buffer.hpp"
 #include <hip/hip_runtime.h>
@@ -84,7 +84,7 @@ public:
 
   /// Execute a forward pass for a single layer.
   bool execute_layer(size_t layer_idx, size_t seq_start, size_t seq_len,
-                     std::string *err);
+                     const int32_t *tokens, std::string *err);
 
   /// Execute forward pass through all layers.
   bool forward(const int32_t *tokens, size_t seq_start, size_t seq_len,
