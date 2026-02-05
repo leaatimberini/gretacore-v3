@@ -22,3 +22,16 @@ tools/quantize/greta_quantize_gguf
 *.tmp
 *.log
 alignment_results.json
+
+# Artifacts
+artifacts_remote/**/root/
+*.tgz
+!artifacts_remote/**/b3_*_analysis.txt
+!artifacts_remote/**/report_*.md
+
+# Builds
+build/
+bin/
+*.o
+*.so
+*.a

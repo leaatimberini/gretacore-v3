@@ -13,6 +13,7 @@ struct F32Stats {
   float min = 0.0f;
   float max = 0.0f;
   float mean = 0.0f;
+  float abs_sum = 0.0f;
   int nan = 0;
   int inf = 0;
   size_t nz_count = 0;
@@ -69,6 +70,7 @@ static F32Stats stats_f32(const float *p, size_t n) {
   s.min = p[0];
   s.max = p[0];
   double sum = 0.0;
+  double abs_sum = 0.0;
   for (size_t i = 0; i < n; ++i) {
     float v = p[i];
     if (std::isnan(v)) {
@@ -84,10 +86,12 @@ static F32Stats stats_f32(const float *p, size_t n) {
     if (v > s.max)
       s.max = v;
     sum += v;
+    abs_sum += std::abs(v);
     if (v != 0.0f)
       s.nz_count++;
   }
   s.mean = (n > 0) ? static_cast<float>(sum / n) : 0.0f;
+  s.abs_sum = static_cast<float>(abs_sum);
   return s;
 }
 
@@ -242,8 +246,9 @@ void stage_trace_tensor(const char *point, const char *phase,
       << ",\"offset_bytes\":" << (offset_elems * sizeof(float))
       << ",\"hash\":" << hash << ",\"min\":" << stats.min
       << ",\"max\":" << stats.max << ",\"mean\":" << stats.mean
-      << ",\"nan\":" << stats.nan << ",\"inf\":" << stats.inf
-      << ",\"nz_count\":" << stats.nz_count << ",\"sample\":[";
+      << ",\"abs_sum\":" << stats.abs_sum << ",\"nan\":" << stats.nan
+      << ",\"inf\":" << stats.inf << ",\"nz_count\":" << stats.nz_count
+      << ",\"sample\":[";
   for (size_t i = 0; i < host.size(); ++i) {
     if (i)
       oss << ",";
@@ -266,7 +271,8 @@ void stage_trace_tensor(const char *point, const char *phase,
         << ",\"kv_pos\":" << input_meta->kv_pos
         << ",\"decode_step\":" << input_meta->decode_step
         << ",\"token_id\":" << final_token_id << ",\"route\":\""
-        << (input_meta->route ? input_meta->route : "") << "\"";
+        << (input_meta->route ? input_meta->route : "") << "\""
+        << ",\"abs_sum\":" << stats.abs_sum;
   }
 
   oss << "}";

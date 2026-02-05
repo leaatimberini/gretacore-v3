@@ -4111,11 +4111,6 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
   hipStream_t hip_stream =
       static_cast<gcore::rt::hip::GretaStreamHip *>(stream_)->handle();
 
-  CHECK_HIP_KERNEL(launch_embedding_lookup(hip_stream, d_tokens, embd_w, x, S,
-                                           D, config_.vocab_size,
-                                           embed_row_major),
-                   "Embedding Lookup");
-
   const bool stage_trace_on = stage_trace_enabled();
   const char *stage_phase_fwd = nullptr;
   if (stage_trace_on) {
@@ -4125,6 +4120,23 @@ bool BlockScheduler::forward(const int32_t *tokens, size_t seq_start,
       stage_phase_fwd = "decode0";
     }
   }
+
+  // B3.59: Weight Hash (First 1KB)
+  if (stage_trace_on && stage_phase_fwd &&
+      stage_trace_point_enabled("embd_w_hash")) {
+    const char *stage_prompt_id = std::getenv("GRETA_TRACE_PROMPT_ID");
+    const float *w_ptr = reinterpret_cast<const float *>(token_embd_.data());
+    // We trace only a small sample (256 floats = 1KB) of the weight table to
+    // verify it's the same
+    stage_trace_tensor("embd_w_hash", stage_phase_fwd, stage_prompt_id, 0,
+                       static_cast<uint32_t>(trace_step_), 0, 1, 0, w_ptr, 256,
+                       0, hip_stream);
+  }
+
+  CHECK_HIP_KERNEL(launch_embedding_lookup(hip_stream, d_tokens, embd_w, x, S,
+                                           D, config_.vocab_size,
+                                           embed_row_major),
+                   "Embedding Lookup");
 
   if (stage_trace_on && stage_phase_fwd &&
       stage_trace_point_enabled("embed_out")) {
