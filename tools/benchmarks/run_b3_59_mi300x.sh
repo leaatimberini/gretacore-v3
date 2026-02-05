@@ -27,7 +27,7 @@ for prompt in "${PROMPTS[@]}"; do
     export GRETA_TRACE_STAGE_OUT="$OUT_DIR/${prompt_name}_trace.jsonl"
     export GRETA_TRACE_PROMPT_ID="$prompt_name"
     
-    ./build/src/greta_core_test --prompt_file "$prompt" --max_tokens 5
+    ./build/inference/greta_core_test --prompt_file "$prompt" --max_tokens 5
 done
 
 echo "--- Generating report ---"
