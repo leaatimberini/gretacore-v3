@@ -260,19 +260,17 @@ void stage_trace_tensor(const char *point, const char *phase,
   if (final_token_id == 0 && debug_token_id != 0)
     final_token_id = debug_token_id;
 
-  if (cfg.debug_input && input_meta && std::strcmp(point, "x_in") == 0) {
+  if (input_meta) {
     const char *kind = input_meta->src_kind ? input_meta->src_kind : "";
-    oss << ",\"x_in_src_kind\":\"" << kind << "\""
-        << ",\"x_in_token_index_used\":" << input_meta->token_index_used
-        << ",\"x_in_offset_bytes\":" << input_meta->offset_bytes
-        << ",\"x_in_ptr\":" << input_meta->ptr
-        << ",\"x_in_alloc_bytes\":" << input_meta->alloc_bytes
+    oss << ",\"src_kind\":\"" << kind << "\""
+        << ",\"token_index_used\":" << input_meta->token_index_used
+        << ",\"offset_bytes\":" << input_meta->offset_bytes
+        << ",\"alloc_bytes\":" << input_meta->alloc_bytes
         << ",\"prompt_tokens\":" << input_meta->prompt_tokens
         << ",\"kv_pos\":" << input_meta->kv_pos
         << ",\"decode_step\":" << input_meta->decode_step
         << ",\"token_id\":" << final_token_id << ",\"route\":\""
-        << (input_meta->route ? input_meta->route : "") << "\""
-        << ",\"abs_sum\":" << stats.abs_sum;
+        << (input_meta->route ? input_meta->route : "") << "\"";
   }
 
   oss << "}";

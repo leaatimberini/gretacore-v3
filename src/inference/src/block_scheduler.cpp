@@ -1717,8 +1717,9 @@ bool BlockScheduler::execute_layer(size_t layer_idx, size_t seq_start,
     input_meta.prompt_tokens = prompt_tokens;
     input_meta.kv_pos = stage_pos_id;
     input_meta.decode_step = static_cast<uint32_t>(trace_step_);
-    input_meta.token_id =
-        0; // Will be set in x_in probe if possible, or left as 0
+    input_meta.token_id = (tokens && S > 0)
+                              ? static_cast<uint32_t>(tokens[stage_token_index])
+                              : 0;
     input_meta.route = route_label;
 
     stage_trace_tensor("x_in", stage_phase, stage_prompt_id, layer_idx,
