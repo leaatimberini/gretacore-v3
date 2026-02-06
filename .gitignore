@@ -35,3 +35,12 @@ bin/
 *.o
 *.so
 *.a
+
+# Local tooling (development helper files)
+.vscode/
+.idea/
+.kilocode/
+.skills/
+.skills/**/*
+*.code-workspace
+*.sublime-*
