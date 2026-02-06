@@ -1,0 +1,12 @@
+# B3.59 Embedding + StageDebugInput Audit Report
+
+|   token_id |           p_emb_hash |           d_emb_hash |           d_xin_hash |   p_emb_nz |   d_emb_nz |   d_xin_nz |   d_xin_abs_sum | route               | status   | file                  |
+|-----------:|---------------------:|---------------------:|---------------------:|-----------:|-----------:|-----------:|----------------:|:--------------------|:---------|:----------------------|
+|         10 |  7648363339390251139 |  7648363339390251139 |  7648363339390251139 |        256 |        256 |        256 |         1.78396 | EMBED_LOOKUP_DECODE | OK       | p0_short_trace.jsonl  |
+|        108 | 12821427986147713091 | 12821427986147713091 | 12821427986147713091 |        256 |        256 |        256 |         1.45786 | EMBED_LOOKUP_DECODE | OK       | p6_len_32_trace.jsonl |
+|        108 | 12821427986147713091 | 12821427986147713091 | 12821427986147713091 |        256 |        256 |        256 |         1.45786 | EMBED_LOOKUP_DECODE | OK       | p6_len_16_trace.jsonl |
+
+## Summary
+- Total Tokens Analyzed: 3
+- OK: 3
+- Errors: 0

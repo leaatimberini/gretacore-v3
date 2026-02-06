@@ -1,0 +1,17 @@
+PROMPT       | POS    | TOK  | XIN_SRC      | XIN_PTR  | XIN_MAE    | EPS_MATCH | W_HASH   | NORMOUT_MAE | FIRST_FAIL      | ROOT_CAUSE
+--------------------------------------------------------------------------------------------------------------------------------------------
+p0_short     | 2      | 1    | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p0_short     | 2      | 2    | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p0_short     | 4      | 3    | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p0_short     | 5      | 4    | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p0_short     | 6      | 5    | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_16    | 16     | 15   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_16    | 16     | 16   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_16    | 18     | 17   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_16    | 19     | 18   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_16    | 20     | 19   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_32    | 32     | 31   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_32    | 32     | 32   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_32    | 34     | 33   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_32    | 35     | 34   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET
+p6_len_32    | 36     | 35   | -            | -        | -          | -         | -        | -           | TOKEN_ID        | TRACE_OFFSET

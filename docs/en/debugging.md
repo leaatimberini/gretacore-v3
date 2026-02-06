@@ -105,6 +105,7 @@ Provide a reproducible debugging flow to isolate errors in the LLM inference pip
 
 **B3.23 note:** QK and softmax match FP64 in decode0 (layer 31 head 0, windowed). Divergence is more likely in V accumulation / `attn_out` path.
 **B3.27 note:** First divergence appears at layer-0 `x_in`, indicating decode input semantics mismatch (before attention/MLP).
+**B3.59 note:** `x_in` divergence resolved. No zeroing found. Perfect hash consistency confirmed with standardized metadata (`token_id`, `route`). Divergence is likely further downstream.
 
 ## Recommended Debug Flow
 1. **Baseline**: run p4_sys and p5_ba with delta traces.

@@ -105,6 +105,7 @@ Establecer un flujo de depuración reproducible para aislar errores en el pipeli
 
 **Nota B3.23:** QK y softmax coinciden con FP64 en decode0 (layer 31 head 0, ventana). La divergencia es más probable en el acumulado de V / `attn_out`.
 **Nota B3.27:** La primera divergencia aparece en `x_in` de layer 0, indicando mismatch en semántica de entrada de decode (antes de attention/MLP).
+**Nota B3.59:** Divergencia en `x_in` resuelta. No se encontró zeroing. Consistencia de hash perfecta confirmada con metadata estandarizada (`token_id`, `route`). La divergencia es probable aguas abajo.
 
 ## Flujo Recomendada de Diagnóstico
 1. **Baseline**: ejecutar p4_sys y p5_ba con trazas delta.
