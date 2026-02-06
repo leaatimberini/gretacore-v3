@@ -1,0 +1,198 @@
+#!/bin/bash
+# =============================================================================
+# LOCAL MIGRATION STEPS - GRETA CORE to clean repository
+# =============================================================================
+# Este script contiene los pasos para migrar a un nuevo repositorio "gretacore"
+# limpio (sin historial contaminado ni archivos privados).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# NOTAS PRE-MIGRACIÓN
+# -----------------------------------------------------------------------------
+# 1. Renombrar repo actual en GitHub a "gretacore-old"
+# 2. Crear nuevo repo vacío llamado "gretacore" en GitHub
+# 3. Este script exporta SOLO el contenido público y limpio
+# -----------------------------------------------------------------------------
+
+set -e  # Exit on error
+
+# -----------------------------------------------------------------------------
+# CONFIGURACIÓN (reemplazar URLs antes de ejecutar)
+# -----------------------------------------------------------------------------
+# OLD_REPO_URL = URL del repo actual (se renombrará a gretacore-old)
+# NEW_REPO_URL = URL del nuevo repo vacío (creado en GitHub)
+NEW_REPO_URL="git@github.com:leaatimberini/gretacore.git"
+EXPORT_DIR="/tmp/gretacore_clean_export"
+CANONICAL_REPO="/media/leandro/D08A27808A2762683/gretacore/gretacore"
+
+echo "=============================================="
+echo "GRETA CORE Migration to Clean Repository"
+echo "=============================================="
+echo ""
+echo "Paso 1: Renombrar repo actual en GitHub"
+echo "  - Ir a https://github.com/leaatimberini/gretacore/settings"
+echo "  - Renombrar a: gretacore-old"
+echo ""
+echo "Paso 2: Crear nuevo repo vacío"
+echo "  - Ir a https://github.com/new"
+echo "  - Nombre: gretacore"
+echo "  - NO marcar 'Include all branches'"
+echo "  - Crear vacío (sin README)"
+echo ""
+read -p "Presiona ENTER cuando hayas completado los pasos 1 y 2..."
+
+# -----------------------------------------------------------------------------
+# EXPORT LIMPIO (sin historial, sin archivos privados)
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Exportando contenido limpio..."
+echo "=============================================="
+
+# Limpiar exportación anterior si existe
+rm -rf "$EXPORT_DIR"
+mkdir -p "$EXPORT_DIR"
+
+# Opción A: Usar git archive (más limpio, sin historial)
+echo "Usando git archive para exportar..."
+cd "$CANONICAL_REPO"
+
+# Obtener el commit del último commit profesional
+COMMIT_HASH=$(git rev-parse HEAD)
+echo "Commit a exportar: $COMMIT_HASH"
+
+# Exportar usando git archive (excluye .gitignore himself)
+git archive "$COMMIT_HASH" | tar -x -C "$EXPORT_DIR"
+
+# Restaurar .gitignore (git archive lo excluye)
+cp "$CANONICAL_REPO/.gitignore" "$EXPORT_DIR/.gitignore"
+
+# -----------------------------------------------------------------------------
+# VERIFICACIÓN PRE-PUSH
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Verificación de contenido exportado..."
+echo "=============================================="
+
+echo ""
+echo "Contenido de $EXPORT_DIR:"
+ls -la "$EXPORT_DIR"
+
+echo ""
+echo "Verificando que NO haya archivos prohibidos..."
+
+# Verificar que no hay archivos de agentes/AI
+PROHIBITED=$(find "$EXPORT_DIR" -name "AGENTS.md" -o -name "implementation_plan.md" \
+    -o -path "*/agents/*" -o -path "*/kilocode/*" -o -path "*/.agents/*" \
+    -o -path "*/.kilocode/*" -o -name "docs/WORKSPACE_RULES.md" 2>/dev/null || true)
+
+if [ -n "$PROHIBITED" ]; then
+    echo "ERROR: Se encontraron archivos prohibidos:"
+    echo "$PROHIBITED"
+    exit 1
+fi
+
+echo "✓ No se encontraron archivos prohibidos"
+
+# Verificar estructura de docs/AMD/
+if [ -d "$EXPORT_DIR/docs/AMD/phases" ]; then
+    echo "✓ docs/AMD/phases/ existe"
+    ls "$EXPORT_DIR/docs/AMD/phases/"
+else
+    echo "ERROR: docs/AMD/phases/ no existe"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# CREAR NUEVO REPO Y PUSH
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Inicializando nuevo repositorio..."
+echo "=============================================="
+
+cd "$EXPORT_DIR"
+
+# Inicializar nuevo repo
+git init
+git checkout -b main
+
+# Configurar usuario (asegurar que sea leaatimberini)
+git config user.email "leandro.timberini@gmail.com"
+git config user.name "Leandro Emanuel Timberini"
+
+# Agregar remoto
+git remote add origin "$NEW_REPO_URL"
+
+# Stage todo
+git add .
+
+# Commit inicial
+echo "Creando commit inicial..."
+git commit -m "Initial public release: GRETA CORE (Phase 3)
+
+- Professional documentation structure
+- AMD reports indexed and organized
+- Bilingual documentation (EN/ES)
+- Clean repository, no private tooling"
+
+# -----------------------------------------------------------------------------
+# PUSH A GITHUB
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Ejecutando push a GitHub..."
+echo "=============================================="
+
+echo "Url del remoto: $NEW_REPO_URL"
+read -p "Presiona ENTER para hacer push..."
+
+git push -u origin main
+
+# -----------------------------------------------------------------------------
+# VERIFICACIÓN POST-PUSH
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Verificación post-push..."
+echo "=============================================="
+
+echo ""
+echo "1. Verificar contributors en GitHub:"
+echo "   Ir a: https://github.com/leaatimberini/gretacore/graphs/contributors"
+echo "   Confirmar que solo aparezca: leaatimberini"
+
+echo ""
+echo "2. Verificar archivos en GitHub:"
+echo "   - docs/AMD/INDEX.md"
+echo "   - docs/AMD/phases/"
+echo "   - README.md, README_ES.md"
+
+echo ""
+echo "3. Verificar que NO estén:"
+echo "   - AGENTS.md"
+echo "   - implementation_plan.md"
+echo "   - .agents/, .kilocode/"
+
+# -----------------------------------------------------------------------------
+# LIMPIEZA LOCAL
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "Limpieza local..."
+echo "=============================================="
+
+echo ""
+echo "El export limpo está en: $EXPORT_DIR"
+echo "Puedes eliminarlo con: rm -rf $EXPORT_DIR"
+
+echo ""
+echo "=============================================="
+echo "MIGRACIÓN COMPLETADA"
+echo "=============================================="
+echo ""
+echo "Próximos pasos:"
+echo "1. Verificar el nuevo repositorio en GitHub"
+echo "2. Actualizar remotos locales si es necesario"
+echo "3. Mantener artifacts_remote/ en local (no subir)"

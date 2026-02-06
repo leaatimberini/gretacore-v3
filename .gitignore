@@ -114,3 +114,6 @@ models/
 # -----------------------------------------------------------------------------
 # (Forzar inclusión de archivos específicos si es necesario)
 # !tools/guard_no_sibling_checkouts.sh
+
+# Workspace rules (private)
+*_workspace_rules.md
