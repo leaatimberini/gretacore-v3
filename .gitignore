@@ -1,46 +1,116 @@
-# Models
-models/
+# =============================================================================
+# GRETA CORE .gitignore - HARDENED
+# =============================================================================
+# Este archivo define qué archivos/carpetas NO deben ser versionados.
+# Para cambios, editar este archivo y commitear normalmente.
+# =============================================================================
 
-# Build artifacts
+# -----------------------------------------------------------------------------
+# 1. ENTORNOS Y HERRAMIENTAS DE DESARROLLO (NUNCA versionar)
+# -----------------------------------------------------------------------------
+.venv/
+.venv/**
+venv/
+venv/
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-*
+*.code-workspace
+
+# Agentes IA y tooling (PROHIBIDO versionar)
+.agents/
+.kilocode/
+.skills/
+.skills/**/*
+AGENTS.md
+implementation_plan.md
+docs/WORKSPACE_RULES.md
+
+# -----------------------------------------------------------------------------
+# 2. BUILD Y COMPILACIÓN
+# -----------------------------------------------------------------------------
 build/
-CMakeFiles/
-CMakeCache.txt
-Makefile
-cmake_install.cmake
+bin/
+obj/
 *.o
 *.a
 *.so
 *.so.*
 *.d
+*.dylib
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.map
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+*.ninja
 
-# Binaries
-tools/inference/greta_infer
-tools/inference/test_l0
-tools/quantize/greta_quantize_gguf
+# -----------------------------------------------------------------------------
+# 3. ARTEFACTOS Y OUTPUTS DE EJECUCIÓN (NUNCA versionar)
+# -----------------------------------------------------------------------------
+artifacts/
+artifacts/**/
 
-# Temp files
-*.tmp
-*.log
-alignment_results.json
-
-# Artifacts
-artifacts_remote/**/root/
+# Artifacts remotos - SOLO permitir análisis txt/md, bloquear binarios
+artifacts_remote/_rescued_from_remote/**
+artifacts_remote/**/run/**
+artifacts_remote/**/traces/**
+artifacts_remote/**/logs/**
 *.tgz
+*.tar.gz
+*.zip
+
+# Excepciones permitidas (reportes y análisis)
 !artifacts_remote/**/b3_*_analysis.txt
 !artifacts_remote/**/report_*.md
 
-# Builds
-build/
-bin/
-*.o
-*.so
-*.a
+# Outputs de alineación
+alignment_results.json
+*.jsonl
 
-# Local tooling (development helper files)
-.vscode/
-.idea/
-.kilocode/
-.skills/
-.skills/**/*
-*.code-workspace
-*.sublime-*
+# -----------------------------------------------------------------------------
+# 4. MODELOS Y DATOS (grandes, externalizados)
+# -----------------------------------------------------------------------------
+models/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# -----------------------------------------------------------------------------
+# 5. TEMP Y LOGS
+# -----------------------------------------------------------------------------
+*.tmp
+*.log
+*.out
+*.err
+*~
+*.bak
+*.backup
+
+# -----------------------------------------------------------------------------
+# 6. EXCEPCIONES - SÍ versionar
+# -----------------------------------------------------------------------------
+# (Forzar inclusión de archivos específicos si es necesario)
+# !tools/guard_no_sibling_checkouts.sh

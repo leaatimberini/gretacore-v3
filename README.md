@@ -90,6 +90,12 @@ performance-driven compute stack.
 
 ## Documentation
 
+### AMD Reports (MI300X)
+- Full index: `docs/AMD/INDEX.md` (bilingual ES/EN)
+- Phase 3 summary: `docs/AMD/phases/PHASE3.md`
+- Technical reports: `docs/AMD/phases/`
+
+### Core Documentation
 - Whitepaper: `docs/en/whitepaper.md`
 - Roadmap: `docs/en/roadmap.md`
 - Work plan: `docs/en/workplan.md`
@@ -139,6 +145,14 @@ export GRETA_TRACE_PROMPT_ID=p4_sys
 ```
 
 Note: `GRETA_TRACE_STAGE_DEBUG_INPUT=1` adds input semantics fields and enables a decode0 input override used for isolation runs (B3.28).
+
+## Debug Tracing (Top1 JSONL)
+
+```bash
+export GRETA_TRACE_TOP1_JSONL=1
+export GRETA_TRACE_TOP1_OUT=/root/gretacore/artifacts/alignment/2026-02-03/b3_44_top1_p4_sys.jsonl
+export GRETA_TRACE_PROMPT_ID=p4_sys
+```
 
 ## Debug Tracing (Post-WO / FFN Isolation)
 
