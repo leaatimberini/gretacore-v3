@@ -171,9 +171,9 @@ def main():
             print(f"  Warning: No decode events in {f}")
             continue
         
-        # Analyze each token (skip token_id=0 for decode)
+        # Analyze each token (skip token_id=0 and NaN for decode)
         for token_id in decode['token_id'].unique():
-            if token_id == 0:
+            if token_id == 0 or pd.isna(token_id):
                 continue
             
             result = analyze_pair(prefill, decode, token_id)
