@@ -1,6 +1,6 @@
 #!/bin/bash
 # run_b3_59_mi300x.sh
-# Embedding + StageDebugInput Zeroing Audit (Agente Líder Edition)
+# Embedding + StageDebugInput Zeroing Audit (MI300X Execution)
 
 set -e
 

@@ -111,5 +111,11 @@ Esta es una iniciativa de ingeniería a largo plazo. Todas las contribuciones
 deben alinearse con la filosofía del proyecto de minimalismo, rendimiento
 y control total del stack.
 
-**Nota**: Este repositorio no incluye tooling personal, configs de IDE o
-scripts de agentes. Estos se manejan por separado.
+Las contribuciones deben centrarse exclusivamente en:
+- Código fuente
+- Documentación técnica
+- Benchmarks reproducibles
+- Auditorías verificables
+
+No se aceptan cambios que no estén directamente relacionados con el motor
+de inferencia o su documentación.

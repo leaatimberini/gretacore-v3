@@ -109,5 +109,10 @@ This is a long-term engineering initiative. All contributions must align
 with the project's philosophy of minimalism, performance, and full
 stack control.
 
-**Note**: This repository does not include personal tooling, IDE configs,
-or agent scripts. These are managed separately.
+Contributions should focus exclusively on:
+- Source code
+- Technical documentation
+- Reproducible benchmarks
+- Verifiable audits
+
+Changes unrelated to the inference engine or its documentation will not be accepted.
