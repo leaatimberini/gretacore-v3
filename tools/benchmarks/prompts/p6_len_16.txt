@@ -1,0 +1,5 @@
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are a helpful assistant. Please provide concise and accurate answers.
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+Generate exactly 16 tokens of 'a' character repeated to fill approximately 827 total tokens context.
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
